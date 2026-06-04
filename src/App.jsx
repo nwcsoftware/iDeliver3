@@ -16,10 +16,16 @@ import ProductsPage          from './pages/ProductsPage'
 import PurchaseInvoicesPage  from './pages/PurchaseInvoicesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
+import CustomerDevelopmentPage from './pages/customer/CustomerDevelopmentPage'
 import { Truck }        from 'lucide-react'
 
 function AppShell() {
   const { currentUser, loading } = useAuth()
+  const isCustomerDevelopmentRoute = window.location.hash.startsWith('#/customer')
+
+  if (isCustomerDevelopmentRoute) {
+    return <CustomerDevelopmentPage />
+  }
 
   // Full-screen splash while rehydrating session
   if (loading) {
