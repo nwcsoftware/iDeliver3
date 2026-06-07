@@ -28,6 +28,7 @@ const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
 const COMPANY_ID = normalizeEnvValue(import.meta.env.VITE_COMPANY_ID) || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
 const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
+const CUSTOMER_ORDER_POLL_MS = 10000
 
 const languageOptions = [
   { code: 'en', label: 'English', nativeLabel: 'English', dir: 'ltr' },
@@ -2465,23 +2466,104 @@ export default function CustomerMobileApp() {
 
     let cancelled = false
 
-    async function loadInitialOrderStatuses() {
+    function showOrderChangeNotice(order, changes) {
+      if (!changes.length) return
+      const firstChange = changes[0]
+      setOrderNotice({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        message: i18nValue.t('notice.statusChanged', {
+          order: order.order_number || 'Your order',
+          field: firstChange.field,
+          status: firstChange.status,
+        }),
+      })
+    }
+
+    function orderChanges(previous, nextSnapshot) {
+      return previous ? [
+        previous.orderStatus !== nextSnapshot.orderStatus && {
+          field: i18nValue.t('notice.orderStatus'),
+          status: statusLabel(nextSnapshot.orderStatus),
+        },
+        previous.deliveryStatus !== nextSnapshot.deliveryStatus && {
+          field: i18nValue.t('notice.deliveryStatus'),
+          status: nextSnapshot.deliveryStatus,
+        },
+        previous.paymentStatus !== nextSnapshot.paymentStatus && {
+          field: i18nValue.t('notice.paymentStatus'),
+          status: paymentStatusLabel(nextSnapshot.paymentStatus),
+        },
+      ].filter(Boolean) : []
+    }
+
+    async function fetchOrderStatusRows() {
       let query = supabase
         .from('delivery_orders')
         .select('id,order_number,status,delivery_status,payment_status')
         .eq('customer_id', customerSession.contact_id)
       if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
 
-      const { data } = await query
+      const { data, error } = await query
+      if (error) return []
+      return data || []
+    }
+
+    async function loadInitialOrderStatuses() {
+      const rows = await fetchOrderStatusRows()
       if (cancelled) return
 
-      setStatusByOrder((data || []).reduce((acc, order) => {
+      setStatusByOrder(rows.reduce((acc, order) => {
         acc[order.id] = notificationSnapshot(order)
         return acc
       }, {}))
     }
 
+    async function pollOrderStatuses() {
+      const rows = await fetchOrderStatusRows()
+      if (cancelled) return
+
+      setStatusByOrder(current => {
+        let shouldRefresh = false
+        let notice = null
+        const next = { ...current }
+
+        rows.forEach(order => {
+          const nextSnapshot = notificationSnapshot(order)
+          const changes = orderChanges(current[order.id], nextSnapshot)
+          if (changes.length) {
+            shouldRefresh = true
+            notice = notice || { order, changes }
+          }
+          next[order.id] = nextSnapshot
+        })
+
+        if (notice) showOrderChangeNotice(notice.order, notice.changes)
+        if (shouldRefresh) setOrderRefreshKey(value => value + 1)
+
+        return next
+      })
+
+      setSelectedOrder(current => {
+        if (!current) return current
+        const updatedOrder = rows.find(order => order.id === current.id)
+        if (!updatedOrder) return current
+        const nextSnapshot = notificationSnapshot(updatedOrder)
+        return {
+          ...current,
+          deliveryStatus: nextSnapshot.deliveryStatus,
+          status: updatedOrder.status || current.status,
+          paymentStatus: updatedOrder.payment_status || current.paymentStatus,
+          raw: {
+            ...(current.raw || {}),
+            ...updatedOrder,
+          },
+        }
+      })
+    }
+
     loadInitialOrderStatuses()
+    const pollTimer = window.setInterval(pollOrderStatuses, CUSTOMER_ORDER_POLL_MS)
 
     const channel = supabase
       .channel(`customer-order-updates-${customerSession.contact_id}`)
@@ -2500,32 +2582,10 @@ export default function CustomerMobileApp() {
 
           setStatusByOrder(current => {
             const previous = current[updatedOrder.id]
-            const changes = previous ? [
-              previous.orderStatus !== nextSnapshot.orderStatus && {
-                field: i18nValue.t('notice.orderStatus'),
-                status: statusLabel(nextSnapshot.orderStatus),
-              },
-              previous.deliveryStatus !== nextSnapshot.deliveryStatus && {
-                field: i18nValue.t('notice.deliveryStatus'),
-                status: nextSnapshot.deliveryStatus,
-              },
-              previous.paymentStatus !== nextSnapshot.paymentStatus && {
-                field: i18nValue.t('notice.paymentStatus'),
-                status: paymentStatusLabel(nextSnapshot.paymentStatus),
-              },
-            ].filter(Boolean) : []
+            const changes = orderChanges(previous, nextSnapshot)
 
             if (changes.length > 0) {
-              const firstChange = changes[0]
-              setOrderNotice({
-                orderId: updatedOrder.id,
-                orderNumber: nextSnapshot.orderNumber,
-                message: i18nValue.t('notice.statusChanged', {
-                  order: nextSnapshot.orderNumber || 'Your order',
-                  field: firstChange.field,
-                  status: firstChange.status,
-                }),
-              })
+              showOrderChangeNotice(updatedOrder, changes)
             }
             return { ...current, [updatedOrder.id]: nextSnapshot }
           })
@@ -2549,6 +2609,7 @@ export default function CustomerMobileApp() {
 
     return () => {
       cancelled = true
+      window.clearInterval(pollTimer)
       supabase.removeChannel(channel)
     }
   }, [isLoggedIn, customerSession, currentLanguage])
