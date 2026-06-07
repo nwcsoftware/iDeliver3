@@ -25,7 +25,7 @@ import { supabase } from '../lib/supabase'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
-const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
+const COMPANY_ID = normalizeEnvValue(import.meta.env.VITE_COMPANY_ID) || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
 const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
 
@@ -368,6 +368,10 @@ const emptyAddressForm = {
 
 function cx(...parts) {
   return parts.filter(Boolean).join(' ')
+}
+
+function normalizeEnvValue(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '').trim()
 }
 
 function normalizeLanguage(language) {
