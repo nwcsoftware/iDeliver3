@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
   Bell,
@@ -22,16 +22,339 @@ import {
   User,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
 const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
+const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
 
-const initialRequirements = [
-  'Buy 1 packet milk',
-  'Buy 2 water bottles',
-  'Pick up from school',
+const languageOptions = [
+  { code: 'en', label: 'English', nativeLabel: 'English', dir: 'ltr' },
+  { code: 'ar', label: 'Arabic', nativeLabel: 'العربية', dir: 'rtl' },
+  { code: 'fr', label: 'French', nativeLabel: 'Français', dir: 'ltr' },
+  { code: 'ro', label: 'Romanian', nativeLabel: 'Română', dir: 'ltr' },
 ]
+
+const translations = {
+  en: {
+    'nav.home': 'Home',
+    'nav.orders': 'Orders',
+    'nav.book': 'Book',
+    'nav.profile': 'Profile',
+    'common.add': 'Add',
+    'common.cancel': 'Cancel',
+    'common.close': 'Close',
+    'common.delete': 'Delete',
+    'common.edit': 'Edit',
+    'common.email': 'Email',
+    'common.loadingProfile': 'Loading profile...',
+    'common.notSet': 'Not set',
+    'common.photo': 'Photo',
+    'common.save': 'Save',
+    'common.saving': 'Saving...',
+    'common.whatsapp': 'WhatsApp',
+    'notice.orderUpdated': 'Order update',
+    'notice.statusChanged': '{{order}} {{field}} changed to {{status}}.',
+    'notice.orderStatus': 'order status',
+    'notice.deliveryStatus': 'delivery status',
+    'notice.paymentStatus': 'payment status',
+    'notice.viewOrders': 'View Orders',
+    'login.title': 'Welcome back',
+    'login.subtitle': 'Login with mobile/email and password',
+    'login.identifier': 'Mobile number or Email',
+    'login.identifierPlaceholder': 'Mobile number or email',
+    'login.password': 'Password',
+    'login.passwordPlaceholder': 'Password',
+    'login.loading': 'Logging in...',
+    'login.submit': 'Login',
+    'login.registerOtp': 'First-time customer? Register with OTP',
+    'home.greeting': 'Hi, {{name}}',
+    'home.customerAccount': 'Customer account',
+    'home.creditDebit': 'Credit Facility',
+    'home.allowed': 'Approved',
+    'home.notAllowed': 'Not Approved',
+    'home.bookDelivery': 'Book Delivery',
+    'home.externalRequest': 'External request',
+    'home.shopProducts': 'Shop Products',
+    'home.futureModule': 'Future module',
+    'home.myOrders': 'My Orders',
+    'home.trackStatus': 'Track status',
+    'home.savedAddresses': 'Saved addresses',
+    'home.latestOrder': 'Latest Order',
+    'home.latestOrderSubtitle': 'Most recent delivery request',
+    'home.noOrders': 'No orders yet',
+    'profile.title': 'Profile',
+    'profile.subtitle': 'Account and saved addresses',
+    'profile.creditAllowed': 'Credit/Debit Allowed',
+    'profile.cashOnly': 'Cash Only',
+    'profile.mobileNumber': 'Mobile Number',
+    'profile.mobileSubtitle': 'Used for login and WhatsApp',
+    'profile.updateMobile': 'Update Mobile Number',
+    'profile.addAddress': 'Add Address',
+    'profile.editAddress': 'Edit Address',
+    'profile.addressName': 'Address name',
+    'profile.reference': 'Reference',
+    'profile.addressLine': 'Address line',
+    'profile.city': 'City',
+    'profile.phone': 'Phone',
+    'profile.primaryAddress': 'Primary address',
+    'profile.savedAddresses': 'Saved Addresses',
+    'profile.savedAddressesSubtitle': 'Used for pickup and drop locations',
+    'profile.noAddresses': 'No saved addresses yet.',
+    'profile.noAddressLine': 'No address line',
+    'profile.primary': 'Primary',
+    'profile.setPrimary': 'Set primary',
+    'profile.preferences': 'Preferences',
+    'profile.language': 'Language',
+    'profile.languageSubtitle': 'Choose app display language',
+    'profile.languageSaved': 'Language saved for this device and customer session.',
+    'profile.defaultPayment': 'Default payment',
+    'profile.creditDebitAllowed': 'Credit/Debit allowed',
+    'profile.cashOnDelivery': 'Cash on delivery',
+    'profile.logout': 'Logout',
+  },
+  ar: {
+    'nav.home': 'الرئيسية',
+    'nav.orders': 'الطلبات',
+    'nav.book': 'حجز',
+    'nav.profile': 'الملف',
+    'common.add': 'إضافة',
+    'common.cancel': 'إلغاء',
+    'common.close': 'إغلاق',
+    'common.delete': 'حذف',
+    'common.edit': 'تعديل',
+    'common.email': 'البريد الإلكتروني',
+    'common.loadingProfile': 'جاري تحميل الملف...',
+    'common.notSet': 'غير محدد',
+    'common.photo': 'صورة',
+    'common.save': 'حفظ',
+    'common.saving': 'جاري الحفظ...',
+    'common.whatsapp': 'واتساب',
+    'notice.orderUpdated': 'تحديث الطلب',
+    'notice.statusChanged': 'تم تغيير {{field}} للطلب {{order}} إلى {{status}}.',
+    'notice.orderStatus': 'حالة الطلب',
+    'notice.deliveryStatus': 'حالة التوصيل',
+    'notice.paymentStatus': 'حالة الدفع',
+    'notice.viewOrders': 'عرض الطلبات',
+    'login.title': 'أهلاً بعودتك',
+    'login.subtitle': 'تسجيل الدخول بالجوال/البريد وكلمة المرور',
+    'login.identifier': 'رقم الجوال أو البريد الإلكتروني',
+    'login.identifierPlaceholder': 'رقم الجوال أو البريد الإلكتروني',
+    'login.password': 'كلمة المرور',
+    'login.passwordPlaceholder': 'كلمة المرور',
+    'login.loading': 'جاري تسجيل الدخول...',
+    'login.submit': 'تسجيل الدخول',
+    'login.registerOtp': 'عميل جديد؟ سجل باستخدام OTP',
+    'home.greeting': 'أهلاً، {{name}}',
+    'home.customerAccount': 'حساب العميل',
+    'home.creditDebit': 'تسهيل ائتماني',
+    'home.allowed': 'معتمد',
+    'home.notAllowed': 'غير معتمد',
+    'home.bookDelivery': 'حجز توصيل',
+    'home.externalRequest': 'طلب خارجي',
+    'home.shopProducts': 'تسوق المنتجات',
+    'home.futureModule': 'ميزة لاحقة',
+    'home.myOrders': 'طلباتي',
+    'home.trackStatus': 'تتبع الحالة',
+    'home.savedAddresses': 'العناوين المحفوظة',
+    'home.latestOrder': 'آخر طلب',
+    'home.latestOrderSubtitle': 'أحدث طلب توصيل',
+    'home.noOrders': 'لا توجد طلبات بعد',
+    'profile.title': 'الملف الشخصي',
+    'profile.subtitle': 'الحساب والعناوين المحفوظة',
+    'profile.creditAllowed': 'الائتمان/المدين مسموح',
+    'profile.cashOnly': 'نقداً فقط',
+    'profile.mobileNumber': 'رقم الجوال',
+    'profile.mobileSubtitle': 'يستخدم لتسجيل الدخول وواتساب',
+    'profile.updateMobile': 'تحديث رقم الجوال',
+    'profile.addAddress': 'إضافة عنوان',
+    'profile.editAddress': 'تعديل العنوان',
+    'profile.addressName': 'اسم العنوان',
+    'profile.reference': 'المرجع',
+    'profile.addressLine': 'سطر العنوان',
+    'profile.city': 'المدينة',
+    'profile.phone': 'الهاتف',
+    'profile.primaryAddress': 'العنوان الأساسي',
+    'profile.savedAddresses': 'العناوين المحفوظة',
+    'profile.savedAddressesSubtitle': 'تستخدم لمواقع الاستلام والتسليم',
+    'profile.noAddresses': 'لا توجد عناوين محفوظة بعد.',
+    'profile.noAddressLine': 'لا يوجد سطر عنوان',
+    'profile.primary': 'أساسي',
+    'profile.setPrimary': 'تعيين كأساسي',
+    'profile.preferences': 'التفضيلات',
+    'profile.language': 'اللغة',
+    'profile.languageSubtitle': 'اختر لغة عرض التطبيق',
+    'profile.languageSaved': 'تم حفظ اللغة لهذا الجهاز وجلسة العميل.',
+    'profile.defaultPayment': 'طريقة الدفع الافتراضية',
+    'profile.creditDebitAllowed': 'ائتمان/مدين مسموح',
+    'profile.cashOnDelivery': 'الدفع عند التوصيل',
+    'profile.logout': 'تسجيل الخروج',
+  },
+  fr: {
+    'nav.home': 'Accueil',
+    'nav.orders': 'Commandes',
+    'nav.book': 'Réserver',
+    'nav.profile': 'Profil',
+    'common.add': 'Ajouter',
+    'common.cancel': 'Annuler',
+    'common.close': 'Fermer',
+    'common.delete': 'Supprimer',
+    'common.edit': 'Modifier',
+    'common.email': 'E-mail',
+    'common.loadingProfile': 'Chargement du profil...',
+    'common.notSet': 'Non défini',
+    'common.photo': 'Photo',
+    'common.save': 'Enregistrer',
+    'common.saving': 'Enregistrement...',
+    'common.whatsapp': 'WhatsApp',
+    'notice.orderUpdated': 'Mise à jour de commande',
+    'notice.statusChanged': '{{field}} de {{order}} est maintenant {{status}}.',
+    'notice.orderStatus': 'statut de commande',
+    'notice.deliveryStatus': 'statut de livraison',
+    'notice.paymentStatus': 'statut de paiement',
+    'notice.viewOrders': 'Voir les commandes',
+    'login.title': 'Bon retour',
+    'login.subtitle': 'Connectez-vous avec mobile/e-mail et mot de passe',
+    'login.identifier': 'Numéro mobile ou e-mail',
+    'login.identifierPlaceholder': 'Numéro mobile ou e-mail',
+    'login.password': 'Mot de passe',
+    'login.passwordPlaceholder': 'Mot de passe',
+    'login.loading': 'Connexion...',
+    'login.submit': 'Connexion',
+    'login.registerOtp': 'Nouveau client ? Inscription par OTP',
+    'home.greeting': 'Bonjour, {{name}}',
+    'home.customerAccount': 'Compte client',
+    'home.creditDebit': 'Facilité de crédit',
+    'home.allowed': 'Approuvée',
+    'home.notAllowed': 'Non approuvée',
+    'home.bookDelivery': 'Réserver une livraison',
+    'home.externalRequest': 'Demande externe',
+    'home.shopProducts': 'Acheter des produits',
+    'home.futureModule': 'Module futur',
+    'home.myOrders': 'Mes commandes',
+    'home.trackStatus': 'Suivre le statut',
+    'home.savedAddresses': 'Adresses enregistrées',
+    'home.latestOrder': 'Dernière commande',
+    'home.latestOrderSubtitle': 'Demande de livraison la plus récente',
+    'home.noOrders': 'Aucune commande',
+    'profile.title': 'Profil',
+    'profile.subtitle': 'Compte et adresses enregistrées',
+    'profile.creditAllowed': 'Crédit/Débit autorisé',
+    'profile.cashOnly': 'Espèces seulement',
+    'profile.mobileNumber': 'Numéro mobile',
+    'profile.mobileSubtitle': 'Utilisé pour la connexion et WhatsApp',
+    'profile.updateMobile': 'Mettre à jour le numéro mobile',
+    'profile.addAddress': 'Ajouter une adresse',
+    'profile.editAddress': 'Modifier l’adresse',
+    'profile.addressName': 'Nom de l’adresse',
+    'profile.reference': 'Référence',
+    'profile.addressLine': 'Adresse',
+    'profile.city': 'Ville',
+    'profile.phone': 'Téléphone',
+    'profile.primaryAddress': 'Adresse principale',
+    'profile.savedAddresses': 'Adresses enregistrées',
+    'profile.savedAddressesSubtitle': 'Utilisées pour les lieux de ramassage et livraison',
+    'profile.noAddresses': 'Aucune adresse enregistrée.',
+    'profile.noAddressLine': 'Aucune adresse',
+    'profile.primary': 'Principale',
+    'profile.setPrimary': 'Définir principale',
+    'profile.preferences': 'Préférences',
+    'profile.language': 'Langue',
+    'profile.languageSubtitle': 'Choisir la langue d’affichage',
+    'profile.languageSaved': 'Langue enregistrée pour cet appareil et cette session client.',
+    'profile.defaultPayment': 'Paiement par défaut',
+    'profile.creditDebitAllowed': 'Crédit/Débit autorisé',
+    'profile.cashOnDelivery': 'Paiement à la livraison',
+    'profile.logout': 'Déconnexion',
+  },
+  ro: {
+    'nav.home': 'Acasă',
+    'nav.orders': 'Comenzi',
+    'nav.book': 'Rezervă',
+    'nav.profile': 'Profil',
+    'common.add': 'Adaugă',
+    'common.cancel': 'Anulează',
+    'common.close': 'Închide',
+    'common.delete': 'Șterge',
+    'common.edit': 'Editează',
+    'common.email': 'E-mail',
+    'common.loadingProfile': 'Se încarcă profilul...',
+    'common.notSet': 'Nesetat',
+    'common.photo': 'Fotografie',
+    'common.save': 'Salvează',
+    'common.saving': 'Se salvează...',
+    'common.whatsapp': 'WhatsApp',
+    'notice.orderUpdated': 'Actualizare comandă',
+    'notice.statusChanged': '{{field}} pentru {{order}} este acum {{status}}.',
+    'notice.orderStatus': 'statusul comenzii',
+    'notice.deliveryStatus': 'statusul livrării',
+    'notice.paymentStatus': 'statusul plății',
+    'notice.viewOrders': 'Vezi comenzile',
+    'login.title': 'Bine ai revenit',
+    'login.subtitle': 'Autentifică-te cu telefon/e-mail și parolă',
+    'login.identifier': 'Număr de telefon sau e-mail',
+    'login.identifierPlaceholder': 'Număr de telefon sau e-mail',
+    'login.password': 'Parolă',
+    'login.passwordPlaceholder': 'Parolă',
+    'login.loading': 'Se autentifică...',
+    'login.submit': 'Autentificare',
+    'login.registerOtp': 'Client nou? Înregistrare cu OTP',
+    'home.greeting': 'Salut, {{name}}',
+    'home.customerAccount': 'Cont client',
+    'home.creditDebit': 'Facilitate de credit',
+    'home.allowed': 'Aprobată',
+    'home.notAllowed': 'Neaprobată',
+    'home.bookDelivery': 'Rezervă livrare',
+    'home.externalRequest': 'Cerere externă',
+    'home.shopProducts': 'Cumpără produse',
+    'home.futureModule': 'Modul viitor',
+    'home.myOrders': 'Comenzile mele',
+    'home.trackStatus': 'Urmărește statusul',
+    'home.savedAddresses': 'Adrese salvate',
+    'home.latestOrder': 'Ultima comandă',
+    'home.latestOrderSubtitle': 'Cea mai recentă cerere de livrare',
+    'home.noOrders': 'Nu există comenzi încă',
+    'profile.title': 'Profil',
+    'profile.subtitle': 'Cont și adrese salvate',
+    'profile.creditAllowed': 'Credit/Debit permis',
+    'profile.cashOnly': 'Doar numerar',
+    'profile.mobileNumber': 'Număr de telefon',
+    'profile.mobileSubtitle': 'Folosit pentru autentificare și WhatsApp',
+    'profile.updateMobile': 'Actualizează numărul',
+    'profile.addAddress': 'Adaugă adresă',
+    'profile.editAddress': 'Editează adresa',
+    'profile.addressName': 'Numele adresei',
+    'profile.reference': 'Referință',
+    'profile.addressLine': 'Adresă',
+    'profile.city': 'Oraș',
+    'profile.phone': 'Telefon',
+    'profile.primaryAddress': 'Adresă principală',
+    'profile.savedAddresses': 'Adrese salvate',
+    'profile.savedAddressesSubtitle': 'Folosite pentru ridicare și livrare',
+    'profile.noAddresses': 'Nu există adrese salvate încă.',
+    'profile.noAddressLine': 'Nu există adresă',
+    'profile.primary': 'Principală',
+    'profile.setPrimary': 'Setează principală',
+    'profile.preferences': 'Preferințe',
+    'profile.language': 'Limbă',
+    'profile.languageSubtitle': 'Alege limba de afișare a aplicației',
+    'profile.languageSaved': 'Limba a fost salvată pentru acest dispozitiv și sesiunea clientului.',
+    'profile.defaultPayment': 'Plată implicită',
+    'profile.creditDebitAllowed': 'Credit/Debit permis',
+    'profile.cashOnDelivery': 'Plată la livrare',
+    'profile.logout': 'Deconectare',
+  },
+}
+
+const I18nContext = createContext({
+  language: 'en',
+  dir: 'ltr',
+  setLanguage: () => {},
+  t: key => key,
+})
+
+const initialRequirements = ['']
 
 const emptyAddressForm = {
   address_name: '',
@@ -47,12 +370,57 @@ function cx(...parts) {
   return parts.filter(Boolean).join(' ')
 }
 
+function normalizeLanguage(language) {
+  return languageOptions.some(option => option.code === language) ? language : 'en'
+}
+
+function loadCustomerLanguage(session) {
+  return normalizeLanguage(session?.language || session?.preferred_language || localStorage.getItem(CUSTOMER_LANGUAGE_KEY) || 'en')
+}
+
+function interpolate(template, values = {}) {
+  return Object.entries(values).reduce(
+    (text, [key, value]) => text.replaceAll(`{{${key}}}`, value ?? ''),
+    template
+  )
+}
+
+function useI18n() {
+  return useContext(I18nContext)
+}
+
 function statusClass(status) {
   const key = status?.toLowerCase()
   if (key === 'pending') return 'bg-amber-100 text-amber-700'
   if (key === 'confirmed') return 'bg-blue-100 text-blue-700'
   if (key === 'completed') return 'bg-emerald-100 text-emerald-700'
   return 'bg-slate-100 text-slate-600'
+}
+
+function paymentStatusLabel(status) {
+  const key = status?.toLowerCase()
+  if (key === 'paid_to_office' || key === 'closed') return 'Paid'
+  if (key === 'collected_by_driver') return 'Collected by driver'
+  if (key === 'partially_paid') return 'Partially paid'
+  if (key === 'due_for_collection') return 'Payment due'
+  if (key === 'refunded') return 'Refunded'
+  return 'Unpaid'
+}
+
+function statusLabel(status) {
+  if (!status) return 'Pending'
+  return status
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+}
+
+function notificationSnapshot(order) {
+  return {
+    orderNumber: order.order_number,
+    orderStatus: order.status || '',
+    deliveryStatus: order.delivery_status || 'Awaiting Pickup',
+    paymentStatus: order.payment_status || 'unpaid',
+  }
 }
 
 function customerRouteFromHash() {
@@ -99,18 +467,19 @@ function clearCustomerSession() {
 }
 
 function Shell({ children, activeTab, onTab }) {
+  const { t, dir } = useI18n()
   const nav = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'orders', label: 'Orders', icon: ClipboardList },
-    { id: 'book', label: 'Book', icon: Plus },
-    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'home', label: t('nav.home'), icon: Home },
+    { id: 'orders', label: t('nav.orders'), icon: ClipboardList },
+    { id: 'book', label: t('nav.book'), icon: Plus },
+    { id: 'profile', label: t('nav.profile'), icon: User },
   ]
 
   return (
-    <div className="h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]">
+    <div className="h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
       <div className="relative mx-auto flex h-screen max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
-        <div className="flex-1 overflow-y-auto">{children}</div>
-        <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
+        <div className="flex-1 overflow-y-auto pb-20">{children}</div>
+        <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-2 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
             {nav.map(item => {
               const Icon = item.icon
@@ -121,7 +490,7 @@ function Shell({ children, activeTab, onTab }) {
                   type="button"
                   onClick={() => onTab(item.id)}
                   className={cx(
-                    'flex h-11 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition',
+                    'flex h-10 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition',
                     active ? 'bg-sky-100 text-sky-700' : 'text-slate-400 hover:bg-sky-50 hover:text-sky-700'
                   )}
                 >
@@ -139,7 +508,7 @@ function Shell({ children, activeTab, onTab }) {
 
 function Header({ title, subtitle, right, back, onBack }) {
   return (
-    <header className="sticky top-0 z-10 rounded-b-[2rem] border-b border-sky-50 bg-white/95 px-5 pb-6 pt-5 shadow-sm shadow-sky-100/70 backdrop-blur">
+    <header className="sticky top-0 z-10 rounded-b-[1.5rem] border-b border-sky-50 bg-white/95 px-5 pb-4 pt-4 shadow-sm shadow-sky-100/70 backdrop-blur">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           {back && (
@@ -148,7 +517,7 @@ function Header({ title, subtitle, right, back, onBack }) {
             </button>
           )}
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-950">{title}</h1>
+            <h1 className="truncate text-[1.65rem] font-bold leading-tight tracking-tight text-slate-950">{title}</h1>
             {subtitle && <p className="mt-0.5 truncate text-sm text-slate-500">{subtitle}</p>}
           </div>
         </div>
@@ -158,7 +527,8 @@ function Header({ title, subtitle, right, back, onBack }) {
   )
 }
 
-function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
+function OrderChangeNotice({ notice, onClose, onOpenOrders }) {
+  const { t } = useI18n()
   if (!notice) return null
 
   return (
@@ -168,16 +538,16 @@ function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
           <Bell className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-slate-950">Delivery status updated</p>
+          <p className="text-sm font-bold text-slate-950">{t('notice.orderUpdated')}</p>
           <p className="mt-1 text-sm text-slate-500">
-            {notice.orderNumber || 'Your order'} is now {notice.deliveryStatus}.
+            {notice.message}
           </p>
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={onOpenOrders} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">
-              View Orders
+              {t('notice.viewOrders')}
             </button>
             <button type="button" onClick={onClose} className="rounded-lg border border-sky-100 bg-white px-3 py-2 text-xs font-bold text-slate-500">
-              Close
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -202,6 +572,7 @@ function Section({ title, subtitle, children, action }) {
 }
 
 function LoginScreen({ onLogin, onOtp }) {
+  const { t, dir } = useI18n()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -254,32 +625,35 @@ function LoginScreen({ onLogin, onOtp }) {
   }
 
   return (
-    <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-10 text-[#071923]">
-      <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-md flex-col justify-center">
-        <div className="mb-9 rounded-lg bg-white p-8 text-center shadow-sm shadow-sky-100">
-          <div className="mx-auto flex h-16 w-24 items-center justify-center rounded-lg bg-sky-100 text-3xl font-bold text-sky-600">3</div>
-          <h1 className="mt-8 text-3xl font-bold tracking-tight">Welcome back</h1>
-          <p className="mt-2 text-sm text-slate-500">Login with mobile/email and password</p>
-        </div>
-
+    <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-8 text-[#071923]" dir={dir}>
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col justify-center">
         <form onSubmit={submitLogin} className="rounded-lg border border-sky-100 bg-white p-5 shadow-sm shadow-sky-100/70">
-          <label className="block text-xs font-semibold text-slate-500">Mobile number or Email</label>
+          <div className="mb-8 text-center">
+          <img
+            src={ideliverLoginLogo}
+            alt="3a sari3 derek delivery service"
+            className="mx-auto h-24 w-48 object-contain"
+          />
+          <h1 className="mt-6 text-3xl font-bold tracking-tight">{t('login.title')}</h1>
+          <p className="mt-2 text-sm text-slate-500">{t('login.subtitle')}</p>
+          </div>
+          <label className="block text-xs font-semibold text-slate-500">{t('login.identifier')}</label>
           <input
             className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
             value={identifier}
             onChange={event => { setIdentifier(event.target.value); setError('') }}
-            placeholder="Mobile number or email"
+            placeholder={t('login.identifierPlaceholder')}
             autoComplete="username"
             disabled={loading}
           />
 
-          <label className="mt-5 block text-xs font-semibold text-slate-500">Password</label>
+          <label className="mt-5 block text-xs font-semibold text-slate-500">{t('login.password')}</label>
           <input
             className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
             type="password"
             value={password}
             onChange={event => { setPassword(event.target.value); setError('') }}
-            placeholder="Password"
+            placeholder={t('login.passwordPlaceholder')}
             autoComplete="current-password"
             disabled={loading}
           />
@@ -291,10 +665,10 @@ function LoginScreen({ onLogin, onOtp }) {
           )}
 
           <button type="submit" disabled={loading} className="mt-8 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white shadow-sm shadow-sky-200 disabled:cursor-not-allowed disabled:bg-slate-300">
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? t('login.loading') : t('login.submit')}
           </button>
           <button type="button" onClick={onOtp} className="mt-4 flex h-10 w-full items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700">
-            First-time customer? Register with OTP
+            {t('login.registerOtp')}
           </button>
         </form>
       </div>
@@ -510,6 +884,7 @@ function OtpScreen({ onDone, onBack }) {
 }
 
 function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder, onEditOrder }) {
+  const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -591,11 +966,12 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
   }, [customerSession])
 
   const displayName = customerName(profile) || customerSession?.first_name || 'Customer'
+  const shortName = displayName.split(' ')[0]
 
   return (
     <>
       <Header
-        title={`Hi, ${displayName.split(' ')[0]}`}
+        title={t('home.greeting', { name: shortName })}
         subtitle={CUSTOMER_MOBILE_MODULE}
         right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Bell className="h-5 w-5" /></button>}
       />
@@ -611,16 +987,10 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
           </div>
         )}
         {!loading && profile && (
-          <Section title={displayName} subtitle={profile.mobile || customerSession?.mobile || 'Customer account'}>
-            <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
-              <div>
-                <p className="text-xs text-slate-500">Credit/Debit</p>
-                <p className="mt-1 text-sm font-semibold">{profile.credit_debit_allowed ? 'Allowed' : 'Not allowed'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Notifications</p>
-                <p className="mt-1 text-sm font-semibold">{profile.email ? 'WhatsApp + Email' : 'WhatsApp'}</p>
-              </div>
+          <Section title={displayName} subtitle={profile.mobile || customerSession?.mobile || t('home.customerAccount')}>
+            <div className="rounded-lg border border-sky-100 bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">{t('home.creditDebit')}</p>
+              <p className="mt-1 text-sm font-semibold">{profile.credit_debit_allowed ? t('home.allowed') : t('home.notAllowed')}</p>
             </div>
           </Section>
         )}
@@ -628,34 +998,34 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
         <section className="grid grid-cols-2 gap-3">
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
             <Package className="h-6 w-6 text-sky-600" />
-            <p className="mt-4 text-sm font-bold">Book Delivery</p>
-            <p className="mt-1 text-xs text-slate-500">External request</p>
+            <p className="mt-4 text-sm font-bold">{t('home.bookDelivery')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('home.externalRequest')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100">
             <ShoppingBag className="h-6 w-6 text-emerald-600" />
-            <p className="mt-4 text-sm font-bold">Shop Products</p>
-            <p className="mt-1 text-xs text-slate-500">Future module</p>
+            <p className="mt-4 text-sm font-bold">{t('home.shopProducts')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('home.futureModule')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onOrders}>
             <ClipboardList className="h-6 w-6 text-blue-600" />
-            <p className="mt-4 text-sm font-bold">My Orders</p>
-            <p className="mt-1 text-xs text-slate-500">Track status</p>
+            <p className="mt-4 text-sm font-bold">{t('home.myOrders')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('home.trackStatus')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onProfile}>
             <User className="h-6 w-6 text-cyan-600" />
-            <p className="mt-4 text-sm font-bold">Profile</p>
-            <p className="mt-1 text-xs text-slate-500">Saved addresses</p>
+            <p className="mt-4 text-sm font-bold">{t('nav.profile')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('home.savedAddresses')}</p>
           </button>
         </section>
 
-        <Section title="Latest Order" subtitle="Most recent delivery request">
+        <Section title={t('home.latestOrder')} subtitle={t('home.latestOrderSubtitle')}>
           {latestOrder ? (
             <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' ? () => onEditOrder(latestOrder) : undefined} />
           ) : (
             <div className="rounded-lg border border-sky-100 bg-slate-50 px-4 py-6 text-center">
-              <p className="text-sm font-bold text-slate-950">No orders yet</p>
+              <p className="text-sm font-bold text-slate-950">{t('home.noOrders')}</p>
               <button type="button" onClick={onBook} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">
-                Book Delivery
+                {t('home.bookDelivery')}
               </button>
             </div>
           )}
@@ -728,15 +1098,16 @@ function orderTypeLabel(order) {
   return order.order_source === 'external' || order.order_details_text ? 'Book Delivery' : 'Delivery Order'
 }
 
-function mapCustomerOrder(order, invoices = [], payments = []) {
+function driverName(driver) {
+  return [driver?.first_name, driver?.last_name].filter(Boolean).join(' ').trim()
+}
+
+function mapCustomerOrder(order) {
   const activeItems = (order.order_items || []).filter(item => !item.is_deleted)
   const requirements = activeItems
     .map(item => item.parcel_description || item.item_type || 'Item')
     .filter(Boolean)
-  const invoiceTotal = invoices.reduce((sum, invoice) => sum + Number(invoice.invoice_value || 0), 0)
-  const invoiceCurrency = invoices[0]?.currency || order.currency || 'USD'
-  const paidUsd = payments.reduce((sum, payment) => sum + Number(payment.amount_usd || 0), 0)
-  const paidLbp = payments.reduce((sum, payment) => sum + Number(payment.amount_lbp || 0), 0)
+  const assignedDriverName = driverName(order.driver)
 
   return {
     id: order.id,
@@ -745,19 +1116,14 @@ function mapCustomerOrder(order, invoices = [], payments = []) {
     status: order.status,
     deliveryStatus: order.delivery_status || 'Awaiting Pickup',
     paymentStatus: order.payment_status,
+    driverId: order.driver_id,
+    driverName: assignedDriverName || '',
+    driverStatus: order.driver?.driver_status || '',
     pickup: order.pickup_address || '',
     drop: order.delivery_address || '',
     schedule: formatOrderSchedule(order),
-    invoice: invoices.length
-      ? `${invoices.length} invoice${invoices.length > 1 ? 's' : ''} / ${formatMoney(invoiceTotal, invoiceCurrency)}`
-      : 'Waiting for quotation',
-    payment: payments.length
-      ? `Collected USD ${paidUsd.toFixed(2)}${paidLbp ? ` / LBP ${paidLbp.toFixed(0)}` : ''}`
-      : order.payment_status || 'Unpaid',
     requirements: requirements.length ? requirements : (order.order_details_text ? order.order_details_text.split('\n').filter(Boolean) : []),
     raw: order,
-    invoices,
-    payments,
   }
 }
 
@@ -961,7 +1327,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
         title="Book Delivery"
         subtitle="Tell us what you need"
       />
-      <main className="space-y-4 px-5 pb-40 pt-5">
+      <main className="space-y-4 px-5 pb-4 pt-4">
         <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -1053,7 +1419,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
           </div>
         )}
 
-        <div className="fixed bottom-[76px] left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur">
+        <div className="rounded-lg bg-white pt-1">
           <button type="button" onClick={submitRequest} disabled={saving || loading} className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
             {saving ? 'Submitting...' : 'Submit Request'}
           </button>
@@ -1158,6 +1524,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
           status,
           delivery_status,
           payment_status,
+          driver_id,
           currency,
           total_amount,
           delivery_fee,
@@ -1172,6 +1539,13 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
             quantity,
             line_total,
             is_deleted
+          ),
+          driver:contacts!driver_id (
+            id,
+            first_name,
+            last_name,
+            mobile,
+            driver_status
           )
         `)
         .eq('customer_id', customerSession.contact_id)
@@ -1188,41 +1562,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
         return
       }
 
-      const ids = (orderRows || []).map(order => order.id)
-      let invoicesByOrder = {}
-      let paymentsByOrder = {}
-
-      if (ids.length) {
-        const [invoiceResult, paymentResult] = await Promise.all([
-          supabase
-            .from('retail_goods_invoices')
-            .select('id, order_id, shop_name, invoice_reference, invoice_date, invoice_value, currency, paid')
-            .in('order_id', ids),
-          supabase
-            .from('payment_collections')
-            .select('id, order_id, collection_type, amount_usd, amount_lbp, collected_at')
-            .in('order_id', ids),
-        ])
-        if (cancelled) return
-
-        if (invoiceResult.error) {
-          setError(invoiceResult.error.message)
-        }
-        if (paymentResult.error) {
-          setError(paymentResult.error.message)
-        }
-
-        invoicesByOrder = (invoiceResult.data || []).reduce((acc, invoice) => {
-          acc[invoice.order_id] = [...(acc[invoice.order_id] || []), invoice]
-          return acc
-        }, {})
-        paymentsByOrder = (paymentResult.data || []).reduce((acc, payment) => {
-          acc[payment.order_id] = [...(acc[payment.order_id] || []), payment]
-          return acc
-        }, {})
-      }
-
-      setOrders((orderRows || []).map(order => mapCustomerOrder(order, invoicesByOrder[order.id] || [], paymentsByOrder[order.id] || [])))
+      setOrders((orderRows || []).map(order => mapCustomerOrder(order)))
       setLoading(false)
     }
 
@@ -1232,7 +1572,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
 
   return (
     <>
-      <Header title="My Orders" subtitle="Track bookings, invoices and payments" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
+      <Header title="My Orders" subtitle="Track bookings and payment status" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 px-4 text-sm text-slate-500">
           <Search className="h-4 w-4 text-sky-600" />
@@ -1297,15 +1637,18 @@ function OrderCard({ order, onView, onEdit }) {
         {order.pickup ? `Pickup: ${order.pickup} to Drop: ${order.drop}` : `Delivery: ${order.drop}`}
       </p>
       <p className="mt-1 text-sm text-slate-500">{order.schedule}</p>
-      <div className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
+      <div className={cx('mt-4 grid gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3', order.driverId ? 'grid-cols-2' : 'grid-cols-1')}>
         <div>
-          <p className="text-xs text-slate-500">Invoice</p>
-          <p className="mt-1 text-xs font-semibold text-slate-950">{order.invoice}</p>
+          <p className="text-xs text-slate-500">Payment status</p>
+          <p className="mt-1 text-sm font-semibold text-slate-950">{paymentStatusLabel(order.paymentStatus)}</p>
         </div>
-        <div>
-          <p className="text-xs text-slate-500">Payment</p>
-          <p className="mt-1 text-sm font-semibold text-slate-950">{order.payment}</p>
-        </div>
+        {order.driverId && (
+          <div>
+            <p className="text-xs text-slate-500">Driver</p>
+            <p className="mt-1 text-sm font-semibold text-slate-950">{order.driverName || 'Assigned'}</p>
+            <p className="mt-1 text-xs font-semibold text-sky-700">{order.deliveryStatus || 'Awaiting Pickup'}</p>
+          </div>
+        )}
       </div>
       <div className="mt-4 flex gap-3">
         <button type="button" onClick={onView} className="rounded-lg bg-sky-100 px-5 py-2 text-sm font-bold text-sky-700">View</button>
@@ -1339,8 +1682,6 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
     return [label, state, timelineTone(state)]
   })
   const raw = order.raw || {}
-  const invoices = order.invoices || []
-  const payments = order.payments || []
 
   return (
     <>
@@ -1360,13 +1701,20 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
           <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-white p-3">
             <div>
               <p className="text-xs text-slate-500">Payment status</p>
-              <p className="mt-1 text-sm font-semibold capitalize">{order.paymentStatus || 'unpaid'}</p>
+              <p className="mt-1 text-sm font-semibold">{paymentStatusLabel(order.paymentStatus)}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Delivery status</p>
+              <p className="text-xs text-slate-500">{order.driverId ? 'Driver status' : 'Delivery status'}</p>
               <p className="mt-1 text-sm font-semibold">{order.deliveryStatus || 'Awaiting Pickup'}</p>
             </div>
           </div>
+          {order.driverId && (
+            <div className="mt-3 rounded-lg border border-sky-100 bg-white p-3">
+              <p className="text-xs text-slate-500">Assigned driver</p>
+              <p className="mt-1 text-sm font-semibold">{order.driverName || 'Assigned'}</p>
+              {order.driverStatus && <p className="mt-1 text-xs font-semibold capitalize text-slate-500">{order.driverStatus.replaceAll('_', ' ')}</p>}
+            </div>
+          )}
           <div className="mt-3 rounded-lg border border-sky-100 bg-white p-3">
             <p className="text-xs text-slate-500">Total amount</p>
             <p className="mt-1 text-sm font-semibold">{formatMoney(raw.total_amount, raw.currency)}</p>
@@ -1396,42 +1744,6 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
               ))
             ) : (
               <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm text-slate-500">No item rows available.</div>
-            )}
-          </div>
-        </Section>
-        <Section title="Retail Goods Invoices" subtitle="retail_goods_invoices">
-          <div className="space-y-3">
-            {invoices.length > 0 ? invoices.map(invoice => (
-              <div key={invoice.id} className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-bold text-slate-950">{invoice.shop_name || 'Invoice'}</p>
-                    <p className="mt-1 text-xs text-slate-500">{invoice.invoice_reference || 'No reference'} / {invoice.invoice_date || 'No date'}</p>
-                  </div>
-                  <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.paid ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')}>
-                    {invoice.paid ? 'Paid' : 'Unpaid'}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm font-semibold">{formatMoney(invoice.invoice_value, invoice.currency)}</p>
-              </div>
-            )) : (
-              <InfoLine label="Invoice" value="Waiting for quotation" />
-            )}
-          </div>
-        </Section>
-        <Section title="Payment Collections" subtitle="payment_collections">
-          <div className="space-y-3">
-            {payments.length > 0 ? payments.map(payment => (
-              <div key={payment.id} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-3">
-                <p className="text-sm font-bold capitalize text-orange-800">{payment.collection_type || 'Payment'}</p>
-                <p className="mt-1 text-xs text-orange-700">{formatDateTime(payment.collected_at)}</p>
-                <p className="mt-3 text-sm font-semibold text-slate-950">
-                  USD {Number(payment.amount_usd || 0).toFixed(2)}
-                  {Number(payment.amount_lbp || 0) > 0 ? ` / LBP ${Number(payment.amount_lbp).toFixed(0)}` : ''}
-                </p>
-              </div>
-            )) : (
-              <InfoLine label="Collection" value="No payment collected yet" tone="amber" />
             )}
           </div>
         </Section>
@@ -1609,7 +1921,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       status: 'pending',
       order_items: insertedItems || [],
     }
-    onSave(mapCustomerOrder(updatedRaw, order.invoices || [], order.payments || []))
+    onSave(mapCustomerOrder(updatedRaw))
     setSaving(false)
   }
 
@@ -1694,6 +2006,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 }
 
 function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
+  const { language, setLanguage, t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [addresses, setAddresses] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1949,15 +2262,25 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
     setSaving(false)
   }
 
+  function changeLanguage(nextLanguage) {
+    const normalized = normalizeLanguage(nextLanguage)
+    setLanguage(normalized)
+    const nextSession = saveCustomerSession({
+      ...customerSession,
+      language: normalized,
+    })
+    onSessionUpdate(nextSession)
+  }
+
   const profileName = profile ? customerName(profile) : customerSession?.first_name || 'Customer'
 
   return (
     <>
-      <Header title="Profile" subtitle="Account and saved addresses" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
+      <Header title={t('profile.title')} subtitle={t('profile.subtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            Loading profile...
+            {t('common.loadingProfile')}
           </div>
         )}
         {error && (
@@ -1967,7 +2290,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
         )}
 
         {!loading && (
-          <Section title={profileName} subtitle={profile?.code || profile?.account_number || 'Customer account'}>
+          <Section title={profileName} subtitle={profile?.code || profile?.account_number || t('home.customerAccount')}>
           <div className="mb-4 flex items-center gap-4">
             <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sky-100 text-2xl font-bold text-sky-700">
               {profile?.profile_photo_url ? (
@@ -1978,66 +2301,87 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
             </div>
             <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 text-sm font-bold text-white">
               <Upload className="h-4 w-4" />
-              Photo
+              {t('common.photo')}
               <input type="file" accept="image/*" className="hidden" onChange={uploadProfilePhoto} disabled={saving} />
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className={cx('inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold', profile?.credit_debit_allowed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
               <ShieldCheck className="h-3.5 w-3.5" />
-              {profile?.credit_debit_allowed ? 'Credit/Debit Allowed' : 'Cash Only'}
+              {profile?.credit_debit_allowed ? t('profile.creditAllowed') : t('profile.cashOnly')}
             </span>
           </div>
           <div className="mt-4 rounded-lg border border-sky-100 bg-slate-50 p-3">
-            <p className="text-sm font-semibold">Mobile {profile?.mobile || customerSession?.mobile || 'Not set'}</p>
-            <p className="mt-1 text-xs text-slate-500">WhatsApp {profile?.whatsapp_number || profile?.mobile || 'Not set'}</p>
-            <p className="mt-1 text-xs text-slate-500">Email {profile?.email || 'Not set'}</p>
+            <p className="text-sm font-semibold">{t('profile.mobileNumber')} {profile?.mobile || customerSession?.mobile || t('common.notSet')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('common.whatsapp')} {profile?.whatsapp_number || profile?.mobile || t('common.notSet')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('common.email')} {profile?.email || t('common.notSet')}</p>
           </div>
           </Section>
         )}
 
         {!loading && (
-          <Section title="Mobile Number" subtitle="Used for login and WhatsApp">
+          <Section title={t('profile.mobileNumber')} subtitle={t('profile.mobileSubtitle')}>
             <div className="space-y-3">
-              <ControlledField label="Mobile number" value={mobileInput} onChange={setMobileInput} />
+              <ControlledField label={t('profile.mobileNumber')} value={mobileInput} onChange={setMobileInput} />
               <button type="button" onClick={saveMobileChange} disabled={saving || mobileInput.trim() === (profile?.mobile || '').trim()} className="flex h-11 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-                {saving ? 'Saving...' : 'Update Mobile Number'}
+                {saving ? t('common.saving') : t('profile.updateMobile')}
               </button>
             </div>
           </Section>
         )}
 
+        {!loading && (
+          <Section title={t('profile.language')} subtitle={t('profile.languageSubtitle')}>
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1 sm:grid-cols-4">
+              {languageOptions.map(option => (
+                <button
+                  key={option.code}
+                  type="button"
+                  onClick={() => changeLanguage(option.code)}
+                  className={cx(
+                    'min-h-11 rounded-md px-2 text-sm font-bold transition',
+                    language === option.code ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'
+                  )}
+                >
+                  {option.nativeLabel}
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">{t('profile.languageSaved')}</p>
+          </Section>
+        )}
+
         {editingAddress && (
-          <Section title={editingAddress === 'new' ? 'Add Address' : 'Edit Address'}>
+          <Section title={editingAddress === 'new' ? t('profile.addAddress') : t('profile.editAddress')}>
             <div className="space-y-4">
-              <ControlledField label="Address name" value={addressForm.address_name} onChange={value => addressField('address_name', value)} />
-              <ControlledField label="Reference" value={addressForm.reference} onChange={value => addressField('reference', value)} />
-              <ControlledField label="Address line" value={addressForm.address_line} onChange={value => addressField('address_line', value)} />
+              <ControlledField label={t('profile.addressName')} value={addressForm.address_name} onChange={value => addressField('address_name', value)} />
+              <ControlledField label={t('profile.reference')} value={addressForm.reference} onChange={value => addressField('reference', value)} />
+              <ControlledField label={t('profile.addressLine')} value={addressForm.address_line} onChange={value => addressField('address_line', value)} />
               <div className="grid grid-cols-2 gap-3">
-                <ControlledField label="City" value={addressForm.city} onChange={value => addressField('city', value)} />
-                <ControlledField label="Phone" value={addressForm.phone} onChange={value => addressField('phone', value)} />
+                <ControlledField label={t('profile.city')} value={addressForm.city} onChange={value => addressField('city', value)} />
+                <ControlledField label={t('profile.phone')} value={addressForm.phone} onChange={value => addressField('phone', value)} />
               </div>
               <label className="flex items-center gap-3 rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm font-semibold">
                 <input type="checkbox" checked={addressForm.is_primary} onChange={event => addressField('is_primary', event.target.checked)} />
-                Primary address
+                {t('profile.primaryAddress')}
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={saveAddress} disabled={saving} className="flex h-11 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-                  {saving ? 'Saving...' : 'Save'}
+                  {saving ? t('common.saving') : t('common.save')}
                 </button>
                 <button type="button" onClick={() => setEditingAddress(null)} disabled={saving} className="flex h-11 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
           </Section>
         )}
 
-        <Section title="Saved Addresses" subtitle="Used for pickup and drop locations" action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">Add</button>}>
+        <Section title={t('profile.savedAddresses')} subtitle={t('profile.savedAddressesSubtitle')} action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">{t('common.add')}</button>}>
           <div className="space-y-3">
             {addresses.length === 0 && (
               <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
-                No saved addresses yet.
+                {t('profile.noAddresses')}
               </div>
             )}
             {addresses.map(address => (
@@ -2049,32 +2393,29 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
                     </div>
                     <div className="min-w-0">
                       <p className="font-bold">{address.address_name}</p>
-                      <p className="mt-1 text-sm text-slate-500">{addressText(address) || 'No address line'}</p>
+                      <p className="mt-1 text-sm text-slate-500">{addressText(address) || t('profile.noAddressLine')}</p>
                       {address.reference && <p className="mt-1 text-xs text-slate-400">{address.reference}</p>}
                     </div>
                   </div>
-                  {address.is_primary && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Primary</span>}
+                  {address.is_primary && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">{t('profile.primary')}</span>}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Set primary</button>}
-                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">Edit</button>
-                  <button type="button" onClick={() => deleteAddress(address)} disabled={saving} className="rounded-lg bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">Delete</button>
+                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">{t('profile.setPrimary')}</button>}
+                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">{t('common.edit')}</button>
+                  <button type="button" onClick={() => deleteAddress(address)} disabled={saving} className="rounded-lg bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">{t('common.delete')}</button>
                 </div>
               </div>
             ))}
           </div>
         </Section>
 
-        <Section title="Preferences">
-          <InfoLine label="Default payment" value={profile?.credit_debit_allowed ? 'Credit/Debit allowed' : 'Cash on delivery'} />
-          <div className="mt-3">
-            <InfoLine label="Notifications" value={profile?.email ? 'WhatsApp + Email' : 'WhatsApp'} />
-          </div>
+        <Section title={t('profile.preferences')}>
+          <InfoLine label={t('profile.defaultPayment')} value={profile?.credit_debit_allowed ? t('profile.creditDebitAllowed') : t('profile.cashOnDelivery')} />
         </Section>
 
         <button type="button" onClick={onLogout} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white text-sm font-bold text-rose-600">
           <LogOut className="h-4 w-4" />
-          Logout
+          {t('profile.logout')}
         </button>
       </main>
     </>
@@ -2086,38 +2427,59 @@ export default function CustomerMobileApp() {
   const initialSession = loadCustomerSession()
   const devBypass = isDevelopmentBypass()
   const [customerSession, setCustomerSession] = useState(initialSession)
+  const [language, setLanguageState] = useState(() => loadCustomerLanguage(initialSession))
   const [isLoggedIn, setIsLoggedIn] = useState(!!initialSession || devBypass)
   const [screen, setScreen] = useState(initialRoute)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [requirements, setRequirements] = useState(initialRequirements)
-  const [deliveryStatusByOrder, setDeliveryStatusByOrder] = useState({})
-  const [deliveryNotice, setDeliveryNotice] = useState(null)
+  const [statusByOrder, setStatusByOrder] = useState({})
+  const [orderNotice, setOrderNotice] = useState(null)
+  const currentLanguage = normalizeLanguage(language)
+  const currentLanguageOption = languageOptions.find(option => option.code === currentLanguage) || languageOptions[0]
+
+  function setLanguage(nextLanguage) {
+    const normalized = normalizeLanguage(nextLanguage)
+    localStorage.setItem(CUSTOMER_LANGUAGE_KEY, normalized)
+    setLanguageState(normalized)
+  }
+
+  const i18nValue = useMemo(() => ({
+    language: currentLanguage,
+    dir: currentLanguageOption.dir,
+    setLanguage,
+    t: (key, values) => interpolate(translations[currentLanguage]?.[key] || translations.en[key] || key, values),
+  }), [currentLanguage, currentLanguageOption.dir])
+
+  useEffect(() => {
+    document.documentElement.lang = currentLanguage
+    document.documentElement.dir = currentLanguageOption.dir
+  }, [currentLanguage, currentLanguageOption.dir])
 
   useEffect(() => {
     if (!isLoggedIn || !customerSession?.contact_id) return undefined
 
     let cancelled = false
 
-    async function loadInitialDeliveryStatuses() {
+    async function loadInitialOrderStatuses() {
       let query = supabase
         .from('delivery_orders')
-        .select('id,delivery_status')
+        .select('id,order_number,status,delivery_status,payment_status')
         .eq('customer_id', customerSession.contact_id)
       if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
 
       const { data } = await query
       if (cancelled) return
 
-      setDeliveryStatusByOrder((data || []).reduce((acc, order) => {
-        acc[order.id] = order.delivery_status || 'Awaiting Pickup'
+      setStatusByOrder((data || []).reduce((acc, order) => {
+        acc[order.id] = notificationSnapshot(order)
         return acc
       }, {}))
     }
 
-    loadInitialDeliveryStatuses()
+    loadInitialOrderStatuses()
 
     const channel = supabase
-      .channel(`customer-delivery-status-${customerSession.contact_id}`)
+      .channel(`customer-order-updates-${customerSession.contact_id}`)
       .on(
         'postgres_changes',
         {
@@ -2128,25 +2490,45 @@ export default function CustomerMobileApp() {
         },
         payload => {
           const updatedOrder = payload.new
-          const nextStatus = updatedOrder.delivery_status || 'Awaiting Pickup'
+          const nextSnapshot = notificationSnapshot(updatedOrder)
 
-          setDeliveryStatusByOrder(current => {
-            const previousStatus = current[updatedOrder.id]
-            if (previousStatus && previousStatus !== nextStatus) {
-              setDeliveryNotice({
+          setStatusByOrder(current => {
+            const previous = current[updatedOrder.id]
+            const changes = previous ? [
+              previous.orderStatus !== nextSnapshot.orderStatus && {
+                field: i18nValue.t('notice.orderStatus'),
+                status: statusLabel(nextSnapshot.orderStatus),
+              },
+              previous.deliveryStatus !== nextSnapshot.deliveryStatus && {
+                field: i18nValue.t('notice.deliveryStatus'),
+                status: nextSnapshot.deliveryStatus,
+              },
+              previous.paymentStatus !== nextSnapshot.paymentStatus && {
+                field: i18nValue.t('notice.paymentStatus'),
+                status: paymentStatusLabel(nextSnapshot.paymentStatus),
+              },
+            ].filter(Boolean) : []
+
+            if (changes.length > 0) {
+              const firstChange = changes[0]
+              setOrderNotice({
                 orderId: updatedOrder.id,
-                orderNumber: updatedOrder.order_number,
-                deliveryStatus: nextStatus,
+                orderNumber: nextSnapshot.orderNumber,
+                message: i18nValue.t('notice.statusChanged', {
+                  order: nextSnapshot.orderNumber || 'Your order',
+                  field: firstChange.field,
+                  status: firstChange.status,
+                }),
               })
             }
-            return { ...current, [updatedOrder.id]: nextStatus }
+            return { ...current, [updatedOrder.id]: nextSnapshot }
           })
 
           setSelectedOrder(current => {
             if (!current || current.id !== updatedOrder.id) return current
             return {
               ...current,
-              deliveryStatus: nextStatus,
+              deliveryStatus: nextSnapshot.deliveryStatus,
               status: updatedOrder.status || current.status,
               paymentStatus: updatedOrder.payment_status || current.paymentStatus,
               raw: {
@@ -2163,53 +2545,59 @@ export default function CustomerMobileApp() {
       cancelled = true
       supabase.removeChannel(channel)
     }
-  }, [isLoggedIn, customerSession])
+  }, [isLoggedIn, customerSession, currentLanguage])
 
   if (!isLoggedIn && screen === 'otp') {
     return (
-      <OtpScreen
-        onDone={async customer => {
-          if (!COMPANY_ID) throw new Error('Company is not configured for customer registration.')
+      <I18nContext.Provider value={i18nValue}>
+        <OtpScreen
+          onDone={async customer => {
+            if (!COMPANY_ID) throw new Error('Company is not configured for customer registration.')
 
-          const { data, error } = await supabase.rpc('customer_register_with_password', {
-            p_company_id: COMPANY_ID,
-            p_full_name: customer.full_name,
-            p_mobile: customer.mobile,
-            p_email: customer.email,
-            p_otp_channel: customer.otp_channel,
-            p_password: customer.password,
-          })
+            const { data, error } = await supabase.rpc('customer_register_with_password', {
+              p_company_id: COMPANY_ID,
+              p_full_name: customer.full_name,
+              p_mobile: customer.mobile,
+              p_email: customer.email,
+              p_otp_channel: customer.otp_channel,
+              p_password: customer.password,
+            })
 
-          if (error) {
-            const message = error.message || ''
-            if (message.includes('CUSTOMER_ALREADY_EXISTS')) {
-              throw new Error('This customer already exists. Please login with the same email/mobile and password.')
+            if (error) {
+              const message = error.message || ''
+              if (message.includes('CUSTOMER_ALREADY_EXISTS')) {
+                throw new Error('This customer already exists. Please login with the same email/mobile and password.')
+              }
+              if (message.includes('PASSWORD_TOO_SHORT')) {
+                throw new Error('Password must be at least 8 characters.')
+              }
+              if (message.includes('COMPANY_REQUIRED')) {
+                throw new Error('Company is not configured for customer registration.')
+              }
+              throw new Error('Customer registration failed. Please try again.')
             }
-            if (message.includes('PASSWORD_TOO_SHORT')) {
-              throw new Error('Password must be at least 8 characters.')
-            }
-            if (message.includes('COMPANY_REQUIRED')) {
-              throw new Error('Company is not configured for customer registration.')
-            }
-            throw new Error('Customer registration failed. Please try again.')
-          }
 
-          const user = data?.[0]
-          if (!user?.contact_id) throw new Error('Customer registration did not return a customer profile.')
+            const user = data?.[0]
+            if (!user?.contact_id) throw new Error('Customer registration did not return a customer profile.')
 
-          const session = saveCustomerSession(user)
-          setCustomerSession(session)
-          setIsLoggedIn(true)
-          setScreen('home')
-          setCustomerHash('home')
-        }}
-        onBack={() => setScreen('login')}
-      />
+            const session = saveCustomerSession({ ...user, language: currentLanguage })
+            setCustomerSession(session)
+            setIsLoggedIn(true)
+            setScreen('home')
+            setCustomerHash('home')
+          }}
+          onBack={() => setScreen('login')}
+        />
+      </I18nContext.Provider>
     )
   }
 
   if (!isLoggedIn) {
-    return <LoginScreen onLogin={session => { setCustomerSession(session); setIsLoggedIn(true); setScreen('home'); setCustomerHash('home') }} onOtp={() => setScreen('otp')} />
+    return (
+      <I18nContext.Provider value={i18nValue}>
+        <LoginScreen onLogin={session => { const nextSession = saveCustomerSession({ ...session, language: currentLanguage }); setCustomerSession(nextSession); setIsLoggedIn(true); setScreen('home'); setCustomerHash('home') }} onOtp={() => setScreen('otp')} />
+      </I18nContext.Provider>
+    )
   }
 
   function goTab(tab) {
@@ -2247,8 +2635,8 @@ export default function CustomerMobileApp() {
     setCustomerSession(null)
     setIsLoggedIn(false)
     setSelectedOrder(null)
-    setDeliveryNotice(null)
-    setDeliveryStatusByOrder({})
+    setOrderNotice(null)
+    setStatusByOrder({})
     setScreen('login')
     setCustomerHash('login')
   }
@@ -2283,17 +2671,19 @@ export default function CustomerMobileApp() {
   }
 
   return (
-    <Shell activeTab={activeTab} onTab={goTab}>
-      <DeliveryStatusNotice
-        notice={deliveryNotice}
-        onClose={() => setDeliveryNotice(null)}
-        onOpenOrders={() => {
-          setDeliveryNotice(null)
-          setScreen('orders')
-          setCustomerHash('orders')
-        }}
-      />
-      {content}
-    </Shell>
+    <I18nContext.Provider value={i18nValue}>
+      <Shell activeTab={activeTab} onTab={goTab}>
+        <OrderChangeNotice
+          notice={orderNotice}
+          onClose={() => setOrderNotice(null)}
+          onOpenOrders={() => {
+            setOrderNotice(null)
+            setScreen('orders')
+            setCustomerHash('orders')
+          }}
+        />
+        {content}
+      </Shell>
+    </I18nContext.Provider>
   )
 }
