@@ -887,7 +887,7 @@ function OtpScreen({ onDone, onBack }) {
   )
 }
 
-function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder, onEditOrder }) {
+function HomeScreen({ customerSession, refreshKey, onBook, onOrders, onProfile, onViewOrder, onEditOrder }) {
   const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
@@ -967,7 +967,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
 
     loadHome()
     return () => { cancelled = true }
-  }, [customerSession])
+  }, [customerSession, refreshKey])
 
   const displayName = customerName(profile) || customerSession?.first_name || 'Customer'
   const shortName = displayName.split(' ')[0]
@@ -1480,7 +1480,7 @@ function Field({ label, value, type = 'text' }) {
   )
 }
 
-function OrdersScreen({ customerSession, onView, onEdit }) {
+function OrdersScreen({ customerSession, refreshKey, onView, onEdit }) {
   const [orders, setOrders] = useState([])
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
@@ -1572,7 +1572,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
 
     loadOrders()
     return () => { cancelled = true }
-  }, [customerSession])
+  }, [customerSession, refreshKey])
 
   return (
     <>
@@ -2438,6 +2438,7 @@ export default function CustomerMobileApp() {
   const [requirements, setRequirements] = useState(initialRequirements)
   const [statusByOrder, setStatusByOrder] = useState({})
   const [orderNotice, setOrderNotice] = useState(null)
+  const [orderRefreshKey, setOrderRefreshKey] = useState(0)
   const currentLanguage = normalizeLanguage(language)
   const currentLanguageOption = languageOptions.find(option => option.code === currentLanguage) || languageOptions[0]
 
@@ -2495,6 +2496,7 @@ export default function CustomerMobileApp() {
         payload => {
           const updatedOrder = payload.new
           const nextSnapshot = notificationSnapshot(updatedOrder)
+          setOrderRefreshKey(current => current + 1)
 
           setStatusByOrder(current => {
             const previous = current[updatedOrder.id]
@@ -2641,6 +2643,7 @@ export default function CustomerMobileApp() {
     setSelectedOrder(null)
     setOrderNotice(null)
     setStatusByOrder({})
+    setOrderRefreshKey(0)
     setScreen('login')
     setCustomerHash('login')
   }
@@ -2651,7 +2654,7 @@ export default function CustomerMobileApp() {
   if (screen === 'book') {
     content = <BookDeliveryScreen requirements={requirements} setRequirements={setRequirements} customerSession={customerSession} />
   } else if (screen === 'orders') {
-    content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} />
+    content = <OrdersScreen customerSession={customerSession} refreshKey={orderRefreshKey} onView={openOrder} onEdit={editOrder} />
   } else if (screen === 'orderDetails') {
     activeTab = 'orders'
     content = <OrderDetailsScreen order={selectedOrder} onEdit={editOrder} onBack={() => setScreen('orders')} />
@@ -2665,6 +2668,7 @@ export default function CustomerMobileApp() {
     content = (
       <HomeScreen
         customerSession={customerSession}
+        refreshKey={orderRefreshKey}
         onBook={() => setScreen('book')}
         onOrders={() => setScreen('orders')}
         onProfile={() => setScreen('profile')}
