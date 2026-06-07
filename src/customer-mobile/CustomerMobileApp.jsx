@@ -394,11 +394,12 @@ function useI18n() {
   return useContext(I18nContext)
 }
 
-function statusClass(status) {
+function deliveryStatusClass(status) {
   const key = status?.toLowerCase()
-  if (key === 'pending') return 'bg-amber-100 text-amber-700'
-  if (key === 'confirmed') return 'bg-blue-100 text-blue-700'
-  if (key === 'completed') return 'bg-emerald-100 text-emerald-700'
+  if (key === 'awaiting pickup') return 'bg-amber-100 text-amber-700'
+  if (key === 'picked up') return 'bg-blue-100 text-blue-700'
+  if (key === 'in transit') return 'bg-sky-100 text-sky-700'
+  if (key === 'delivered') return 'bg-emerald-100 text-emerald-700'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -412,19 +413,10 @@ function paymentStatusLabel(status) {
   return 'Unpaid'
 }
 
-function statusLabel(status) {
-  if (!status) return 'Pending'
-  return status
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, char => char.toUpperCase())
-}
-
 function notificationSnapshot(order) {
   return {
     orderNumber: order.order_number,
-    orderStatus: order.status || '',
     deliveryStatus: order.delivery_status || 'Awaiting Pickup',
-    paymentStatus: order.payment_status || 'unpaid',
   }
 }
 
@@ -1482,6 +1474,7 @@ function Field({ label, value, type = 'text' }) {
 }
 
 function OrdersScreen({ customerSession, refreshKey, onView, onEdit }) {
+  const deliveryFilters = ['all', 'Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered']
   const [orders, setOrders] = useState([])
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
@@ -1490,7 +1483,7 @@ function OrdersScreen({ customerSession, refreshKey, onView, onEdit }) {
   const filtered = useMemo(() => {
     const text = search.trim().toLowerCase()
     return orders.filter(order => {
-      const statusMatch = filter === 'all' || order.status === filter
+      const statusMatch = filter === 'all' || order.deliveryStatus === filter
       const textMatch = !text || order.orderNumber?.toLowerCase().includes(text) || order.drop?.toLowerCase().includes(text)
       return statusMatch && textMatch
     })
@@ -1577,7 +1570,7 @@ function OrdersScreen({ customerSession, refreshKey, onView, onEdit }) {
 
   return (
     <>
-      <Header title="My Orders" subtitle="Track bookings and payment status" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
+      <Header title="My Orders" subtitle="Track delivery and payment status" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 px-4 text-sm text-slate-500">
           <Search className="h-4 w-4 text-sky-600" />
@@ -1589,14 +1582,14 @@ function OrdersScreen({ customerSession, refreshKey, onView, onEdit }) {
           />
         </label>
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {['all', 'pending', 'confirmed', 'assigned', 'delivered'].map(item => (
+          {deliveryFilters.map(item => (
             <button
               key={item}
               type="button"
               onClick={() => setFilter(item)}
-              className={cx('shrink-0 rounded-full px-4 py-2 text-xs font-bold capitalize', filter === item ? 'bg-sky-600 text-white' : 'border border-sky-100 bg-white text-slate-500')}
+              className={cx('shrink-0 rounded-full px-4 py-2 text-xs font-bold', filter === item ? 'bg-sky-600 text-white' : 'border border-sky-100 bg-white text-slate-500')}
             >
-              {item}
+              {item === 'all' ? 'All' : item}
             </button>
           ))}
         </div>
@@ -1636,7 +1629,7 @@ function OrderCard({ order, onView, onEdit }) {
             <p className="text-sm text-slate-500">{order.type}</p>
           </div>
         </div>
-        <span className={cx('shrink-0 rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>
+        <span className={cx('shrink-0 rounded-full px-3 py-1 text-xs font-bold', deliveryStatusClass(order.deliveryStatus))}>{order.deliveryStatus || 'Awaiting Pickup'}</span>
       </div>
       <p className="mt-5 text-sm font-semibold text-slate-950">
         {order.pickup ? `Pickup: ${order.pickup} to Drop: ${order.drop}` : `Delivery: ${order.drop}`}
@@ -1690,7 +1683,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
 
   return (
     <>
-      <Header title="Order Details" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>} />
+      <Header title="Order Details" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold', deliveryStatusClass(order.deliveryStatus))}>{order.deliveryStatus || 'Awaiting Pickup'}</span>} />
       <main className="space-y-5 px-5 py-6">
         <Section title={order.type} subtitle={raw.order_source === 'external' ? 'Customer-created external request' : 'Delivery order'}>
           <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
@@ -1709,7 +1702,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
               <p className="mt-1 text-sm font-semibold">{paymentStatusLabel(order.paymentStatus)}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">{order.driverId ? 'Driver status' : 'Delivery status'}</p>
+              <p className="text-xs text-slate-500">Delivery status</p>
               <p className="mt-1 text-sm font-semibold">{order.deliveryStatus || 'Awaiting Pickup'}</p>
             </div>
           </div>
@@ -1945,7 +1938,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 
   return (
     <>
-      <Header title="Edit Order" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>} />
+      <Header title="Edit Order" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold', deliveryStatusClass(order.deliveryStatus))}>{order.deliveryStatus || 'Awaiting Pickup'}</span>} />
       <main className="space-y-5 px-5 py-6">
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           Changes update the same order. No new order number.
@@ -2482,17 +2475,9 @@ export default function CustomerMobileApp() {
 
     function orderChanges(previous, nextSnapshot) {
       return previous ? [
-        previous.orderStatus !== nextSnapshot.orderStatus && {
-          field: i18nValue.t('notice.orderStatus'),
-          status: statusLabel(nextSnapshot.orderStatus),
-        },
         previous.deliveryStatus !== nextSnapshot.deliveryStatus && {
           field: i18nValue.t('notice.deliveryStatus'),
           status: nextSnapshot.deliveryStatus,
-        },
-        previous.paymentStatus !== nextSnapshot.paymentStatus && {
-          field: i18nValue.t('notice.paymentStatus'),
-          status: paymentStatusLabel(nextSnapshot.paymentStatus),
         },
       ].filter(Boolean) : []
     }
@@ -2500,7 +2485,7 @@ export default function CustomerMobileApp() {
     async function fetchOrderStatusRows() {
       let query = supabase
         .from('delivery_orders')
-        .select('id,order_number,status,delivery_status,payment_status')
+        .select('id,order_number,delivery_status')
         .eq('customer_id', customerSession.contact_id)
       if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
 
@@ -2552,8 +2537,6 @@ export default function CustomerMobileApp() {
         return {
           ...current,
           deliveryStatus: nextSnapshot.deliveryStatus,
-          status: updatedOrder.status || current.status,
-          paymentStatus: updatedOrder.payment_status || current.paymentStatus,
           raw: {
             ...(current.raw || {}),
             ...updatedOrder,
@@ -2595,8 +2578,6 @@ export default function CustomerMobileApp() {
             return {
               ...current,
               deliveryStatus: nextSnapshot.deliveryStatus,
-              status: updatedOrder.status || current.status,
-              paymentStatus: updatedOrder.payment_status || current.paymentStatus,
               raw: {
                 ...(current.raw || {}),
                 ...updatedOrder,
