@@ -32,7 +32,7 @@ const PAYMENT_TYPES = [
   { value: 'other',         label: 'Other' },
 ]
 
-const EMPTY_PACKAGE = {
+export const EMPTY_PACKAGE = {
   tracking_number: '', category: 'other', type: 'bag', package_size: 'small',
   handling: 'regular', vehicle_type: '', quantity: 1, weight_kg: '',
   description: '',
@@ -45,24 +45,25 @@ const EMPTY_PACKAGE = {
  * Props:
  *   packages    - array of package objects
  *   setPackages - state setter (value or updater fn)
+ *   onAdd       - optional parent-owned "Add Package" handler (used when the
+ *                 Add button lives in the collapsible section header)
  */
-export default function OrderPackages({ packages, setPackages, customerName = '' }) {
+export default function OrderPackages({ packages, setPackages, customerName = '', embedded = false, onAdd }) {
   const trackingRefs = React.useRef({})        // rowKey -> tracking <input>
-  const [focusKey, setFocusKey] = React.useState(null)
+  const prevLen      = React.useRef(packages.length)
 
-  // Focus the tracking field of a just-added package once it has rendered.
+  // Focus the tracking field of the last package whenever the list grows,
+  // regardless of whether it was added here or from the section header.
   React.useEffect(() => {
-    if (focusKey != null) {
-      trackingRefs.current[focusKey]?.focus()
-      setFocusKey(null)
+    if (packages.length > prevLen.current) {
+      const last = packages[packages.length - 1]
+      const rk = last?._id ?? last?._key
+      if (rk != null) trackingRefs.current[rk]?.focus()
     }
-  }, [focusKey, packages])
+    prevLen.current = packages.length
+  }, [packages])
 
-  function add() {
-    const key = Date.now()
-    setPackages(p => [...p, { ...EMPTY_PACKAGE, _key: key }])
-    setFocusKey(key)
-  }
+  const add = onAdd || (() => setPackages(p => [...p, { ...EMPTY_PACKAGE, _key: Date.now() }]))
   function remove(i)    { setPackages(p => p.filter((_, idx) => idx !== i)) }
   function update(i, k, v) {
     setPackages(p => { const n = [...p]; n[i] = { ...n[i], [k]: v }; return n })
@@ -79,12 +80,15 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <SectionLabel><Package className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />Delivery Packages</SectionLabel>
-        <button type="button" onClick={add} className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
-          <Plus className="w-3 h-3" /> Add Package
-        </button>
-      </div>
+      {/* When embedded the title + Add button live in the collapsible section header. */}
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <SectionLabel><Package className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />Delivery Packages</SectionLabel>
+          <button type="button" onClick={add} className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+            <Plus className="w-3 h-3" /> Add Package
+          </button>
+        </div>
+      )}
 
       {packages.length === 0 ? (
         <p className="text-xs text-slate-600 border border-dashed border-surface-border rounded-lg px-3 py-4 text-center">

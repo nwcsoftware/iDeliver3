@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react'
-import { Truck, Eye, EyeOff, X, LogIn, AlertCircle, Loader } from 'lucide-react'
+import { Eye, EyeOff, X, LogIn, AlertCircle, Loader } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import logo from '../assets/Logo.png'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -56,9 +57,7 @@ export default function LoginPage() {
 
           {/* Logo */}
           <div className="text-center space-y-3">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-brand-600 shadow-lg shadow-brand-900/50">
-              <Truck className="w-8 h-8 text-white" />
-            </div>
+            <img src={logo} alt="iDeliver" className="inline-block w-20 h-20 object-contain" />
             <div>
               <h1 className="text-2xl font-bold text-white tracking-tight">iDeliver <span className="text-brand-400">III</span></h1>
               <p className="text-slate-500 text-sm mt-0.5">Delivery Management System</p>

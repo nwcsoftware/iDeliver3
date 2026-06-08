@@ -147,12 +147,28 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
           {extraFields.map(ef => (
             <div key={ef.key}>
               <label className="label">{ef.label}</label>
-              <input type={ef.type} className="input" value={form[ef.key] ?? ''}
-                onChange={e => setField(ef.key, e.target.value)} placeholder={ef.placeholder} />
+              {ef.type === 'select' ? (
+                <select className="input" value={form[ef.key] ?? ''}
+                  onChange={e => setField(ef.key, e.target.value)}>
+                  <option value="">{ef.placeholder || '— Select —'}</option>
+                  {ef.options.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input type={ef.type} className="input" value={form[ef.key] ?? ''}
+                  onChange={e => setField(ef.key, e.target.value)} placeholder={ef.placeholder} />
+              )}
             </div>
           ))}
         </div>
       )}
+
+      {/* Credit/Debit allowed — lets this contact close orders with an unpaid balance. */}
+      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+        <input type="checkbox" className="accent-brand-500 w-4 h-4"
+          checked={!!form.credit_debit_allowed}
+          onChange={e => setField('credit_debit_allowed', e.target.checked)} />
+        Credit / Debit allowed (may owe a balance)
+      </label>
 
       <div>
         <label className="label">Notes</label>

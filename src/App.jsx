@@ -14,20 +14,25 @@ import ReportsPage      from './pages/ReportsPage'
 import CompanyPage      from './pages/CompanyPage'
 import ProductsPage          from './pages/ProductsPage'
 import PurchaseInvoicesPage  from './pages/PurchaseInvoicesPage'
+import RetailInvoicesPage     from './pages/RetailInvoicesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
-import { Truck }        from 'lucide-react'
+import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
+import logo             from './assets/Logo.png'
 
 function AppShell() {
   const { currentUser, loading } = useAuth()
+
+  // Customer mobile app runs as a separate experience under the #/customer hash route.
+  if (window.location.hash.startsWith('#/customer')) {
+    return <CustomerMobileApp />
+  }
 
   // Full-screen splash while rehydrating session
   if (loading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-surface gap-4">
-        <div className="w-14 h-14 rounded-2xl bg-brand-600 flex items-center justify-center">
-          <Truck className="w-7 h-7 text-white" />
-        </div>
+        <img src={logo} alt="iDeliver" className="w-16 h-16 object-contain" />
         <div className="flex items-center gap-2 text-slate-500 text-sm">
           <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:0ms]"   />
           <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:150ms]" />
@@ -64,6 +69,7 @@ function AppShell() {
                 <Route path="/company"   element={<CompanyPage    />} />
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/purchase-invoices"    element={<PurchaseInvoicesPage />} />
+                <Route path="/retail-invoices"      element={<RetailInvoicesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />

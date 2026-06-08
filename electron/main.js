@@ -13,7 +13,10 @@ function createWindow() {
     minHeight: 700,
     frame: false,
     titleBarStyle: 'hidden',
-    transparent: true,
+    // Opaque (not transparent) so Windows Aero Snap / drag-to-edge tiling and
+    // normal resizing work like a standard window. backgroundColor matches the
+    // app's surface to avoid a white flash on load.
+    backgroundColor: '#0f172a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

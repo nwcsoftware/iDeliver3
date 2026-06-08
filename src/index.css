@@ -10,7 +10,6 @@
     @apply bg-surface text-slate-100 font-sans antialiased;
     user-select: none;
     overflow: hidden;
-    border-radius: 0.4rem;
   }
   input, textarea, select {
     user-select: text;

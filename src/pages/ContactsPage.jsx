@@ -23,6 +23,8 @@ const TYPE_CONFIG = {
     extraFields: [
       { key: 'supplier_code', label: 'Supplier Code', type: 'text', placeholder: 'SUP-001' },
       { key: 'payment_terms', label: 'Payment Terms (days)', type: 'number', placeholder: '30' },
+      { key: 'shop_type', label: 'BUISINESS TYPE', type: 'select', placeholder: '— Select —',
+        options: ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other'] },
     ],
   },
   customer: {
@@ -50,9 +52,9 @@ const BASE_FORM = {
   company_name: '', commercial_registration: '',
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
   email: '', city: '', address: '', notes: '',
-  account_number: '',
+  account_number: '', credit_debit_allowed: false,
   // supplier extras
-  supplier_code: '', payment_terms: '',
+  supplier_code: '', payment_terms: '', shop_type: '',
   // partner extras
   partner_percentage: '',
 }
@@ -171,11 +173,13 @@ export default function ContactsPage({ type }) {
       city:           form.city?.trim()      || null,
       address:        form.address?.trim()   || null,
       notes:          form.notes?.trim()     || null,
+      credit_debit_allowed: !!form.credit_debit_allowed,
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       // type-specific
       ...(type === 'supplier' ? {
         supplier_code: form.supplier_code?.trim() || null,
         payment_terms: Number(form.payment_terms) || null,
+        shop_type:     form.shop_type?.trim() || null,
       } : {}),
       ...(type === 'partner' ? {
         partner_percentage: Number(form.partner_percentage) || null,

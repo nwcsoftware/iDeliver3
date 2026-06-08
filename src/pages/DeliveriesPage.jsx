@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
-  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock,
+  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -12,7 +12,7 @@ import Badge from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
-import OrderPackages from '../components/orders/OrderPackages'
+import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages'
 import { saveOrderPackages } from '../lib/orderPackages'
 
 /* ── constants ───────────────────────────────────────────── */
@@ -104,15 +104,24 @@ function adjustTime(t, deltaMinutes) {
 
 const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
 
+const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD' }
+
 const EMPTY_CUSTOMER = {
   entity_type: 'individual',
   company_name: '', commercial_registration: '',
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
-  email: '', city: '', address: '', notes: '', account_number: '',
+  email: '', city: '', address: '', notes: '', account_number: '', credit_debit_allowed: false,
 }
 
 function customerName(c) {
   return `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
+}
+
+// Display name for a contact in lists: company name for companies/partners,
+// otherwise the person's name.
+function customerListName(c) {
+  const isCompany = c.entity_type === 'company' || c.contact_type === 'partner'
+  return (isCompany && c.company_name) ? c.company_name : (customerName(c) || '—')
 }
 
 const PAYMENT_METHODS = [
@@ -215,6 +224,36 @@ function SectionLabel({ children }) {
   return <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">{children}</p>
 }
 
+// Order-form sections, in display order. Used to collapse/expand each block.
+const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'packages', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
+// Sections expanded by default on a new order; the rest start collapsed.
+const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'notes']
+const allSectionsClosed = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, false]))
+const allSectionsOpen   = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, true]))
+const defaultNewSections = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, DEFAULT_OPEN_SECTIONS.includes(s)]))
+
+/* A vertically collapsible form section. Header toggles open/closed; tabbing or
+   clicking the header also expands it, so a fresh (all-collapsed) order opens
+   one section at a time as the user moves through it. `right` is an optional
+   header action (e.g. an Add button) that opens the section when used. */
+function CollapsibleSection({ title, open, onToggle, right, children }) {
+  return (
+    <div className="border border-surface-border rounded-lg overflow-hidden">
+      <div className="flex items-center bg-surface-hover/40">
+        <button type="button"
+          onClick={() => onToggle(!open)}
+          onFocus={() => { if (!open) onToggle(true) }}
+          className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left hover:bg-surface-hover transition-colors">
+          <ChevronRight className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+          <span className="text-[11px] text-slate-300 uppercase tracking-wider font-semibold">{title}</span>
+        </button>
+        {right && <div className="pr-2 flex-shrink-0">{right}</div>}
+      </div>
+      {open && <div className="p-3 space-y-3">{children}</div>}
+    </div>
+  )
+}
+
 /* Per-currency total of a saved order, from its line items + fee/discount/vat. */
 function orderTotalsByCurrency(o) {
   const t = {}
@@ -243,6 +282,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [modal,     setModal]     = useState(null)
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
+  const [retailInvoices, setRetailInvoices] = useState([])   // retail_goods_invoices
   const [packages,       setPackages]       = useState([])
   const [origPackageIds, setOrigPackageIds] = useState([])
   const [saving,    setSaving]    = useState(false)
@@ -264,12 +304,21 @@ export default function DeliveriesPage({ closed = false }) {
   const [origPaymentIds,       setOrigPaymentIds]       = useState([])
   const [driverFilter,         setDriverFilter]         = useState('')
   const [customerFilter,       setCustomerFilter]       = useState('')
+  const [categoryFilter,       setCategoryFilter]       = useState('')   // credit|regular|partner|supplier
+  const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
   const [dateFrom,             setDateFrom]             = useState('')
   const [dateTo,               setDateTo]               = useState('')
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status', order, x, y }
   const [driverQuickSearch,    setDriverQuickSearch]    = useState('')
   const [quickBusy,            setQuickBusy]            = useState(false)
+  const [sectionsOpen,         setSectionsOpen]         = useState(allSectionsClosed)
+  const [addCredit,            setAddCredit]            = useState(false)   // creating a Credit Order
+
+  const toggleSection = (id, val) => setSectionsOpen(s => ({ ...s, [id]: val }))
+  const openSection   = (id) => setSectionsOpen(s => (s[id] ? s : { ...s, [id]: true }))
+  // Add a package from the section header (works even while the subform is collapsed/unmounted).
+  const addPackage    = () => { openSection('packages'); setPackages(p => [...p, { ...EMPTY_PACKAGE, _key: Date.now() }]) }
 
   /* ── lookups ─────────────────────────────────────────────── */
 
@@ -278,7 +327,7 @@ export default function DeliveriesPage({ closed = false }) {
     // partners and suppliers.
     const [{ data: custs }, { data: prods }] = await Promise.all([
       supabase.from('contacts')
-        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,company_name,code,account_number')
+        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
         .in('contact_type', ['customer', 'partner', 'supplier']),
       supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
     ])
@@ -299,6 +348,26 @@ export default function DeliveriesPage({ closed = false }) {
     return sd <= dateTo
   }
 
+  function matchCategory(o) {
+    if (!categoryFilter) return true
+    const c = o.customer
+    if (!c) return false
+    if (categoryFilter === 'credit')  return c.credit_debit_allowed === true
+    if (categoryFilter === 'regular') return c.contact_type === 'customer' && c.credit_debit_allowed !== true
+    if (categoryFilter === 'partner') return c.contact_type === 'partner'
+    if (categoryFilter === 'supplier') return c.contact_type === 'supplier'
+    return true
+  }
+  function matchSource(o) {
+    if (!sourceFilter) return true
+    // External data may be filled with varied spelling/casing (e.g. "EXTERNAL",
+    // "EXTRERNAL"); treat anything starting with EXT as external, else local.
+    const isExternal = (o.order_source || '').trim().toUpperCase().startsWith('EXT')
+    return sourceFilter === 'EXTERNAL' ? isExternal : !isExternal
+  }
+  // An order from the online application = external source.
+  const isOnlineOrder = (o) => (o.order_source || '').trim().toUpperCase().startsWith('EXT')
+
   const filtered = orders.filter(o => {
     // Closed orders live on their own page; the daily Orders page excludes them.
     const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
@@ -312,12 +381,14 @@ export default function DeliveriesPage({ closed = false }) {
       && (filter === 'all' || normalizeStatus(o.status) === filter)
       && (!driverFilter   || o.driver_id   === driverFilter)
       && (!customerFilter || o.customer_id === customerFilter)
+      && matchCategory(o)
+      && matchSource(o)
       && matchScheduledDate(o)
   })
 
-  const hasAdvancedFilters = driverFilter || customerFilter || dateFrom || dateTo
+  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter || sourceFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
-    setDriverFilter(''); setCustomerFilter(''); setDateFrom(''); setDateTo('')
+    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter(''); setSourceFilter(''); setDateFrom(''); setDateTo('')
   }
 
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
@@ -341,20 +412,20 @@ export default function DeliveriesPage({ closed = false }) {
   function fld(k, v) { setForm(f => ({ ...f, [k]: v })); setError('') }
 
   /* Fill the order's customer-related fields from a customer record.
-     For a partner the order is placed on behalf of the partner company, so the
-     company name goes in the customer box and the recipient (the end customer)
-     is left blank to be entered manually. The main_account is always taken from
-     the contact's account_number (read-only on the form). */
+     When the contact is a company (entity_type 'company', or a partner placing
+     the order on its behalf), the company name goes in the customer box and the
+     recipient (the end customer) is left blank to be entered manually. The
+     main_account is always taken from the contact's account_number (read-only). */
   function applyCustomer(c) {
-    const isPartner   = c.contact_type === 'partner'
-    const displayName = isPartner ? (c.company_name || customerName(c)) : customerName(c)
+    const isCompany   = c.entity_type === 'company' || c.contact_type === 'partner'
+    const displayName = (isCompany && c.company_name) ? c.company_name : customerName(c)
     setForm(f => ({
       ...f,
       customer_id:        c.id,
       main_account:       c.account_number ?? '',
-      recipient_name:     isPartner ? '' : (customerName(c) || f.recipient_name),
-      recipient_mobile:   isPartner ? '' : (c.mobile ?? f.recipient_mobile),
-      recipient_whatsapp: isPartner ? '' : (c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp),
+      recipient_name:     isCompany ? '' : (customerName(c) || f.recipient_name),
+      recipient_mobile:   isCompany ? '' : (c.mobile ?? f.recipient_mobile),
+      recipient_whatsapp: isCompany ? '' : (c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp),
       delivery_address:   c.address ?? f.delivery_address,
     }))
     setCustomerInput(displayName)
@@ -422,6 +493,7 @@ export default function DeliveriesPage({ closed = false }) {
       city:            newCustomer.city?.trim()            || null,
       address:         newCustomer.address?.trim()         || null,
       notes:           newCustomer.notes?.trim()           || null,
+      credit_debit_allowed: !!newCustomer.credit_debit_allowed,
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       branch_id:      currentUser?.branch_id || null,
       created_by:     currentUser?.user_id   || null,
@@ -430,7 +502,7 @@ export default function DeliveriesPage({ closed = false }) {
     const { data, error: e } = await supabase
       .from('contacts')
       .insert([payload])
-      .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number')
+      .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,entity_type,company_name,credit_debit_allowed')
       .single()
     if (e) { setCustomerError(e.message); setSavingCustomer(false); return }
 
@@ -447,8 +519,19 @@ export default function DeliveriesPage({ closed = false }) {
   }
 
   function openAdd() {
-    setForm(getEmptyForm()); setItems([]); setPayments([]); setOrigPaymentIds([])
+    setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
+    setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
+    setAddCredit(false)
+    setCustomerInput(''); setError(''); setModal('add')
+  }
+
+  // Credit Order: same form, but pricing sections hidden and credit-only customers.
+  function openAddCredit() {
+    setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
+    setPackages([]); setOrigPackageIds([])
+    setSectionsOpen(defaultNewSections())
+    setAddCredit(true)
     setCustomerInput(''); setError(''); setModal('add')
   }
 
@@ -477,6 +560,22 @@ export default function DeliveriesPage({ closed = false }) {
       unit_price: it.unit_price,
       currency:   it.currency ?? 'USD',
       discount:   it.discount ?? 0,
+    })))
+    const { data: riData } = await supabase
+      .from('retail_goods_invoices')
+      .select('*')
+      .eq('order_id', o.id)
+      .order('created_at')
+    setRetailInvoices((riData ?? []).map(ri => ({
+      _id:               ri.id,
+      shop_name:         ri.shop_name ?? '',
+      shop_type:         ri.shop_type ?? '',
+      contact_id:        ri.contact_id ?? '',
+      contact_code:      ri.contact_code ?? '',
+      invoice_reference: ri.invoice_reference ?? '',
+      invoice_date:      ri.invoice_date ? ri.invoice_date.slice(0, 10) : '',
+      invoice_value:     ri.invoice_value ?? '',
+      currency:          ri.currency ?? 'USD',
     })))
     const { data: payData } = await supabase
       .from('payment_collections')
@@ -523,18 +622,37 @@ export default function DeliveriesPage({ closed = false }) {
     setOrigPackageIds(mappedPackages.map(p => p._id))
 
     const existing = customers.find(x => x.id === o.customer_id) || o.customer
+    const existingIsCompany = existing && (existing.entity_type === 'company' || existing.contact_type === 'partner')
     setCustomerInput(
       existing
-        ? (existing.contact_type === 'partner' ? (existing.company_name || customerName(existing)) : customerName(existing))
+        ? (existingIsCompany && existing.company_name ? existing.company_name : customerName(existing))
         : ''
     )
+    // Editing: keep the core sections open, but collapse the optional ones that
+    // hold no data so a busy order isn't overwhelming.
+    const hasTotals = (Number(o.total_amount) || 0) !== 0
+      || (Number(o.delivery_fee) || 0) !== 0
+      || (Number(o.discount_amount) || 0) !== 0
+      || (data ?? []).length > 0
+    setSectionsOpen({
+      order_type:      true,
+      customer:        true,
+      route:           true,
+      assignment:      !!o.driver_id,
+      packages:        mappedPackages.length > 0,
+      items:           (data ?? []).length > 0,
+      retail_invoices: (riData ?? []).length > 0,
+      totals:          hasTotals,
+      payments:        mappedPayments.length > 0,
+      notes:           !!(o.order_details_text || o.special_instructions),
+    })
     setError(''); setModal(o)
   }
 
   function closeModal() {
-    setModal(null); setItems([]); setPayments([]); setOrigPaymentIds([]); setError('')
+    setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
-    setCustomerInput(''); setCustomerDropdownOpen(false)
+    setCustomerInput(''); setCustomerDropdownOpen(false); setAddCredit(false)
   }
 
   /* ── payments helpers ────────────────────────────────────── */
@@ -563,6 +681,15 @@ export default function DeliveriesPage({ closed = false }) {
       }
       return next
     })
+  }
+
+  /* Retail goods invoices (retail_goods_invoices). */
+  function addRetailInvoice() {
+    setRetailInvoices(p => [...p, { ...EMPTY_RETAIL_INVOICE, invoice_date: new Date().toISOString().slice(0, 10), _key: Date.now() }])
+  }
+  function removeRetailInvoice(i) { setRetailInvoices(p => p.filter((_, idx) => idx !== i)) }
+  function setRetailInvoice(i, k, v) {
+    setRetailInvoices(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next })
   }
 
   /* ── save ────────────────────────────────────────────────── */
@@ -598,6 +725,7 @@ export default function DeliveriesPage({ closed = false }) {
       recipient_whatsapp:   form.recipient_whatsapp?.trim() || null,
       customer_id:          form.customer_id,
       main_account:         form.main_account || null,
+      is_credit_order:      addCredit || (modal !== 'add' && modal?.is_credit_order === true),
       pickup_address:       form.pickup_address?.trim()  || null,
       delivery_address:     form.delivery_address.trim(),
       delivery_zone_id:     form.delivery_zone_id        || null,
@@ -635,6 +763,8 @@ export default function DeliveriesPage({ closed = false }) {
       orderId = modal.id
       // Soft-delete existing items
       await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', orderId).eq('is_deleted', false)
+      // Retail invoices have no soft-delete flag — replace the set outright.
+      await supabase.from('retail_goods_invoices').delete().eq('order_id', orderId)
     }
 
     if (items.length > 0) {
@@ -650,6 +780,27 @@ export default function DeliveriesPage({ closed = false }) {
       }))
       const { error: ie } = await supabase.from('order_items').insert(rows)
       if (ie) { setError(ie.message); setSaving(false); return }
+    }
+
+    // Retail goods invoices — only rows with a shop selected.
+    const retailRows = retailInvoices
+      .filter(r => r.shop_name?.trim())
+      .map(r => ({
+        order_id:          orderId,
+        shop_name:         r.shop_name.trim(),
+        shop_type:         r.shop_type?.trim() || null,
+        contact_id:        r.contact_id || null,
+        contact_code:      r.contact_code?.trim() || null,
+        invoice_reference: r.invoice_reference?.trim() || null,
+        invoice_date:      r.invoice_date || new Date().toISOString().slice(0, 10),
+        invoice_value:     Number(r.invoice_value) || 0,
+        currency:          r.currency || 'USD',
+        created_by:        currentUser?.user_id || null,
+        ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+      }))
+    if (retailRows.length > 0) {
+      const { error: re } = await supabase.from('retail_goods_invoices').insert(retailRows)
+      if (re) { setError(re.message); setSaving(false); return }
     }
 
     // ── Sync payments (payment_collections) ──────────────────
@@ -687,6 +838,34 @@ export default function DeliveriesPage({ closed = false }) {
       userId: currentUser?.user_id || null,
     })
     if (pkgErr) { setError(pkgErr); setSaving(false); return }
+
+    // ── Credit customer: on close with an unpaid balance, record a sales
+    //    invoice so the customer shows up in v_credit_customer_balances. ───────
+    if (close && selCustomer?.credit_debit_allowed === true) {
+      const cur     = form.currency
+      const total   = round2(totals[cur] || 0)
+      const paid    = round2(paidCur[cur] || 0)
+      const balance = round2(total - paid)
+      if (balance > 0) {
+        const orderNo = (modal && modal !== 'add') ? modal.order_number : String(orderId).slice(0, 8)
+        const invoice = {
+          customer_id:    form.customer_id,
+          invoice_number: `SI-${orderNo}-${Date.now().toString().slice(-6)}`,
+          invoice_date:   new Date().toISOString().slice(0, 10),
+          currency:       cur,
+          subtotal:       total,
+          total_amount:   total,
+          paid_amount:    paid,
+          status:         paid > 0 ? 'partially_paid' : 'unpaid',
+          notes:          `Auto-created on closing order ${orderNo} (credit customer).`,
+          created_by:     currentUser?.user_id || null,
+          ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+        }
+        const { data: inv, error: sie } = await supabase.from('sales_invoices').insert([invoice]).select('id').single()
+        if (sie) { setError(`Order closed, but recording the credit invoice failed: ${sie.message}`); setSaving(false); return }
+        await supabase.from('sales_invoice_orders').insert([{ invoice_id: inv.id, order_id: orderId, amount: total }])
+      }
+    }
 
     await fetchOrders(); closeModal(); setSaving(false)
   }
@@ -741,9 +920,27 @@ export default function DeliveriesPage({ closed = false }) {
   const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency)
   const anyItems = items.length > 0 || Number(form.delivery_fee) > 0
 
+  // Credit Order mode: active when adding a credit order, or editing one.
+  const isCreditOrder = addCredit || (modal && modal !== 'add' && modal.is_credit_order === true)
   // Delivery packages sub-form is shown only when the selected contact is a partner.
   const selectedCustomer  = customers.find(c => c.id === form.customer_id) || null
   const isPartnerCustomer = selectedCustomer?.contact_type === 'partner'
+  // In credit mode the customer pickers list only credit-allowed contacts.
+  const pickCustomers = isCreditOrder ? customers.filter(c => c.credit_debit_allowed === true) : customers
+  // Shops/warehouses for the retail invoices dropdown = supplier contacts.
+  // supplierByName maps a shop's display name → its contact, so selecting a
+  // shop can auto-fill the invoice's business type (shop_type).
+  const supplierByName    = {}
+  customers.filter(c => c.contact_type === 'supplier').forEach(c => {
+    const name = c.company_name || customerName(c)
+    if (name) supplierByName[name] = c
+  })
+  const supplierOptions   = Object.keys(supplierByName)
+
+  // Counts shown in the section titles.
+  const packagesQty = packages.reduce((s, p) => s + (Number(p.quantity) || 0), 0)
+  const itemsQty    = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+  const invoicesQty = retailInvoices.length
 
   const trimmedCustomer = customerInput.trim()
   const isNewCustomer =
@@ -758,9 +955,17 @@ export default function DeliveriesPage({ closed = false }) {
   // A closed order is locked: no edits, cannot be cancelled or deleted.
   const orderLocked   = modal && modal !== 'add' && modal.isclosed === true
   const alreadyClosed = orderLocked
-  // "Mark Closed" eligibility: fully paid (no pending), Completed, and Delivered.
+  // Credit customers may close an order with an unpaid balance (it becomes a receivable).
+  const customerAllowsCredit = customers.find(c => c.id === form.customer_id)?.credit_debit_allowed === true
+  // "Mark Closed" eligibility. Credit orders: driver assigned + Completed +
+  // Delivered (no payment requirement). Normal orders: fully paid + Completed +
+  // Delivered (payment waived for credit-allowed customers).
   const closeRequirements = []
-  if (paymentStatus !== 'paid_to_office')   closeRequirements.push('fully paid (no pending dues)')
+  if (isCreditOrder) {
+    if (!form.driver_id)                    closeRequirements.push('a driver assigned')
+  } else if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit) {
+    closeRequirements.push('fully paid (no pending dues)')
+  }
   if (form.status !== 'completed')          closeRequirements.push('order status Completed')
   if (form.delivery_status !== 'Delivered') closeRequirements.push('delivery status Delivered')
   const canClose = closeRequirements.length === 0
@@ -774,8 +979,8 @@ export default function DeliveriesPage({ closed = false }) {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
-      {/* Toolbar */}
-      <div className="space-y-3">
+      {/* Toolbar — sticky top bar holding search, filters and actions */}
+      <div className="sticky top-0 z-20 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -796,9 +1001,14 @@ export default function DeliveriesPage({ closed = false }) {
             </div>
           )}
           {!closed && (
-            <button className="btn-primary ml-auto" onClick={openAdd}>
-              <Plus className="w-4 h-4" /> New Order
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button className="btn-primary" onClick={openAdd}>
+                <Plus className="w-4 h-4" /> New Multipurpose Order
+              </button>
+              <button className="btn-primary" onClick={openAddCredit}>
+                <Plus className="w-4 h-4" /> Add Credit Order
+              </button>
+            </div>
           )}
         </div>
 
@@ -816,6 +1026,24 @@ export default function DeliveriesPage({ closed = false }) {
             <select className="input py-1.5 text-xs w-44" value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}>
               <option value="">All contacts</option>
               {customers.map(c => <option key={c.id} value={c.id}>{c.company_name || `${c.first_name} ${c.last_name}`}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label flex items-center gap-1"><UserCheck className="w-3 h-3" /> Customer type</label>
+            <select className="input py-1.5 text-xs w-40" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+              <option value="">All types</option>
+              <option value="credit">Credit customers</option>
+              <option value="regular">Regular customers</option>
+              <option value="partner">Partners</option>
+              <option value="supplier">Suppliers</option>
+            </select>
+          </div>
+          <div>
+            <label className="label flex items-center gap-1"><Package className="w-3 h-3" /> Order source</label>
+            <select className="input py-1.5 text-xs w-36" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
+              <option value="">All orders</option>
+              <option value="LOCAL">Local orders</option>
+              <option value="EXTERNAL">External orders</option>
             </select>
           </div>
           <div>
@@ -857,11 +1085,21 @@ export default function DeliveriesPage({ closed = false }) {
             ) : filtered.map(o => (
               <tr key={o.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${['cancelled','failed'].includes(o.status) ? 'opacity-50' : ''}`}>
                 <td className="px-4 py-3">
-                  <button onClick={() => copyNum(o.order_number)}
-                    className="font-mono text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
-                    {o.order_number}
-                    {copied === o.order_number && <Check className="w-3 h-3 text-green-400" />}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => copyNum(o.order_number)}
+                      className="font-mono text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                      {o.order_number}
+                      {copied === o.order_number && <Check className="w-3 h-3 text-green-400" />}
+                    </button>
+                    {isOnlineOrder(o) && (
+                      <button type="button" disabled={o.isclosed}
+                        onClick={(e) => openPopover('online', o, e)}
+                        title="Online order — confirm"
+                        className="inline-flex text-cyan-400 hover:text-cyan-300 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Globe className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                   {o.isclosed && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1">
                       <Lock className="w-3 h-3" /> Closed
@@ -875,7 +1113,7 @@ export default function DeliveriesPage({ closed = false }) {
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   {o.customer ? (
                     <div>
-                      <p className="text-slate-300">{o.customer.first_name} {o.customer.last_name}</p>
+                      <p className="text-slate-300">{customerListName(o.customer)}</p>
                       {o.customer.account_number && (
                         <p className="text-slate-500 text-[11px] font-mono tracking-wider">{formatAccountNumber(o.customer.account_number)}</p>
                       )}
@@ -945,6 +1183,34 @@ export default function DeliveriesPage({ closed = false }) {
         </table>
       </div>
 
+      {/* ── Floating summary bar (filtered orders + per-currency totals) ── */}
+      <div className="sticky bottom-0 z-10 pt-2 pb-1">
+        <div className="rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-5 py-3 flex items-center gap-4 flex-wrap">
+          <span className="flex items-center gap-2 text-sm text-slate-300">
+            <Package className="w-4 h-4 text-blue-300" />
+            <span className="font-semibold text-slate-100">{pendingsSummary.count}</span>
+            {pendingsSummary.count === 1 ? 'order' : 'orders'}
+          </span>
+          <div className="flex items-center gap-3 flex-wrap ml-auto">
+            <span className="text-[11px] uppercase tracking-wider text-slate-400">Total</span>
+            {CURRENCIES.map(c => {
+              const row = pendingsSummary.rows.find(r => r.cur === c)
+              const total = row ? row.order : 0
+              if (total <= 0) return null            // only show currencies with an amount
+              return (
+                <div key={c} className="text-sm whitespace-nowrap rounded-lg bg-white/5 border border-white/10 px-2.5 py-1">
+                  <span className="text-slate-400 text-[11px] mr-1">{c}</span>
+                  <span className="font-semibold text-blue-200">{total.toFixed(c === 'LBP' ? 0 : 2)}</span>
+                </div>
+              )
+            })}
+            {pendingsSummary.rows.every(r => r.order <= 0) && (
+              <span className="text-sm text-slate-500">—</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── Modal ─────────────────────────────────────────────── */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -954,7 +1220,9 @@ export default function DeliveriesPage({ closed = false }) {
             <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border flex-shrink-0">
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <Package className="w-4 h-4 text-brand-400" />
-                {modal === 'add' ? 'New Order' : `Edit — ${modal.order_number}`}
+                {modal === 'add'
+                  ? (isCreditOrder ? 'Credit Order' : 'New Order')
+                  : `${isCreditOrder ? 'Credit Order' : 'Edit'} — ${modal.order_number}`}
               </h2>
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
@@ -969,11 +1237,22 @@ export default function DeliveriesPage({ closed = false }) {
                 </div>
               )}
 
-              <fieldset disabled={orderLocked} className="space-y-6 min-w-0 border-0 p-0 m-0 disabled:opacity-70">
+              <fieldset disabled={orderLocked} className="space-y-3 min-w-0 border-0 p-0 m-0 disabled:opacity-70">
+
+              {/* ── Order Type (top, above Customer) ───────────── */}
+              <CollapsibleSection title="Order Type" open={sectionsOpen.order_type} onToggle={v => toggleSection('order_type', v)}>
+                <div>
+                  <label className="label">Order Type</label>
+                  <select className="input" value={form.order_type || ''}
+                    onChange={e => fld('order_type', e.target.value)}>
+                    <option value="">—</option>
+                    {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+              </CollapsibleSection>
 
               {/* ── Recipient & Customer ───────────────────────── */}
-              <div className="space-y-3">
-                <SectionLabel>Recipient & Customer</SectionLabel>
+              <CollapsibleSection title="Recipient & Customer" open={sectionsOpen.customer} onToggle={v => toggleSection('customer', v)}>
 
                 {/* Customer first — drives auto-fill. Type to search/add, or use the picker button. */}
                 <div>
@@ -1001,7 +1280,7 @@ export default function DeliveriesPage({ closed = false }) {
                         {/* Inline matches dropdown */}
                         {customerDropdownOpen && trimmedCustomer !== '' && (() => {
                           const q = trimmedCustomer.toLowerCase()
-                          const list = customers.filter(c =>
+                          const list = pickCustomers.filter(c =>
                             customerName(c).toLowerCase().includes(q) ||
                             c.company_name?.toLowerCase().includes(q) ||
                             c.mobile?.includes(trimmedCustomer)
@@ -1072,11 +1351,10 @@ export default function DeliveriesPage({ closed = false }) {
                   <input className="input" value={form.recipient_whatsapp}
                     onChange={e => fld('recipient_whatsapp', e.target.value)} placeholder="If different from mobile" />
                 </div>
-              </div>
+              </CollapsibleSection>
 
               {/* ── Route ─────────────────────────────────────── */}
-              <div className="space-y-3">
-                <SectionLabel>Route</SectionLabel>
+              <CollapsibleSection title="Route" open={sectionsOpen.route} onToggle={v => toggleSection('route', v)}>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Pickup / Origin</label>
@@ -1114,11 +1392,10 @@ export default function DeliveriesPage({ closed = false }) {
                   />
                   </div>
                 </div>
-              </div>
+              </CollapsibleSection>
 
               {/* ── Assignment & Status ────────────────────────── */}
-              <div className="space-y-3">
-                <SectionLabel>Assignment & Status</SectionLabel>
+              <CollapsibleSection title="Assignment & Status" open={sectionsOpen.assignment} onToggle={v => toggleSection('assignment', v)}>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Driver</label>
@@ -1154,21 +1431,31 @@ export default function DeliveriesPage({ closed = false }) {
                     />
                   </div>
                 </div>
-              </div>
+              </CollapsibleSection>
 
               {/* ── Delivery Packages (partners only) ──────────── */}
               {isPartnerCustomer && (
-                <OrderPackages packages={packages} setPackages={setPackages} customerName={customerInput.trim()} />
+                <CollapsibleSection title={`Delivery Packages (${packagesQty})`} open={sectionsOpen.packages} onToggle={v => toggleSection('packages', v)}
+                  right={
+                    <button type="button" onClick={addPackage}
+                      className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                      <Plus className="w-3 h-3" /> Add Package
+                    </button>
+                  }>
+                  <OrderPackages packages={packages} setPackages={setPackages} customerName={customerInput.trim()} embedded onAdd={addPackage} />
+                </CollapsibleSection>
               )}
 
+              {/* Pricing sections (hidden for Credit Orders) */}
+              {!isCreditOrder && (<>
               {/* ── Items ─────────────────────────────────────── */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <SectionLabel>Retail Items</SectionLabel>
-                  <button onClick={addItem} className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+              <CollapsibleSection title={`Local retail items (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('items'); addItem() }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
                     <Plus className="w-3 h-3" /> Add Item
                   </button>
-                </div>
+                }>
 
                 <div className="border border-surface-border rounded-xl overflow-hidden">
                   <table className="w-full text-xs">
@@ -1226,11 +1513,97 @@ export default function DeliveriesPage({ closed = false }) {
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </CollapsibleSection>
+
+              {/* ── External Retails Invoices References (retail_goods_invoices) ── */}
+              <CollapsibleSection title={`External retails invoices references (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('retail_invoices'); addRetailInvoice() }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Invoice
+                  </button>
+                }>
+
+                <div className="border border-surface-border rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
+                        <th className="text-left px-3 py-2 w-[30%]">Warehouse / Shop</th>
+                        <th className="text-left px-3 py-2 w-[22%]">Invoice Ref</th>
+                        <th className="text-left px-3 py-2 w-[20%]">Date</th>
+                        <th className="text-left px-3 py-2 w-[14%]">Amount</th>
+                        <th className="text-left px-3 py-2 w-[10%]">Currency</th>
+                        <th className="w-[4%]"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {retailInvoices.length === 0 ? (
+                        <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
+                      ) : retailInvoices.map((ri, idx) => (
+                        <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs" value={ri.shop_name}
+                              onChange={e => {
+                                const name = e.target.value
+                                // Auto-fill business type + the contact link/code from the selected supplier.
+                                const sup = supplierByName[name]
+                                setRetailInvoices(p => {
+                                  const next = [...p]
+                                  next[idx] = {
+                                    ...next[idx],
+                                    shop_name:    name,
+                                    shop_type:    sup?.shop_type || '',
+                                    contact_id:   sup?.id || '',
+                                    contact_code: sup?.code || '',
+                                  }
+                                  return next
+                                })
+                              }}>
+                              <option value="">— Select —</option>
+                              {ri.shop_name && !supplierOptions.includes(ri.shop_name) && (
+                                <option value={ri.shop_name}>{ri.shop_name}</option>
+                              )}
+                              {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            {(ri.shop_type || ri.contact_code) && (
+                              <p className="text-[10px] text-slate-500 mt-0.5 flex gap-2">
+                                {ri.contact_code && <span className="font-mono text-slate-400">{ri.contact_code}</span>}
+                                {ri.shop_type && <span className="capitalize">{ri.shop_type}</span>}
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <input className="input py-1.5 text-xs" value={ri.invoice_reference}
+                              onChange={e => setRetailInvoice(idx, 'invoice_reference', e.target.value)} placeholder="Ref / #" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="date" className="input py-1.5 text-xs" value={ri.invoice_date}
+                              onChange={e => setRetailInvoice(idx, 'invoice_date', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={ri.invoice_value}
+                              onChange={e => setRetailInvoice(idx, 'invoice_value', e.target.value)} placeholder="0.00" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs" value={ri.currency}
+                              onChange={e => setRetailInvoice(idx, 'currency', e.target.value)}>
+                              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <button onClick={() => removeRetailInvoice(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
 
               {/* ── Delivery Fees & Totals ─────────────────────── */}
-              <div className="space-y-3">
-                <SectionLabel>Delivery & Totals</SectionLabel>
+              <CollapsibleSection title="Delivery & Totals" open={sectionsOpen.totals} onToggle={v => toggleSection('totals', v)}>
 
                 <div className="grid grid-cols-4 gap-3">
                   <div>
@@ -1276,16 +1649,16 @@ export default function DeliveriesPage({ closed = false }) {
                     })}
                   </div>
                 )}
-              </div>
+              </CollapsibleSection>
 
               {/* ── Payments ──────────────────────────────────── */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <SectionLabel>Payments</SectionLabel>
-                  <button onClick={addPayment} className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+              <CollapsibleSection title="Payments" open={sectionsOpen.payments} onToggle={v => toggleSection('payments', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('payments'); addPayment() }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
                     <Plus className="w-3 h-3" /> Add Payment
                   </button>
-                </div>
+                }>
 
                 <div className="border border-surface-border rounded-xl overflow-hidden">
                   <table className="w-full text-xs">
@@ -1381,19 +1754,11 @@ export default function DeliveriesPage({ closed = false }) {
                     </table>
                   )}
                 </div>
-              </div>
+              </CollapsibleSection>
+              </>)}
 
               {/* ── Notes ─────────────────────────────────────── */}
-              <div className="space-y-3">
-                <SectionLabel>Notes</SectionLabel>
-                <div>
-                  <label className="label">Order Type</label>
-                  <select className="input" value={form.order_type || ''}
-                    onChange={e => fld('order_type', e.target.value)}>
-                    <option value="">—</option>
-                    {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </div>
+              <CollapsibleSection title="Notes" open={sectionsOpen.notes} onToggle={v => toggleSection('notes', v)}>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Order Details</label>
@@ -1406,7 +1771,7 @@ export default function DeliveriesPage({ closed = false }) {
                       onChange={e => fld('special_instructions', e.target.value)} placeholder="Fragile, leave at door…" />
                   </div>
                 </div>
-              </div>
+              </CollapsibleSection>
               </fieldset>
             </div>
 
@@ -1487,7 +1852,7 @@ export default function DeliveriesPage({ closed = false }) {
             <div className="flex-1 overflow-y-auto">
               {(() => {
                 const q = customerSearch.toLowerCase()
-                const list = customers.filter(c =>
+                const list = pickCustomers.filter(c =>
                   `${c.first_name} ${c.last_name}`.toLowerCase().includes(q) ||
                   c.company_name?.toLowerCase().includes(q) ||
                   c.mobile?.includes(q) ||
@@ -1707,6 +2072,14 @@ export default function DeliveriesPage({ closed = false }) {
                   {drivers.length === 0 && <p className="px-3 py-3 text-xs text-slate-500 text-center">No drivers</p>}
                 </div>
               </>
+            ) : popover.type === 'online' ? (
+              <div className="p-1">
+                <button onClick={() => quickSetStatus(popover.order, 'confirmed')} disabled={quickBusy}
+                  className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-surface-hover">
+                  <Badge status="confirmed" />
+                  <span className="text-xs text-slate-300">Confirm order</span>
+                </button>
+              </div>
             ) : (
               <div className="p-1">
                 {ORDER_STATUS_OPTIONS.map(opt => {

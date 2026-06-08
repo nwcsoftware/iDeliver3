@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3, Truck,
-  Building2, Tag, ChevronLeft, ChevronRight, FileText,
+  LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
+  Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
+import logo from '../../assets/Logo.png'
 
 const mainNav = [
   { to: '/',                   icon: LayoutDashboard, label: 'Dashboard' },
@@ -20,6 +21,7 @@ const mainNav = [
 const bottomNav = [
   { to: '/products',           icon: Tag,             label: 'Products'  },
   { to: '/purchase-invoices',  icon: FileText,        label: 'Purchases' },
+  { to: '/retail-invoices',    icon: Receipt,         label: 'Retail Invoices' },
   { to: '/company',            icon: Building2,       label: 'Company'   },
 ]
 
@@ -97,9 +99,9 @@ export default function Sidebar() {
           <div className="flex items-center gap-3 min-w-0">
             <div
               onClick={collapsed ? () => setCollapsed(false) : undefined}
-              className={`w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center flex-shrink-0 ${collapsed ? 'cursor-pointer hover:bg-brand-500 transition-colors' : ''}`}
+              className={`w-9 h-9 flex items-center justify-center flex-shrink-0 ${collapsed ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
             >
-              <Truck className="w-5 h-5 text-white" />
+              <img src={logo} alt="iDeliver" className="w-9 h-9 object-contain" />
             </div>
             {!collapsed && (
               <div className="min-w-0 overflow-hidden">
