@@ -34,6 +34,10 @@ function isMissingRpc(error) {
   return error?.code === 'PGRST202' || message.includes('Could not find the function')
 }
 
+function isInvalidCredentials(error) {
+  return (error?.message || '').includes('INVALID_CREDENTIALS')
+}
+
 const languageOptions = [
   { code: 'en', label: 'English', nativeLabel: 'English', dir: 'ltr' },
   { code: 'ar', label: 'Arabic', nativeLabel: 'العربية', dir: 'rtl' },
@@ -854,7 +858,13 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
     })
     if (!isMissingRpc(contactLogin.error)) return contactLogin
 
-    return supabase.rpc('customer_login', {
+    const legacyLogin = await supabase.rpc('customer_login', {
+      p_login: login,
+      p_password: secret,
+    })
+    if (!isInvalidCredentials(legacyLogin.error)) return legacyLogin
+
+    return supabase.rpc('verify_login', {
       p_login: login,
       p_password: secret,
     })
