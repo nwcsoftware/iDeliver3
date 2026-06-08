@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
   Bell,
@@ -22,10 +22,622 @@ import {
   User,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
-const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
+const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || '').trim() || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
+const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
+
+function isMissingRpc(error) {
+  const message = error?.message || ''
+  return error?.code === 'PGRST202' || message.includes('Could not find the function')
+}
+
+const languageOptions = [
+  { code: 'en', label: 'English', nativeLabel: 'English', dir: 'ltr' },
+  { code: 'ar', label: 'Arabic', nativeLabel: 'العربية', dir: 'rtl' },
+  { code: 'fr', label: 'French', nativeLabel: 'Français', dir: 'ltr' },
+  { code: 'ro', label: 'Romanian', nativeLabel: 'Romana', dir: 'ltr' },
+]
+
+const translations = {
+  en: {
+    add: 'Add',
+    addRequestLines: 'Add one or more request lines',
+    addressLine: 'Address line',
+    addressName: 'Address name',
+    addAddress: 'Add Address',
+    all: 'All',
+    allowed: 'Allowed',
+    awaitingPickup: 'Awaiting Pickup',
+    book: 'Book',
+    bookDelivery: 'Book Delivery',
+    cancel: 'Cancel',
+    cashOnly: 'Cash Only',
+    cashOnDelivery: 'Cash on delivery',
+    city: 'City',
+    close: 'Close',
+    collection: 'Collection',
+    confirmPassword: 'Confirm password',
+    createAccount: 'Create Account',
+    creatingAccount: 'Creating account...',
+    created: 'Created',
+    creditDebit: 'Credit/Debit',
+    creditDebitAllowed: 'Credit/Debit Allowed',
+    customerAccount: 'Customer account',
+    customerCreatedRequest: 'Customer-created external request',
+    customerRegistration: 'Customer Registration',
+    default: 'Default',
+    defaultPayment: 'Default payment',
+    delete: 'Delete',
+    delivered: 'Delivered',
+    deliveryDate: 'Delivery date',
+    deliveryDrop: 'Delivery / Drop',
+    deliveryDropLocation: 'Delivery / drop location',
+    deliveryLocationRequired: 'Delivery/drop location is required.',
+    deliveryOrder: 'Delivery Order',
+    deliveryStatus: 'Delivery status',
+    deliveryStatusUpdated: 'Delivery status updated',
+    deliveryTime: 'Delivery time',
+    drop: 'Drop',
+    edit: 'Edit',
+    editAddress: 'Edit Address',
+    editOrder: 'Edit Order',
+    email: 'Email',
+    emailAddress: 'Email address',
+    endTime: 'End time',
+    emailRequiredForOtp: 'Enter your email address to receive OTP by email.',
+    enterEmailOtp: 'Enter temporary OTP 1234 sent by Email.',
+    enterFullName: 'Enter full name',
+    enterMobileNumber: 'Enter mobile number',
+    enterOtp: 'Enter the 4 digit OTP.',
+    enterPassword: 'Enter your password.',
+    enterRequirement: 'Enter requirement',
+    enterUsername: 'Enter a username',
+    externalRequest: 'External request',
+    finalDeliveryLocation: 'Final delivery location',
+    firstTimeOtp: 'First-time customer? Register with OTP',
+    firstTimeSetup: 'First-time customer setup',
+    fullName: 'Full name',
+    futureModule: 'Future module',
+    home: 'Home',
+    invoice: 'Invoice',
+    itemsRequirements: 'Items / Requirements',
+    invalidCredentials: 'Invalid mobile/email or password.',
+    invalidOtp: 'Invalid OTP. Use the temporary development OTP 1234.',
+    language: 'Language',
+    languageSaved: 'Language saved for this device and customer session.',
+    languageSubtitle: 'Choose app display language',
+    latestOrder: 'Latest Order',
+    latestOrderSubtitle: 'Most recent delivery request',
+    loadingAccount: 'Loading account...',
+    loadingOrders: 'Loading orders...',
+    loadingProfile: 'Loading profile...',
+    login: 'Login',
+    loginFailed: 'Login failed. Please try again.',
+    loginLoading: 'Logging in...',
+    loginWithGoogle: 'Login with Google',
+    loginSubtitle: 'Login with mobile/email and password',
+    logout: 'Logout',
+    minimumCharacters: 'Minimum 8 characters',
+    mobile: 'Mobile',
+    mobileEmail: 'Mobile number or Email',
+    mobileEmailPlaceholder: 'Mobile number or email',
+    mobileNumber: 'Mobile number',
+    mobileNumberRequired: 'Mobile number is required.',
+    mobileSubtitle: 'Used for login and WhatsApp',
+    myOrders: 'My Orders',
+    noAddressLine: 'No address line',
+    noDate: 'No date',
+    noItemRows: 'No item rows available.',
+    noOrderSelected: 'No order selected',
+    noOrdersFound: 'No orders found',
+    noOrdersYet: 'No orders yet',
+    noPaymentCollected: 'No payment collected yet',
+    noReference: 'No reference',
+    noSavedAddresses: 'No saved addresses yet.',
+    notAllowed: 'Not allowed',
+    notAvailable: 'Not available',
+    notProvided: 'Not provided',
+    notScheduled: 'Not scheduled',
+    notSet: 'Not set',
+    notes: 'Notes',
+    notesIfNeeded: 'Notes, if needed',
+    notifications: 'Notifications',
+    orderDetails: 'Order Details',
+    orderStatus: 'Order status',
+    orders: 'Orders',
+    password: 'Password',
+    passwordConfirmationMismatch: 'Password and confirmation do not match.',
+    passwordPlaceholder: 'Password',
+    passwordTooShort: 'Password must be at least 8 characters.',
+    payment: 'Payment',
+    paymentCollections: 'Payment Collections',
+    paymentStatus: 'Payment status',
+    pending: 'Pending',
+    confirmed: 'Confirmed',
+    assigned: 'Assigned',
+    pickedUp: 'Picked Up',
+    inTransit: 'In Transit',
+    done: 'Done',
+    now: 'Now',
+    stopped: 'Stopped',
+    phone: 'Phone',
+    photo: 'Photo',
+    pickup: 'Pickup',
+    pickupDrop: 'Pickup & Drop',
+    pickupDate: 'Pickup date',
+    pickupLocation: 'Pickup location',
+    pickupLocationRequired: 'Pickup location is required.',
+    pickupSubtitle: 'Choose saved address or type new',
+    pickupTime: 'Pickup time',
+    preferences: 'Preferences',
+    primary: 'Primary',
+    primaryAddress: 'Primary address',
+    profile: 'Profile',
+    profileSubtitle: 'Account and saved addresses',
+    qty: 'Qty',
+    reference: 'Reference',
+    requiredOnlyForEmailOtp: 'Required only for email OTP',
+    requirementRows: 'Requirement Rows',
+    retailGoodsInvoices: 'Retail Goods Invoices',
+    save: 'Save',
+    saveChanges: 'Save Changes',
+    saved: 'Saved',
+    savedBackToOrderItems: 'Saved back to order_items',
+    savedAddresses: 'Saved Addresses',
+    savedAddressesSubtitle: 'Used for pickup and drop locations',
+    saving: 'Saving...',
+    schedule: 'Schedule',
+    searchOrderNumber: 'Search order number',
+    selectCustomer: 'Select a customer before submitting.',
+    selectImage: 'Select an image file.',
+    selectOrderFromOrders: 'Select an order from My Orders.',
+    sendOtp: 'Send OTP',
+    sendOtpThrough: 'Send OTP through',
+    setPrimary: 'Set primary',
+    shopProducts: 'Shop Products',
+    startTime: 'Start time',
+    statusTimeline: 'Status Timeline',
+    submitRequest: 'Submit Request',
+    submitting: 'Submitting...',
+    tellUsNeed: 'Tell us what you need',
+    temporaryOtp: 'Temporary development OTP is 1234.',
+    totalAmount: 'Total amount',
+    trackBookings: 'Track bookings, invoices and payments',
+    trackStatus: 'Track status',
+    typeCustomerRequirement: 'Type customer requirement',
+    typeNew: 'Type new',
+    unpaid: 'Unpaid',
+    updateMobileNumber: 'Update Mobile Number',
+    username: 'Username',
+    usernamePlaceholder: 'Username, mobile, or email',
+    usernameRequired: 'Username is required.',
+    verifyOtp: 'Verify OTP',
+    verifyOtpCreate: 'Verify OTP & Create Account',
+    view: 'View',
+    viewOrders: 'View Orders',
+    waiting: 'Waiting',
+    waitingForQuotation: 'Waiting for quotation',
+    welcomeBack: 'Welcome back',
+    whatsapp: 'WhatsApp',
+    yourOrderNow: '{{order}} is now {{status}}.',
+    yourSubmittedRequests: 'Your submitted delivery requests will appear here.',
+  },
+  ar: {
+    add: 'إضافة',
+    addAddress: 'إضافة عنوان',
+    addRequestLines: 'أضف سطرا واحدا أو أكثر',
+    addressLine: 'سطر العنوان',
+    addressName: 'اسم العنوان',
+    all: 'الكل',
+    allowed: 'مسموح',
+    awaitingPickup: 'بانتظار الاستلام',
+    book: 'حجز',
+    bookDelivery: 'حجز توصيل',
+    cancel: 'إلغاء',
+    cashOnly: 'نقدا فقط',
+    cashOnDelivery: 'الدفع عند التسليم',
+    city: 'المدينة',
+    close: 'إغلاق',
+    collection: 'تحصيل',
+    confirmPassword: 'تأكيد كلمة المرور',
+    createAccount: 'إنشاء حساب',
+    creatingAccount: 'جاري إنشاء الحساب...',
+    created: 'تم الإنشاء',
+    creditDebit: 'ائتمان/مدين',
+    creditDebitAllowed: 'ائتمان/مدين مسموح',
+    customerAccount: 'حساب العميل',
+    customerCreatedRequest: 'طلب خارجي من العميل',
+    customerRegistration: 'تسجيل العميل',
+    default: 'افتراضي',
+    defaultPayment: 'طريقة الدفع الافتراضية',
+    delete: 'حذف',
+    delivered: 'تم التسليم',
+    deliveryDate: 'تاريخ التوصيل',
+    deliveryDrop: 'التوصيل / التسليم',
+    deliveryDropLocation: 'موقع التوصيل / التسليم',
+    deliveryLocationRequired: 'موقع التوصيل مطلوب.',
+    deliveryOrder: 'طلب توصيل',
+    deliveryStatus: 'حالة التوصيل',
+    deliveryStatusUpdated: 'تم تحديث حالة التوصيل',
+    deliveryTime: 'وقت التوصيل',
+    drop: 'التسليم',
+    edit: 'تعديل',
+    editAddress: 'تعديل العنوان',
+    editOrder: 'تعديل الطلب',
+    email: 'البريد الإلكتروني',
+    emailAddress: 'عنوان البريد الإلكتروني',
+    endTime: 'وقت الانتهاء',
+    emailRequiredForOtp: 'أدخل البريد الإلكتروني لاستلام رمز OTP.',
+    enterEmailOtp: 'أدخل رمز OTP المؤقت 1234 المرسل عبر البريد.',
+    enterFullName: 'أدخل الاسم الكامل',
+    enterMobileNumber: 'أدخل رقم الجوال',
+    enterOtp: 'أدخل رمز OTP المكون من 4 أرقام.',
+    enterPassword: 'أدخل كلمة المرور.',
+    enterRequirement: 'أدخل الطلب',
+    enterUsername: 'أدخل اسم المستخدم',
+    externalRequest: 'طلب خارجي',
+    finalDeliveryLocation: 'موقع التوصيل النهائي',
+    firstTimeOtp: 'عميل جديد؟ سجل باستخدام OTP',
+    firstTimeSetup: 'إعداد عميل جديد',
+    fullName: 'الاسم الكامل',
+    futureModule: 'ميزة لاحقة',
+    home: 'الرئيسية',
+    invoice: 'الفاتورة',
+    itemsRequirements: 'العناصر / المتطلبات',
+    invalidCredentials: 'رقم الجوال/البريد أو كلمة المرور غير صحيحة.',
+    invalidOtp: 'رمز OTP غير صحيح. استخدم الرمز المؤقت 1234.',
+    language: 'اللغة',
+    languageSaved: 'تم حفظ اللغة لهذا الجهاز وجلسة العميل.',
+    languageSubtitle: 'اختر لغة عرض التطبيق',
+    latestOrder: 'آخر طلب',
+    latestOrderSubtitle: 'أحدث طلب توصيل',
+    loadingAccount: 'جاري تحميل الحساب...',
+    loadingOrders: 'جاري تحميل الطلبات...',
+    loadingProfile: 'جاري تحميل الملف...',
+    login: 'تسجيل الدخول',
+    loginFailed: 'فشل تسجيل الدخول. حاول مرة أخرى.',
+    loginLoading: 'جاري تسجيل الدخول...',
+    loginWithGoogle: 'تسجيل الدخول بواسطة Google',
+    loginSubtitle: 'تسجيل الدخول بالجوال/البريد وكلمة المرور',
+    logout: 'تسجيل الخروج',
+    minimumCharacters: '8 أحرف على الأقل',
+    mobile: 'الجوال',
+    mobileEmail: 'رقم الجوال أو البريد الإلكتروني',
+    mobileEmailPlaceholder: 'رقم الجوال أو البريد الإلكتروني',
+    mobileNumber: 'رقم الجوال',
+    mobileNumberRequired: 'رقم الجوال مطلوب.',
+    mobileSubtitle: 'يستخدم لتسجيل الدخول وواتساب',
+    myOrders: 'طلباتي',
+    noAddressLine: 'لا يوجد سطر عنوان',
+    noDate: 'لا يوجد تاريخ',
+    noItemRows: 'لا توجد عناصر.',
+    noOrderSelected: 'لم يتم اختيار طلب',
+    noOrdersFound: 'لا توجد طلبات',
+    noOrdersYet: 'لا توجد طلبات بعد',
+    noPaymentCollected: 'لم يتم تحصيل أي دفعة بعد',
+    noReference: 'لا يوجد مرجع',
+    noSavedAddresses: 'لا توجد عناوين محفوظة.',
+    notAllowed: 'غير مسموح',
+    notAvailable: 'غير متاح',
+    notProvided: 'غير متوفر',
+    notScheduled: 'غير مجدول',
+    notSet: 'غير محدد',
+    notes: 'ملاحظات',
+    notesIfNeeded: 'ملاحظات إذا لزم الأمر',
+    notifications: 'الإشعارات',
+    orderDetails: 'تفاصيل الطلب',
+    orderStatus: 'حالة الطلب',
+    orders: 'الطلبات',
+    password: 'كلمة المرور',
+    passwordConfirmationMismatch: 'كلمة المرور والتأكيد غير متطابقين.',
+    passwordPlaceholder: 'كلمة المرور',
+    passwordTooShort: 'يجب أن تكون كلمة المرور 8 أحرف على الأقل.',
+    payment: 'الدفع',
+    paymentCollections: 'تحصيلات الدفع',
+    paymentStatus: 'حالة الدفع',
+    pending: 'قيد الانتظار',
+    confirmed: 'مؤكد',
+    assigned: 'تم التعيين',
+    pickedUp: 'تم الاستلام',
+    inTransit: 'قيد التوصيل',
+    done: 'تم',
+    now: 'الآن',
+    stopped: 'متوقف',
+    phone: 'الهاتف',
+    photo: 'صورة',
+    pickup: 'الاستلام',
+    pickupDrop: 'الاستلام والتسليم',
+    pickupDate: 'تاريخ الاستلام',
+    pickupLocation: 'موقع الاستلام',
+    pickupLocationRequired: 'موقع الاستلام مطلوب.',
+    pickupSubtitle: 'اختر عنوانا محفوظا أو اكتب عنوانا جديدا',
+    pickupTime: 'وقت الاستلام',
+    preferences: 'التفضيلات',
+    primary: 'أساسي',
+    primaryAddress: 'العنوان الأساسي',
+    profile: 'الملف',
+    profileSubtitle: 'الحساب والعناوين المحفوظة',
+    qty: 'الكمية',
+    reference: 'المرجع',
+    requiredOnlyForEmailOtp: 'مطلوب فقط لرمز البريد',
+    requirementRows: 'سطور المتطلبات',
+    retailGoodsInvoices: 'فواتير البضائع',
+    save: 'حفظ',
+    saveChanges: 'حفظ التغييرات',
+    saved: 'محفوظ',
+    savedBackToOrderItems: 'محفوظ في عناصر الطلب',
+    savedAddresses: 'العناوين المحفوظة',
+    savedAddressesSubtitle: 'تستخدم للاستلام والتسليم',
+    saving: 'جاري الحفظ...',
+    schedule: 'الجدول',
+    searchOrderNumber: 'ابحث برقم الطلب',
+    selectCustomer: 'اختر عميلا قبل الإرسال.',
+    selectImage: 'اختر ملف صورة.',
+    selectOrderFromOrders: 'اختر طلبا من طلباتي.',
+    sendOtp: 'إرسال OTP',
+    sendOtpThrough: 'إرسال OTP عبر',
+    setPrimary: 'تعيين كأساسي',
+    shopProducts: 'تسوق المنتجات',
+    startTime: 'وقت البداية',
+    statusTimeline: 'خط الحالة',
+    submitRequest: 'إرسال الطلب',
+    submitting: 'جاري الإرسال...',
+    tellUsNeed: 'أخبرنا بما تحتاج',
+    temporaryOtp: 'رمز OTP المؤقت هو 1234.',
+    totalAmount: 'المبلغ الإجمالي',
+    trackBookings: 'تتبع الحجوزات والفواتير والمدفوعات',
+    trackStatus: 'تتبع الحالة',
+    typeCustomerRequirement: 'اكتب طلب العميل',
+    typeNew: 'اكتب جديد',
+    unpaid: 'غير مدفوع',
+    updateMobileNumber: 'تحديث رقم الجوال',
+    username: 'اسم المستخدم',
+    usernamePlaceholder: 'اسم المستخدم أو الجوال أو البريد',
+    usernameRequired: 'اسم المستخدم مطلوب.',
+    verifyOtp: 'تحقق من OTP',
+    verifyOtpCreate: 'تحقق من OTP وأنشئ الحساب',
+    view: 'عرض',
+    viewOrders: 'عرض الطلبات',
+    waiting: 'انتظار',
+    waitingForQuotation: 'بانتظار التسعير',
+    welcomeBack: 'أهلا بعودتك',
+    whatsapp: 'واتساب',
+    yourOrderNow: '{{order}} الآن {{status}}.',
+    yourSubmittedRequests: 'ستظهر طلبات التوصيل هنا.',
+  },
+}
+
+translations.fr = {
+  ...translations.en,
+  add: 'Ajouter',
+  addAddress: 'Ajouter une adresse',
+  addRequestLines: 'Ajouter une ou plusieurs lignes',
+  all: 'Tous',
+  allowed: 'Autorise',
+  awaitingPickup: 'En attente de ramassage',
+  book: 'Reserver',
+  bookDelivery: 'Reserver une livraison',
+  cancel: 'Annuler',
+  cashOnly: 'Paiement comptant',
+  cashOnDelivery: 'Paiement a la livraison',
+  close: 'Fermer',
+  createAccount: 'Creer un compte',
+  creatingAccount: 'Creation du compte...',
+  created: 'Cree',
+  creditDebit: 'Credit/Debit',
+  customerAccount: 'Compte client',
+  customerRegistration: 'Inscription client',
+  delete: 'Supprimer',
+  delivered: 'Livre',
+  deliveryStatus: 'Statut de livraison',
+  deliveryStatusUpdated: 'Statut de livraison mis a jour',
+  edit: 'Modifier',
+  editOrder: 'Modifier la commande',
+  email: 'Email',
+  endTime: 'Heure de fin',
+  externalRequest: 'Demande externe',
+  firstTimeOtp: 'Nouveau client ? Inscription avec OTP',
+  firstTimeSetup: 'Configuration nouveau client',
+  fullName: 'Nom complet',
+  futureModule: 'Module futur',
+  home: 'Accueil',
+  invoice: 'Facture',
+  language: 'Langue',
+  languageSaved: 'Langue enregistree pour cet appareil et cette session.',
+  languageSubtitle: 'Choisir la langue de l application',
+  latestOrder: 'Derniere commande',
+  loadingAccount: 'Chargement du compte...',
+  loadingOrders: 'Chargement des commandes...',
+  loadingProfile: 'Chargement du profil...',
+  login: 'Connexion',
+  loginLoading: 'Connexion...',
+  loginWithGoogle: 'Connexion avec Google',
+  loginSubtitle: 'Connexion avec mobile/email et mot de passe',
+  logout: 'Deconnexion',
+  mobileNumber: 'Numero mobile',
+  myOrders: 'Mes commandes',
+  noOrdersFound: 'Aucune commande trouvee',
+  noOrdersYet: 'Aucune commande pour le moment',
+  notAllowed: 'Non autorise',
+  notProvided: 'Non fourni',
+  notSet: 'Non defini',
+  notes: 'Notes',
+  notifications: 'Notifications',
+  orderDetails: 'Details de commande',
+  orders: 'Commandes',
+  password: 'Mot de passe',
+  payment: 'Paiement',
+  pending: 'En attente',
+  confirmed: 'Confirme',
+  assigned: 'Assigne',
+  pickedUp: 'Ramasse',
+  inTransit: 'En transit',
+  done: 'Termine',
+  now: 'Maintenant',
+  stopped: 'Arrete',
+  phone: 'Telephone',
+  photo: 'Photo',
+  pickup: 'Ramassage',
+  pickupDrop: 'Ramassage et depot',
+  preferences: 'Preferences',
+  primary: 'Principal',
+  profile: 'Profil',
+  profileSubtitle: 'Compte et adresses enregistrees',
+  save: 'Enregistrer',
+  saveChanges: 'Enregistrer',
+  savedAddresses: 'Adresses enregistrees',
+  savedBackToOrderItems: 'Enregistre dans order_items',
+  saving: 'Enregistrement...',
+  schedule: 'Planning',
+  searchOrderNumber: 'Rechercher numero de commande',
+  sendOtp: 'Envoyer OTP',
+  shopProducts: 'Acheter des produits',
+  submitRequest: 'Envoyer la demande',
+  submitting: 'Envoi...',
+  totalAmount: 'Montant total',
+  trackStatus: 'Suivre le statut',
+  unpaid: 'Non paye',
+  updateMobileNumber: 'Mettre a jour le mobile',
+  username: 'Nom utilisateur',
+  usernamePlaceholder: 'Nom utilisateur, mobile, ou email',
+  usernameRequired: 'Nom utilisateur requis.',
+  verifyOtp: 'Verifier OTP',
+  view: 'Voir',
+  viewOrders: 'Voir les commandes',
+  waiting: 'En attente',
+  waitingForQuotation: 'En attente du devis',
+  welcomeBack: 'Bon retour',
+  whatsapp: 'WhatsApp',
+}
+
+translations.ro = {
+  ...translations.en,
+  add: 'Adauga',
+  addAddress: 'Adauga adresa',
+  addRequestLines: 'Adauga una sau mai multe linii',
+  all: 'Toate',
+  allowed: 'Permis',
+  awaitingPickup: 'In asteptarea ridicarii',
+  book: 'Rezerva',
+  bookDelivery: 'Rezerva livrare',
+  cancel: 'Anuleaza',
+  cashOnly: 'Doar numerar',
+  cashOnDelivery: 'Plata la livrare',
+  close: 'Inchide',
+  createAccount: 'Creeaza cont',
+  creatingAccount: 'Se creeaza contul...',
+  created: 'Creat',
+  creditDebit: 'Credit/Debit',
+  customerAccount: 'Cont client',
+  customerRegistration: 'Inregistrare client',
+  delete: 'Sterge',
+  delivered: 'Livrat',
+  deliveryStatus: 'Status livrare',
+  deliveryStatusUpdated: 'Statusul livrarii a fost actualizat',
+  edit: 'Editeaza',
+  editOrder: 'Editeaza comanda',
+  email: 'Email',
+  endTime: 'Ora de final',
+  externalRequest: 'Cerere externa',
+  firstTimeOtp: 'Client nou? Inregistrare cu OTP',
+  firstTimeSetup: 'Configurare client nou',
+  fullName: 'Nume complet',
+  futureModule: 'Modul viitor',
+  home: 'Acasa',
+  invoice: 'Factura',
+  language: 'Limba',
+  languageSaved: 'Limba a fost salvata pentru acest dispozitiv si sesiune.',
+  languageSubtitle: 'Alege limba aplicatiei',
+  latestOrder: 'Ultima comanda',
+  loadingAccount: 'Se incarca contul...',
+  loadingOrders: 'Se incarca comenzile...',
+  loadingProfile: 'Se incarca profilul...',
+  login: 'Autentificare',
+  loginLoading: 'Autentificare...',
+  loginWithGoogle: 'Autentificare cu Google',
+  loginSubtitle: 'Autentificare cu mobil/email si parola',
+  logout: 'Iesire',
+  mobileNumber: 'Numar mobil',
+  myOrders: 'Comenzile mele',
+  noOrdersFound: 'Nu s-au gasit comenzi',
+  noOrdersYet: 'Nu exista comenzi inca',
+  notAllowed: 'Nepermis',
+  notProvided: 'Nefurnizat',
+  notSet: 'Nesetat',
+  notes: 'Note',
+  notifications: 'Notificari',
+  orderDetails: 'Detalii comanda',
+  orders: 'Comenzi',
+  password: 'Parola',
+  payment: 'Plata',
+  pending: 'In asteptare',
+  confirmed: 'Confirmat',
+  assigned: 'Alocat',
+  pickedUp: 'Ridicat',
+  inTransit: 'In tranzit',
+  done: 'Gata',
+  now: 'Acum',
+  stopped: 'Oprit',
+  phone: 'Telefon',
+  photo: 'Foto',
+  pickup: 'Ridicare',
+  pickupDrop: 'Ridicare si livrare',
+  preferences: 'Preferinte',
+  primary: 'Principal',
+  profile: 'Profil',
+  profileSubtitle: 'Cont si adrese salvate',
+  save: 'Salveaza',
+  saveChanges: 'Salveaza',
+  savedAddresses: 'Adrese salvate',
+  savedBackToOrderItems: 'Salvat in order_items',
+  saving: 'Se salveaza...',
+  schedule: 'Program',
+  searchOrderNumber: 'Cauta numar comanda',
+  sendOtp: 'Trimite OTP',
+  shopProducts: 'Cumpara produse',
+  submitRequest: 'Trimite cererea',
+  submitting: 'Se trimite...',
+  totalAmount: 'Suma totala',
+  trackStatus: 'Urmareste statusul',
+  unpaid: 'Neplatit',
+  updateMobileNumber: 'Actualizeaza mobilul',
+  username: 'Utilizator',
+  usernamePlaceholder: 'Utilizator, mobil, sau email',
+  usernameRequired: 'Utilizatorul este obligatoriu.',
+  verifyOtp: 'Verifica OTP',
+  view: 'Vezi',
+  viewOrders: 'Vezi comenzile',
+  waiting: 'Asteptare',
+  waitingForQuotation: 'Se asteapta oferta',
+  welcomeBack: 'Bine ai revenit',
+  whatsapp: 'WhatsApp',
+}
+
+const statusTranslations = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  assigned: 'assigned',
+  delivered: 'delivered',
+  unpaid: 'unpaid',
+  'Awaiting Pickup': 'awaitingPickup',
+  'Picked Up': 'pickedUp',
+  'In Transit': 'inTransit',
+  Delivered: 'delivered',
+  Done: 'done',
+  Now: 'now',
+  Stopped: 'stopped',
+  Waiting: 'waiting',
+}
+
+const I18nContext = createContext({
+  language: 'en',
+  dir: 'ltr',
+  setLanguage: () => {},
+  t: key => key,
+})
 
 const initialRequirements = [
   'Buy 1 packet milk',
@@ -43,15 +655,40 @@ const emptyAddressForm = {
   is_primary: false,
 }
 
+function normalizeLanguage(language) {
+  return languageOptions.some(option => option.code === language) ? language : 'en'
+}
+
+function interpolate(template, values = {}) {
+  return String(template).replace(/\{\{(\w+)\}\}/g, (_, key) => values[key] ?? '')
+}
+
+function useI18n() {
+  return useContext(I18nContext)
+}
+
+function translate(language, key, values) {
+  const normalized = normalizeLanguage(language)
+  return interpolate(translations[normalized]?.[key] || translations.en[key] || key, values)
+}
+
+function translatedStatus(t, status) {
+  if (!status) return ''
+  return t(statusTranslations[status] || statusTranslations[String(status).toLowerCase()] || status)
+}
+
 function cx(...parts) {
   return parts.filter(Boolean).join(' ')
 }
 
 function statusClass(status) {
   const key = status?.toLowerCase()
+  if (key === 'awaiting pickup') return 'bg-amber-100 text-amber-700'
+  if (key === 'picked up') return 'bg-blue-100 text-blue-700'
+  if (key === 'in transit') return 'bg-cyan-100 text-cyan-700'
   if (key === 'pending') return 'bg-amber-100 text-amber-700'
   if (key === 'confirmed') return 'bg-blue-100 text-blue-700'
-  if (key === 'completed') return 'bg-emerald-100 text-emerald-700'
+  if (key === 'completed' || key === 'delivered') return 'bg-emerald-100 text-emerald-700'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -99,17 +736,18 @@ function clearCustomerSession() {
 }
 
 function Shell({ children, activeTab, onTab }) {
+  const { t, dir } = useI18n()
   const nav = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'orders', label: 'Orders', icon: ClipboardList },
-    { id: 'book', label: 'Book', icon: Plus },
-    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'home', label: t('home'), icon: Home },
+    { id: 'orders', label: t('orders'), icon: ClipboardList },
+    { id: 'book', label: t('book'), icon: Plus },
+    { id: 'profile', label: t('profile'), icon: User },
   ]
 
   return (
-    <div className="h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]">
+    <div className="h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
       <div className="relative mx-auto flex h-screen max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
-        <div className="flex-1 overflow-y-auto">{children}</div>
+        <div className="flex-1 overflow-y-auto pb-20">{children}</div>
         <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
             {nav.map(item => {
@@ -159,6 +797,7 @@ function Header({ title, subtitle, right, back, onBack }) {
 }
 
 function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
+  const { t } = useI18n()
   if (!notice) return null
 
   return (
@@ -168,16 +807,16 @@ function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
           <Bell className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-slate-950">Delivery status updated</p>
+          <p className="text-sm font-bold text-slate-950">{t('deliveryStatusUpdated')}</p>
           <p className="mt-1 text-sm text-slate-500">
-            {notice.orderNumber || 'Your order'} is now {notice.deliveryStatus}.
+            {t('yourOrderNow', { order: notice.orderNumber || t('orderDetails'), status: translatedStatus(t, notice.deliveryStatus) })}
           </p>
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={onOpenOrders} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">
-              View Orders
+              {t('viewOrders')}
             </button>
             <button type="button" onClick={onClose} className="rounded-lg border border-sky-100 bg-white px-3 py-2 text-xs font-bold text-slate-500">
-              Close
+              {t('close')}
             </button>
           </div>
         </div>
@@ -201,48 +840,62 @@ function Section({ title, subtitle, children, action }) {
   )
 }
 
-function LoginScreen({ onLogin, onOtp }) {
+function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
+  const { t, dir } = useI18n()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  async function customerLogin(login, secret) {
+    const contactLogin = await supabase.rpc('customer_contact_login', {
+      p_login: login,
+      p_password: secret,
+    })
+    if (!isMissingRpc(contactLogin.error)) return contactLogin
+
+    return supabase.rpc('customer_login', {
+      p_login: login,
+      p_password: secret,
+    })
+  }
+
+  function loginMessage(loginError) {
+    const msg = loginError?.message || ''
+    if (msg.includes('INVALID_CREDENTIALS')) return t('invalidCredentials')
+    if (msg.includes('ACCOUNT_LOCKED')) return 'Account locked. Please try again later.'
+    if (msg.includes('ACCOUNT_SUSPENDED')) return 'This account is suspended. Please contact support.'
+    if (msg.includes('customer_contact_login') || msg.includes('customer_login')) {
+      return 'Customer login is not configured in Supabase. Please run the customer auth SQL.'
+    }
+    return msg || t('loginFailed')
+  }
 
   async function submitLogin(event) {
     event.preventDefault()
     setError('')
 
     if (!identifier.trim()) {
-      setError('Enter your mobile number or email.')
+      setError(t('mobileEmailPlaceholder'))
       return
     }
     if (!password) {
-      setError('Enter your password.')
+      setError(t('enterPassword'))
       return
     }
 
     setLoading(true)
-    const { data, error: loginError } = await supabase.rpc('verify_login', {
-      p_login: identifier.trim(),
-      p_password: password,
-    })
+    const { data, error: loginError } = await customerLogin(identifier.trim(), password)
     setLoading(false)
 
     if (loginError) {
-      const msg = loginError.message || ''
-      if (msg.includes('INVALID_CREDENTIALS')) setError('Invalid mobile/email or password.')
-      else if (msg.includes('ACCOUNT_LOCKED')) setError('Account locked. Please try again later.')
-      else if (msg.includes('ACCOUNT_SUSPENDED')) setError('This account is suspended. Please contact support.')
-      else setError('Login failed. Please try again.')
+      setError(loginMessage(loginError))
       return
     }
 
     const user = data?.[0]
     if (!user) {
-      setError('Invalid mobile/email or password.')
-      return
-    }
-    if (user.role !== 'customer') {
-      setError('This login is not a customer account.')
+      setError(t('invalidCredentials'))
       return
     }
     if (!user.contact_id) {
@@ -253,33 +906,44 @@ function LoginScreen({ onLogin, onOtp }) {
     onLogin(saveCustomerSession(user))
   }
 
-  return (
-    <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-10 text-[#071923]">
-      <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-md flex-col justify-center">
-        <div className="mb-9 rounded-lg bg-white p-8 text-center shadow-sm shadow-sky-100">
-          <div className="mx-auto flex h-16 w-24 items-center justify-center rounded-lg bg-sky-100 text-3xl font-bold text-sky-600">3</div>
-          <h1 className="mt-8 text-3xl font-bold tracking-tight">Welcome back</h1>
-          <p className="mt-2 text-sm text-slate-500">Login with mobile/email and password</p>
-        </div>
+  async function submitGoogleLogin() {
+    setError('')
+    setLoading(true)
+    try {
+      await onGoogleLogin()
+    } catch (googleError) {
+      setError(googleError.message || t('loginFailed'))
+      setLoading(false)
+    }
+  }
 
-        <form onSubmit={submitLogin} className="rounded-lg border border-sky-100 bg-white p-5 shadow-sm shadow-sky-100/70">
-          <label className="block text-xs font-semibold text-slate-500">Mobile number or Email</label>
+  return (
+    <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-6 text-[#071923]" dir={dir}>
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-md items-center">
+        <form onSubmit={submitLogin} className="w-full rounded-lg border border-sky-100 bg-white p-5 shadow-sm shadow-sky-100/70">
+          <div className="mb-7 text-center">
+            <img src={ideliverLoginLogo} alt="iDeliver" className="mx-auto h-20 w-auto object-contain" />
+            <h1 className="mt-6 text-3xl font-bold tracking-tight">{t('welcomeBack')}</h1>
+            <p className="mt-2 text-sm text-slate-500">{t('loginSubtitle')}</p>
+          </div>
+
+          <label className="block text-xs font-semibold text-slate-500">{t('username')}</label>
           <input
             className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
             value={identifier}
             onChange={event => { setIdentifier(event.target.value); setError('') }}
-            placeholder="Mobile number or email"
+            placeholder={t('usernamePlaceholder')}
             autoComplete="username"
             disabled={loading}
           />
 
-          <label className="mt-5 block text-xs font-semibold text-slate-500">Password</label>
+          <label className="mt-5 block text-xs font-semibold text-slate-500">{t('password')}</label>
           <input
             className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
             type="password"
             value={password}
             onChange={event => { setPassword(event.target.value); setError('') }}
-            placeholder="Password"
+            placeholder={t('passwordPlaceholder')}
             autoComplete="current-password"
             disabled={loading}
           />
@@ -291,10 +955,13 @@ function LoginScreen({ onLogin, onOtp }) {
           )}
 
           <button type="submit" disabled={loading} className="mt-8 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white shadow-sm shadow-sky-200 disabled:cursor-not-allowed disabled:bg-slate-300">
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? t('loginLoading') : t('login')}
+          </button>
+          <button type="button" onClick={submitGoogleLogin} disabled={loading} className="mt-3 flex h-11 w-full items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-700 disabled:opacity-60">
+            {t('loginWithGoogle')}
           </button>
           <button type="button" onClick={onOtp} className="mt-4 flex h-10 w-full items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700">
-            First-time customer? Register with OTP
+            {t('firstTimeOtp')}
           </button>
         </form>
       </div>
@@ -302,40 +969,47 @@ function LoginScreen({ onLogin, onOtp }) {
   )
 }
 
-function OtpScreen({ onDone, onBack }) {
+function OtpScreen({ onDone, onBack, onGoogleLogin }) {
+  const { t, dir } = useI18n()
   const [step, setStep] = useState('details')
   const [fullName, setFullName] = useState('')
   const [mobile, setMobile] = useState('')
   const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [otpChannel, setOtpChannel] = useState('whatsapp')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [otp, setOtp] = useState(['', '', '', ''])
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
 
   function sendOtp(event) {
     event.preventDefault()
     setError('')
 
     if (!fullName.trim()) {
-      setError('Enter your full name.')
+      setError(t('enterFullName'))
       return
     }
     if (!mobile.trim()) {
-      setError('Enter your mobile number.')
+      setError(t('enterMobileNumber'))
+      return
+    }
+    if (!username.trim()) {
+      setError(t('usernameRequired'))
       return
     }
     if (otpChannel === 'email' && !email.trim()) {
-      setError('Enter your email address to receive OTP by email.')
+      setError(t('emailRequiredForOtp'))
       return
     }
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+      setError(t('passwordTooShort'))
       return
     }
     if (password !== confirmPassword) {
-      setError('Password and confirmation do not match.')
+      setError(t('passwordConfirmationMismatch'))
       return
     }
 
@@ -352,11 +1026,11 @@ function OtpScreen({ onDone, onBack }) {
     setError('')
 
     if (otp.some(digit => !digit)) {
-      setError('Enter the 4 digit OTP.')
+      setError(t('enterOtp'))
       return
     }
     if (otp.join('') !== '1234') {
-      setError('Invalid OTP. Use the temporary development OTP 1234.')
+      setError(t('invalidOtp'))
       return
     }
 
@@ -365,6 +1039,7 @@ function OtpScreen({ onDone, onBack }) {
       await onDone({
         mobile: mobile.trim(),
         email: email.trim() || null,
+        username: username.trim(),
         otp_channel: otpChannel,
         full_name: fullName.trim(),
         password,
@@ -376,50 +1051,78 @@ function OtpScreen({ onDone, onBack }) {
     }
   }
 
+  async function submitGoogleLogin() {
+    if (!onGoogleLogin) return
+    setError('')
+    setGoogleLoading(true)
+    try {
+      await onGoogleLogin()
+    } catch (googleError) {
+      setError(googleError.message || t('loginFailed'))
+      setGoogleLoading(false)
+    }
+  }
+
   return (
-    <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] text-[#071923]">
-      <div className="mx-auto max-w-md bg-[#f8fdff] pb-8">
-        <Header title="Customer Registration" subtitle="First-time customer setup" back onBack={step === 'otp' ? () => setStep('details') : onBack} />
-        <main className="space-y-5 px-5 py-6">
+    <div className="min-h-dvh overflow-y-auto bg-[#eaf8fb] text-[#071923]" dir={dir}>
+      <div className="mx-auto min-h-dvh max-w-md bg-[#f8fdff] pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <Header title={t('customerRegistration')} subtitle={t('firstTimeSetup')} back onBack={step === 'otp' ? () => setStep('details') : onBack} />
+        <main className="space-y-3 px-4 py-4">
+          {step === 'details' && (
+            <button type="button" onClick={submitGoogleLogin} disabled={googleLoading || saving} className="flex h-11 w-full items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-700 shadow-sm shadow-sky-100 disabled:opacity-60">
+              {googleLoading ? t('loginLoading') : t('loginWithGoogle')}
+            </button>
+          )}
           {step === 'details' ? (
             <form onSubmit={sendOtp}>
-              <Section title="Create Account" subtitle="Temporary development OTP is 1234.">
+              <Section title={t('createAccount')} subtitle={t('temporaryOtp')}>
                 <label className="block">
-                  <span className="text-xs font-semibold text-slate-500">Full name</span>
+                  <span className="text-xs font-semibold text-slate-500">{t('fullName')}</span>
                   <input
-                    className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     value={fullName}
                     onChange={event => { setFullName(event.target.value); setError('') }}
-                    placeholder="Enter full name"
+                    placeholder={t('enterFullName')}
                   />
                 </label>
 
-                <label className="mt-4 block">
-                  <span className="text-xs font-semibold text-slate-500">Mobile number</span>
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('mobileNumber')}</span>
                   <input
-                    className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     value={mobile}
                     onChange={event => { setMobile(event.target.value); setError('') }}
-                    placeholder="Enter mobile number"
+                    placeholder={t('enterMobileNumber')}
                     autoComplete="username"
                   />
                 </label>
 
-                <label className="mt-4 block">
-                  <span className="text-xs font-semibold text-slate-500">Email address</span>
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('username')}</span>
                   <input
-                    className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    value={username}
+                    onChange={event => { setUsername(event.target.value); setError('') }}
+                    placeholder={t('enterUsername')}
+                    autoComplete="username"
+                  />
+                </label>
+
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('emailAddress')}</span>
+                  <input
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     type="email"
                     value={email}
                     onChange={event => { setEmail(event.target.value); setError('') }}
-                    placeholder="Required only for email OTP"
+                    placeholder={t('requiredOnlyForEmailOtp')}
                     autoComplete="email"
                   />
                 </label>
 
-                <div className="mt-4">
-                  <span className="text-xs font-semibold text-slate-500">Send OTP through</span>
-                  <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
+                <div className="mt-3">
+                  <span className="text-xs font-semibold text-slate-500">{t('sendOtpThrough')}</span>
+                  <div className="mt-1.5 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
                     {[
                       ['whatsapp', 'WhatsApp'],
                       ['email', 'Email'],
@@ -439,26 +1142,26 @@ function OtpScreen({ onDone, onBack }) {
                   </div>
                 </div>
 
-                <label className="mt-4 block">
-                  <span className="text-xs font-semibold text-slate-500">Password</span>
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('password')}</span>
                   <input
-                    className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     type="password"
                     value={password}
                     onChange={event => { setPassword(event.target.value); setError('') }}
-                    placeholder="Minimum 8 characters"
+                    placeholder={t('minimumCharacters')}
                     autoComplete="new-password"
                   />
                 </label>
 
-                <label className="mt-4 block">
-                  <span className="text-xs font-semibold text-slate-500">Confirm password</span>
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('confirmPassword')}</span>
                   <input
-                    className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     type="password"
                     value={confirmPassword}
                     onChange={event => { setConfirmPassword(event.target.value); setError('') }}
-                    placeholder="Re-enter password"
+                    placeholder={t('confirmPassword')}
                     autoComplete="new-password"
                   />
                 </label>
@@ -469,14 +1172,14 @@ function OtpScreen({ onDone, onBack }) {
                   </div>
                 )}
 
-                <button type="submit" className="mt-7 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white">
-                  Send OTP
+                <button type="submit" className="mt-5 flex h-11 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white">
+                  {t('sendOtp')}
                 </button>
               </Section>
             </form>
           ) : (
             <form onSubmit={verifyOtp}>
-              <Section title="Verify OTP" subtitle={`Enter temporary OTP 1234 sent by ${otpChannel === 'email' ? 'Email' : 'WhatsApp'}.`}>
+              <Section title={t('verifyOtp')} subtitle={otpChannel === 'email' ? t('enterEmailOtp') : `Enter temporary OTP 1234 sent by ${t('whatsapp')}.`}>
                 <div className="grid grid-cols-4 gap-2">
                   {otp.map((digit, index) => (
                     <input
@@ -498,7 +1201,7 @@ function OtpScreen({ onDone, onBack }) {
                 )}
 
                 <button type="submit" disabled={saving} className="mt-7 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:opacity-60">
-                  {saving ? 'Creating account...' : 'Verify OTP & Create Account'}
+                  {saving ? t('creatingAccount') : t('verifyOtpCreate')}
                 </button>
               </Section>
             </form>
@@ -510,6 +1213,7 @@ function OtpScreen({ onDone, onBack }) {
 }
 
 function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder, onEditOrder }) {
+  const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -590,7 +1294,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
     return () => { cancelled = true }
   }, [customerSession])
 
-  const displayName = customerName(profile) || customerSession?.first_name || 'Customer'
+  const displayName = customerName(profile) || customerSession?.first_name || t('customerAccount')
 
   return (
     <>
@@ -602,7 +1306,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
       <main className="space-y-5 px-5 py-6">
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-6 text-center text-sm font-semibold text-slate-500">
-            Loading account...
+            {t('loadingAccount')}
           </div>
         )}
         {!loading && error && (
@@ -611,15 +1315,15 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
           </div>
         )}
         {!loading && profile && (
-          <Section title={displayName} subtitle={profile.mobile || customerSession?.mobile || 'Customer account'}>
+          <Section title={displayName} subtitle={profile.mobile || customerSession?.mobile || t('customerAccount')}>
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
               <div>
-                <p className="text-xs text-slate-500">Credit/Debit</p>
-                <p className="mt-1 text-sm font-semibold">{profile.credit_debit_allowed ? 'Allowed' : 'Not allowed'}</p>
+                <p className="text-xs text-slate-500">{t('creditDebit')}</p>
+                <p className="mt-1 text-sm font-semibold">{profile.credit_debit_allowed ? t('allowed') : t('notAllowed')}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Notifications</p>
-                <p className="mt-1 text-sm font-semibold">{profile.email ? 'WhatsApp + Email' : 'WhatsApp'}</p>
+                <p className="text-xs text-slate-500">{t('notifications')}</p>
+                <p className="mt-1 text-sm font-semibold">{profile.email ? `${t('whatsapp')} + ${t('email')}` : t('whatsapp')}</p>
               </div>
             </div>
           </Section>
@@ -628,34 +1332,34 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
         <section className="grid grid-cols-2 gap-3">
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
             <Package className="h-6 w-6 text-sky-600" />
-            <p className="mt-4 text-sm font-bold">Book Delivery</p>
-            <p className="mt-1 text-xs text-slate-500">External request</p>
+            <p className="mt-4 text-sm font-bold">{t('bookDelivery')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('externalRequest')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100">
             <ShoppingBag className="h-6 w-6 text-emerald-600" />
-            <p className="mt-4 text-sm font-bold">Shop Products</p>
-            <p className="mt-1 text-xs text-slate-500">Future module</p>
+            <p className="mt-4 text-sm font-bold">{t('shopProducts')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('futureModule')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onOrders}>
             <ClipboardList className="h-6 w-6 text-blue-600" />
-            <p className="mt-4 text-sm font-bold">My Orders</p>
-            <p className="mt-1 text-xs text-slate-500">Track status</p>
+            <p className="mt-4 text-sm font-bold">{t('myOrders')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('trackStatus')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onProfile}>
             <User className="h-6 w-6 text-cyan-600" />
-            <p className="mt-4 text-sm font-bold">Profile</p>
-            <p className="mt-1 text-xs text-slate-500">Saved addresses</p>
+            <p className="mt-4 text-sm font-bold">{t('profile')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('savedAddresses')}</p>
           </button>
         </section>
 
-        <Section title="Latest Order" subtitle="Most recent delivery request">
+        <Section title={t('latestOrder')} subtitle={t('latestOrderSubtitle')}>
           {latestOrder ? (
             <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' ? () => onEditOrder(latestOrder) : undefined} />
           ) : (
             <div className="rounded-lg border border-sky-100 bg-slate-50 px-4 py-6 text-center">
-              <p className="text-sm font-bold text-slate-950">No orders yet</p>
+              <p className="text-sm font-bold text-slate-950">{t('noOrdersYet')}</p>
               <button type="button" onClick={onBook} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">
-                Book Delivery
+                {t('bookDelivery')}
               </button>
             </div>
           )}
@@ -762,6 +1466,7 @@ function mapCustomerOrder(order, invoices = [], payments = []) {
 }
 
 function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerSession }) {
+  const { t } = useI18n()
   const [customers, setCustomers] = useState([])
   const [addresses, setAddresses] = useState([])
   const [customerId, setCustomerId] = useState('')
@@ -874,7 +1579,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
     const cleanRequirements = requirements.map(item => item.trim()).filter(Boolean)
 
     if (!customer) {
-      setError('Select a customer before submitting.')
+      setError(t('selectCustomer'))
       setSaving(false)
       return
     }
@@ -884,12 +1589,12 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       return
     }
     if (!pickupAddress.trim()) {
-      setError('Pickup location is required.')
+      setError(t('pickupLocationRequired'))
       setSaving(false)
       return
     }
     if (!deliveryAddress.trim()) {
-      setError('Delivery/drop location is required.')
+      setError(t('deliveryLocationRequired'))
       setSaving(false)
       return
     }
@@ -958,18 +1663,18 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
   return (
     <>
       <Header
-        title="Book Delivery"
-        subtitle="Tell us what you need"
+        title={t('bookDelivery')}
+        subtitle={t('tellUsNeed')}
       />
       <main className="space-y-4 px-5 pb-40 pt-5">
         <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-slate-950">Tell us what you need</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Add one or more request lines</p>
+              <h2 className="text-base font-bold text-slate-950">{t('tellUsNeed')}</h2>
+              <p className="mt-0.5 text-xs text-slate-500">{t('addRequestLines')}</p>
             </div>
             <button type="button" onClick={addRequirement} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">
-              Add
+              {t('add')}
             </button>
           </div>
           <div className="space-y-3">
@@ -980,7 +1685,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
                   className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-400"
                   value={item}
                   onChange={event => updateRequirement(index, event.target.value)}
-                  placeholder="Type customer requirement"
+                  placeholder={t('typeCustomerRequirement')}
                 />
                 <button type="button" onClick={() => removeRequirement(index)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-500">
                   <Trash2 className="h-4 w-4" />
@@ -993,8 +1698,8 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
         <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-slate-950">Pickup</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Choose saved address or type new</p>
+              <h2 className="text-base font-bold text-slate-950">{t('pickup')}</h2>
+              <p className="mt-0.5 text-xs text-slate-500">{t('pickupSubtitle')}</p>
             </div>
             <MapPin className="h-5 w-5 text-sky-600" />
           </div>
@@ -1003,18 +1708,18 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
             fallback={selectedCustomer?.default_pickup_address || selectedCustomer?.address}
             onSelect={setPickupAddress}
           />
-          <ControlledField label="Pickup location" value={pickupAddress} onChange={setPickupAddress} />
+          <ControlledField label={t('pickupLocation')} value={pickupAddress} onChange={setPickupAddress} />
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <ControlledField label="Pickup date" value={pickupDate} onChange={setPickupDate} type="date" />
-            <ControlledField label="Pickup time" value={pickupTime} onChange={setPickupTime} type="time" />
+            <ControlledField label={t('pickupDate')} value={pickupDate} onChange={setPickupDate} type="date" />
+            <ControlledField label={t('pickupTime')} value={pickupTime} onChange={setPickupTime} type="time" />
           </div>
         </section>
 
         <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-slate-950">Delivery / Drop</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Final delivery location</p>
+              <h2 className="text-base font-bold text-slate-950">{t('deliveryDrop')}</h2>
+              <p className="mt-0.5 text-xs text-slate-500">{t('finalDeliveryLocation')}</p>
             </div>
             <Package className="h-5 w-5 text-emerald-600" />
           </div>
@@ -1023,16 +1728,16 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
             fallback={selectedCustomer?.default_delivery_address || selectedCustomer?.address}
             onSelect={setDeliveryAddress}
           />
-          <ControlledField label="Delivery / drop location" value={deliveryAddress} onChange={setDeliveryAddress} />
+          <ControlledField label={t('deliveryDropLocation')} value={deliveryAddress} onChange={setDeliveryAddress} />
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <ControlledField label="Delivery date" value={deliveryDate} onChange={setDeliveryDate} type="date" />
-            <ControlledField label="Delivery time" value={deliveryTime} onChange={setDeliveryTime} type="time" />
+            <ControlledField label={t('deliveryDate')} value={deliveryDate} onChange={setDeliveryDate} type="date" />
+            <ControlledField label={t('deliveryTime')} value={deliveryTime} onChange={setDeliveryTime} type="time" />
           </div>
         </section>
 
         <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
           <label className="block">
-            <span className="text-xs font-semibold text-slate-500">Notes, if needed</span>
+            <span className="text-xs font-semibold text-slate-500">{t('notesIfNeeded')}</span>
             <textarea
               className="mt-2 min-h-20 w-full resize-none rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-300"
               value={notes}
@@ -1055,7 +1760,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
 
         <div className="fixed bottom-[76px] left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur">
           <button type="button" onClick={submitRequest} disabled={saving || loading} className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-            {saving ? 'Submitting...' : 'Submit Request'}
+            {saving ? t('submitting') : t('submitRequest')}
           </button>
         </div>
       </main>
@@ -1064,13 +1769,14 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
 }
 
 function AddressQuickPick({ addresses = [], fallback = '', onSelect }) {
+  const { t } = useI18n()
   const options = [
     ...addresses.map(address => ({
       id: address.id,
-      label: address.address_name || address.reference || 'Saved',
+      label: address.address_name || address.reference || t('saved'),
       value: addressText(address),
     })),
-    ...(fallback ? [{ id: 'fallback', label: 'Default', value: fallback }] : []),
+    ...(fallback ? [{ id: 'fallback', label: t('default'), value: fallback }] : []),
   ].filter(option => option.value)
 
   return (
@@ -1081,7 +1787,7 @@ function AddressQuickPick({ addresses = [], fallback = '', onSelect }) {
         </button>
       ))}
       <button type="button" className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500">
-        Type new
+        {t('typeNew')}
       </button>
     </div>
   )
@@ -1110,20 +1816,37 @@ function Field({ label, value, type = 'text' }) {
   )
 }
 
-function OrdersScreen({ customerSession, onView, onEdit }) {
+function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }) {
+  const { t } = useI18n()
+  const deliveryFilters = ['all', 'Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered']
   const [orders, setOrders] = useState([])
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const visibleOrders = useMemo(() => (
+    orders.map(order => {
+      const liveStatus = deliveryStatusByOrder?.[order.id]
+      if (!liveStatus || liveStatus === order.deliveryStatus) return order
+      return {
+        ...order,
+        deliveryStatus: liveStatus,
+        raw: {
+          ...(order.raw || {}),
+          delivery_status: liveStatus,
+        },
+      }
+    })
+  ), [deliveryStatusByOrder, orders])
+
   const filtered = useMemo(() => {
     const text = search.trim().toLowerCase()
-    return orders.filter(order => {
-      const statusMatch = filter === 'all' || order.status === filter
+    return visibleOrders.filter(order => {
+      const statusMatch = filter === 'all' || order.deliveryStatus === filter
       const textMatch = !text || order.orderNumber?.toLowerCase().includes(text) || order.drop?.toLowerCase().includes(text)
       return statusMatch && textMatch
     })
-  }, [filter, orders, search])
+  }, [filter, search, visibleOrders])
 
   useEffect(() => {
     let cancelled = false
@@ -1232,7 +1955,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
 
   return (
     <>
-      <Header title="My Orders" subtitle="Track bookings, invoices and payments" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
+      <Header title={t('myOrders')} subtitle={t('trackBookings')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 px-4 text-sm text-slate-500">
           <Search className="h-4 w-4 text-sky-600" />
@@ -1240,24 +1963,24 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
             className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Search order number"
+            placeholder={t('searchOrderNumber')}
           />
         </label>
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {['all', 'pending', 'confirmed', 'assigned', 'delivered'].map(item => (
+          {deliveryFilters.map(item => (
             <button
               key={item}
               type="button"
               onClick={() => setFilter(item)}
               className={cx('shrink-0 rounded-full px-4 py-2 text-xs font-bold capitalize', filter === item ? 'bg-sky-600 text-white' : 'border border-sky-100 bg-white text-slate-500')}
             >
-              {item}
+              {item === 'all' ? t('all') : translatedStatus(t, item)}
             </button>
           ))}
         </div>
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            Loading orders...
+            {t('loadingOrders')}
           </div>
         )}
         {!loading && error && (
@@ -1267,8 +1990,8 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
         )}
         {!loading && !error && filtered.length === 0 && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center">
-            <p className="text-sm font-bold text-slate-950">No orders found</p>
-            <p className="mt-1 text-sm text-slate-500">Your submitted delivery requests will appear here.</p>
+            <p className="text-sm font-bold text-slate-950">{t('noOrdersFound')}</p>
+            <p className="mt-1 text-sm text-slate-500">{t('yourSubmittedRequests')}</p>
           </div>
         )}
         <div className="space-y-4">
@@ -1280,6 +2003,7 @@ function OrdersScreen({ customerSession, onView, onEdit }) {
 }
 
 function OrderCard({ order, onView, onEdit }) {
+  const { t } = useI18n()
   const editable = order.status === 'pending' && order.type === 'Book Delivery'
   return (
     <article className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/80">
@@ -1288,41 +2012,32 @@ function OrderCard({ order, onView, onEdit }) {
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sm font-bold text-sky-700">{order.type === 'Book Delivery' ? 'B' : 'S'}</div>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-slate-950">{order.orderNumber}</p>
-            <p className="text-sm text-slate-500">{order.type}</p>
+            <p className="text-sm text-slate-500">{order.type === 'Book Delivery' ? t('bookDelivery') : t('deliveryOrder')}</p>
           </div>
         </div>
-        <span className={cx('shrink-0 rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>
+        <span className={cx('shrink-0 rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.deliveryStatus))}>{translatedStatus(t, order.deliveryStatus)}</span>
       </div>
       <p className="mt-5 text-sm font-semibold text-slate-950">
-        {order.pickup ? `Pickup: ${order.pickup} to Drop: ${order.drop}` : `Delivery: ${order.drop}`}
+        {order.pickup ? `${t('pickup')}: ${order.pickup} / ${t('drop')}: ${order.drop}` : `${t('deliveryOrder')}: ${order.drop}`}
       </p>
       <p className="mt-1 text-sm text-slate-500">{order.schedule}</p>
-      <div className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
-        <div>
-          <p className="text-xs text-slate-500">Invoice</p>
-          <p className="mt-1 text-xs font-semibold text-slate-950">{order.invoice}</p>
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">Payment</p>
-          <p className="mt-1 text-sm font-semibold text-slate-950">{order.payment}</p>
-        </div>
-      </div>
       <div className="mt-4 flex gap-3">
-        <button type="button" onClick={onView} className="rounded-lg bg-sky-100 px-5 py-2 text-sm font-bold text-sky-700">View</button>
-        {editable && <button type="button" onClick={onEdit} className="rounded-lg bg-emerald-100 px-5 py-2 text-sm font-bold text-emerald-700">Edit</button>}
+        <button type="button" onClick={onView} className="rounded-lg bg-sky-100 px-5 py-2 text-sm font-bold text-sky-700">{t('view')}</button>
+        {editable && <button type="button" onClick={onEdit} className="rounded-lg bg-emerald-100 px-5 py-2 text-sm font-bold text-emerald-700">{t('edit')}</button>}
       </div>
     </article>
   )
 }
 
 function OrderDetailsScreen({ order, onEdit, onBack }) {
+  const { t } = useI18n()
   if (!order) {
     return (
       <>
-        <Header title="Order Details" subtitle="No order selected" back onBack={onBack} />
+        <Header title={t('orderDetails')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            Select an order from My Orders.
+            {t('selectOrderFromOrders')}
           </div>
         </main>
       </>
@@ -1330,10 +2045,10 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
   }
 
   const timeline = [
-    ['Awaiting Pickup', 'Awaiting Pickup'],
+    [t('awaitingPickup'), 'Awaiting Pickup'],
     ['Picked Up', 'Picked Up'],
     ['In Transit', 'In Transit'],
-    ['Delivered', 'Delivered'],
+    [t('delivered'), 'Delivered'],
   ].map(([label, step]) => {
     const state = deliveryTimelineState(order, step)
     return [label, state, timelineTone(state)]
@@ -1344,45 +2059,45 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
 
   return (
     <>
-      <Header title="Order Details" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>} />
+      <Header title={t('orderDetails')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
-        <Section title={order.type} subtitle={raw.order_source === 'external' ? 'Customer-created external request' : 'Delivery order'}>
+        <Section title={order.type === 'Book Delivery' ? t('bookDelivery') : t('deliveryOrder')} subtitle={raw.order_source === 'external' ? t('customerCreatedRequest') : t('deliveryOrder')}>
           <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
             <div>
-              <p className="text-xs text-slate-500">Pickup</p>
-              <p className="mt-1 text-sm font-semibold">{order.pickup || 'Not provided'}</p>
+              <p className="text-xs text-slate-500">{t('pickup')}</p>
+              <p className="mt-1 text-sm font-semibold">{order.pickup || t('notProvided')}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Drop</p>
-              <p className="mt-1 text-sm font-semibold">{order.drop || 'Not provided'}</p>
+              <p className="text-xs text-slate-500">{t('drop')}</p>
+              <p className="mt-1 text-sm font-semibold">{order.drop || t('notProvided')}</p>
             </div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-white p-3">
             <div>
-              <p className="text-xs text-slate-500">Payment status</p>
-              <p className="mt-1 text-sm font-semibold capitalize">{order.paymentStatus || 'unpaid'}</p>
+              <p className="text-xs text-slate-500">{t('paymentStatus')}</p>
+              <p className="mt-1 text-sm font-semibold capitalize">{translatedStatus(t, order.paymentStatus || 'unpaid')}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Delivery status</p>
-              <p className="mt-1 text-sm font-semibold">{order.deliveryStatus || 'Awaiting Pickup'}</p>
+              <p className="text-xs text-slate-500">{t('deliveryStatus')}</p>
+              <p className="mt-1 text-sm font-semibold">{translatedStatus(t, order.deliveryStatus || 'Awaiting Pickup')}</p>
             </div>
           </div>
           <div className="mt-3 rounded-lg border border-sky-100 bg-white p-3">
-            <p className="text-xs text-slate-500">Total amount</p>
+            <p className="text-xs text-slate-500">{t('totalAmount')}</p>
             <p className="mt-1 text-sm font-semibold">{formatMoney(raw.total_amount, raw.currency)}</p>
           </div>
           <div className="mt-3 space-y-2">
-            <InfoLine label="Created" value={formatDateTime(raw.created_at)} />
-            {raw.special_instructions && <InfoLine label="Notes" value={raw.special_instructions} />}
+            <InfoLine label={t('created')} value={formatDateTime(raw.created_at)} />
+            {raw.special_instructions && <InfoLine label={t('notes')} value={raw.special_instructions} />}
           </div>
         </Section>
-        <Section title="Schedule">
+        <Section title={t('schedule')}>
           <div className="flex items-center gap-3 text-sm font-semibold">
             <CalendarClock className="h-5 w-5 text-sky-600" />
             {order.schedule}
           </div>
         </Section>
-        <Section title="Items / Requirements" subtitle="from order_items">
+        <Section title={t('itemsRequirements')} subtitle="from order_items">
           <div className="space-y-2">
             {(raw.order_items || []).filter(item => !item.is_deleted).length > 0 ? (
               (raw.order_items || []).filter(item => !item.is_deleted).map((item, index) => (
@@ -1390,40 +2105,40 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-bold text-sky-700">{index + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-slate-950">{item.parcel_description || item.item_type || 'Item'}</p>
-                    <p className="mt-1 text-xs text-slate-500">Qty {Number(item.quantity || 0).toFixed(0)} / {formatMoney(item.line_total, raw.currency)}</p>
+                    <p className="mt-1 text-xs text-slate-500">{t('qty')} {Number(item.quantity || 0).toFixed(0)} / {formatMoney(item.line_total, raw.currency)}</p>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm text-slate-500">No item rows available.</div>
+              <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm text-slate-500">{t('noItemRows')}</div>
             )}
           </div>
         </Section>
-        <Section title="Retail Goods Invoices" subtitle="retail_goods_invoices">
+        <Section title={t('retailGoodsInvoices')} subtitle="retail_goods_invoices">
           <div className="space-y-3">
             {invoices.length > 0 ? invoices.map(invoice => (
               <div key={invoice.id} className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold text-slate-950">{invoice.shop_name || 'Invoice'}</p>
-                    <p className="mt-1 text-xs text-slate-500">{invoice.invoice_reference || 'No reference'} / {invoice.invoice_date || 'No date'}</p>
+                    <p className="text-sm font-bold text-slate-950">{invoice.shop_name || t('invoice')}</p>
+                    <p className="mt-1 text-xs text-slate-500">{invoice.invoice_reference || t('noReference')} / {invoice.invoice_date || t('noDate')}</p>
                   </div>
                   <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.paid ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')}>
-                    {invoice.paid ? 'Paid' : 'Unpaid'}
+                    {invoice.paid ? 'Paid' : t('unpaid')}
                   </span>
                 </div>
                 <p className="mt-3 text-sm font-semibold">{formatMoney(invoice.invoice_value, invoice.currency)}</p>
               </div>
             )) : (
-              <InfoLine label="Invoice" value="Waiting for quotation" />
+              <InfoLine label={t('invoice')} value={t('waitingForQuotation')} />
             )}
           </div>
         </Section>
-        <Section title="Payment Collections" subtitle="payment_collections">
+        <Section title={t('paymentCollections')} subtitle="payment_collections">
           <div className="space-y-3">
             {payments.length > 0 ? payments.map(payment => (
               <div key={payment.id} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-3">
-                <p className="text-sm font-bold capitalize text-orange-800">{payment.collection_type || 'Payment'}</p>
+                <p className="text-sm font-bold capitalize text-orange-800">{payment.collection_type || t('payment')}</p>
                 <p className="mt-1 text-xs text-orange-700">{formatDateTime(payment.collected_at)}</p>
                 <p className="mt-3 text-sm font-semibold text-slate-950">
                   USD {Number(payment.amount_usd || 0).toFixed(2)}
@@ -1431,17 +2146,17 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
                 </p>
               </div>
             )) : (
-              <InfoLine label="Collection" value="No payment collected yet" tone="amber" />
+              <InfoLine label={t('collection')} value={t('noPaymentCollected')} tone="amber" />
             )}
           </div>
         </Section>
-        <Section title="Status Timeline">
+        <Section title={t('statusTimeline')}>
           <div className="space-y-4">
             {timeline.map(([label, state, classes]) => (
               <div key={label} className="flex items-center gap-3">
                 <span className={cx('h-4 w-4 rounded-full', classes.split(' ')[1])} />
                 <span className="flex-1 text-sm font-medium">{label}</span>
-                <span className={cx('text-xs font-semibold', classes.split(' ')[0])}>{state}</span>
+                <span className={cx('text-xs font-semibold', classes.split(' ')[0])}>{translatedStatus(t, state)}</span>
               </div>
             ))}
           </div>
@@ -1449,7 +2164,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
         {order.status === 'pending' && order.type === 'Book Delivery' && (
           <button type="button" onClick={() => onEdit(order)} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-100 text-sm font-bold text-emerald-700">
             <Pencil className="h-4 w-4" />
-            Edit Order
+            {t('editOrder')}
           </button>
         )}
       </main>
@@ -1467,6 +2182,7 @@ function InfoLine({ label, value, tone }) {
 }
 
 function EditOrderScreen({ order, requirements, setRequirements, customerSession, onSave, onBack }) {
+  const { t } = useI18n()
   const raw = order?.raw || {}
   const [pickupAddress, setPickupAddress] = useState(raw.pickup_address || order?.pickup || '')
   const [deliveryAddress, setDeliveryAddress] = useState(raw.delivery_address || order?.drop || '')
@@ -1504,7 +2220,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
     setError('')
 
     if (!order?.id) {
-      setError('Select an order before saving.')
+      setError(t('selectOrderFromOrders'))
       return
     }
     if (order.status !== 'pending') {
@@ -1514,7 +2230,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 
     const cleanRequirements = requirements.map(item => item.trim()).filter(Boolean)
     if (!deliveryAddress.trim()) {
-      setError('Delivery/drop location is required.')
+      setError(t('deliveryLocationRequired'))
       return
     }
     if (cleanRequirements.length === 0) {
@@ -1616,10 +2332,10 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
   if (!order) {
     return (
       <>
-        <Header title="Edit Order" subtitle="No order selected" back onBack={onBack} />
+        <Header title={t('editOrder')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            Select an order from My Orders.
+            {t('selectOrderFromOrders')}
           </div>
         </main>
       </>
@@ -1628,7 +2344,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 
   return (
     <>
-      <Header title="Edit Order" subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{order.status}</span>} />
+      <Header title={t('editOrder')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           Changes update the same order. No new order number.
@@ -1640,15 +2356,15 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
         )}
 
         <Section
-          title="Requirement Rows"
-          subtitle="Saved back to order_items"
-          action={<button type="button" onClick={addRequirement} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">Add</button>}
+          title={t('requirementRows')}
+          subtitle={t('savedBackToOrderItems')}
+          action={<button type="button" onClick={addRequirement} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}
         >
           <div className="space-y-3">
             {requirements.map((item, index) => (
               <div key={index} className="flex items-center gap-2 rounded-lg border border-sky-100 bg-slate-50 px-3 py-2">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-bold text-sky-700">{index + 1}</span>
-                <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={item} onChange={event => updateRequirement(index, event.target.value)} placeholder="Enter requirement" />
+                <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={item} onChange={event => updateRequirement(index, event.target.value)} placeholder={t('enterRequirement')} />
                 <button type="button" onClick={() => removeRequirement(index)} className="text-rose-500">
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -1657,12 +2373,12 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
           </div>
         </Section>
 
-        <Section title="Pickup & Drop">
+        <Section title={t('pickupDrop')}>
           <div className="space-y-4">
-            <ControlledField label="Pickup location" value={pickupAddress} onChange={setPickupAddress} />
-            <ControlledField label="Delivery / drop location" value={deliveryAddress} onChange={setDeliveryAddress} />
+            <ControlledField label={t('pickupLocation')} value={pickupAddress} onChange={setPickupAddress} />
+            <ControlledField label={t('deliveryDropLocation')} value={deliveryAddress} onChange={setDeliveryAddress} />
             <label className="block">
-              <span className="text-xs font-semibold text-slate-500">Notes</span>
+              <span className="text-xs font-semibold text-slate-500">{t('notes')}</span>
               <textarea
                 className="mt-2 min-h-24 w-full rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                 value={notes}
@@ -1672,20 +2388,20 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
           </div>
         </Section>
 
-        <Section title="Schedule">
+        <Section title={t('schedule')}>
           <div className="grid grid-cols-2 gap-3">
-            <ControlledField label="Delivery date" value={scheduledDate} onChange={setScheduledDate} type="date" />
-            <ControlledField label="Start time" value={scheduledFrom} onChange={setScheduledFrom} type="time" />
-            <ControlledField label="End time" value={scheduledTo} onChange={setScheduledTo} type="time" />
+            <ControlledField label={t('deliveryDate')} value={scheduledDate} onChange={setScheduledDate} type="date" />
+            <ControlledField label={t('startTime')} value={scheduledFrom} onChange={setScheduledFrom} type="time" />
+            <ControlledField label={t('endTime')} value={scheduledTo} onChange={setScheduledTo} type="time" />
           </div>
         </Section>
 
         <div className="grid grid-cols-2 gap-3">
           <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending'} className="flex h-12 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-            {saving ? 'Saving...' : 'Save Changes'}
+            {saving ? t('saving') : t('saveChanges')}
           </button>
           <button type="button" onClick={onBack} disabled={saving} className="flex h-12 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
-            Cancel
+            {t('cancel')}
           </button>
         </div>
       </main>
@@ -1694,6 +2410,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 }
 
 function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
+  const { language, setLanguage, t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [addresses, setAddresses] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1782,7 +2499,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
     setError('')
 
     if (!file.type.startsWith('image/')) {
-      setError('Select an image file.')
+      setError(t('selectImage'))
       return
     }
     if (file.size > 750 * 1024) {
@@ -1814,21 +2531,29 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
   async function saveMobileChange() {
     setError('')
     if (!mobileInput.trim()) {
-      setError('Mobile number is required.')
+      setError(t('mobileNumberRequired'))
       return
     }
 
     setSaving(true)
-    const { data, error: mobileError } = await supabase.rpc('customer_update_mobile', {
-      p_user_id: customerSession.user_id,
+    let { data, error: mobileError } = await supabase.rpc('customer_contact_update_mobile', {
       p_contact_id: customerSession.contact_id,
       p_mobile: mobileInput.trim(),
     })
+    if (isMissingRpc(mobileError)) {
+      const fallback = await supabase.rpc('customer_update_mobile', {
+        p_user_id: customerSession.user_id,
+        p_contact_id: customerSession.contact_id,
+        p_mobile: mobileInput.trim(),
+      })
+      data = fallback.data
+      mobileError = fallback.error
+    }
 
     if (mobileError) {
       const message = mobileError.message || ''
       if (message.includes('MOBILE_ALREADY_EXISTS')) setError('This mobile number is already used by another customer.')
-      else if (message.includes('MOBILE_REQUIRED')) setError('Mobile number is required.')
+      else if (message.includes('MOBILE_REQUIRED')) setError(t('mobileNumberRequired'))
       else setError('Mobile number update failed. Please try again.')
       setSaving(false)
       return
@@ -1951,13 +2676,24 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
 
   const profileName = profile ? customerName(profile) : customerSession?.first_name || 'Customer'
 
+  function changeLanguage(nextLanguage) {
+    const normalized = normalizeLanguage(nextLanguage)
+    localStorage.setItem(CUSTOMER_LANGUAGE_KEY, normalized)
+    setLanguage(normalized)
+    const nextSession = saveCustomerSession({
+      ...customerSession,
+      language: normalized,
+    })
+    onSessionUpdate(nextSession)
+  }
+
   return (
     <>
-      <Header title="Profile" subtitle="Account and saved addresses" right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
+      <Header title={t('profile')} subtitle={t('profileSubtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            Loading profile...
+            {t('loadingProfile')}
           </div>
         )}
         {error && (
@@ -1967,7 +2703,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
         )}
 
         {!loading && (
-          <Section title={profileName} subtitle={profile?.code || profile?.account_number || 'Customer account'}>
+          <Section title={profileName} subtitle={profile?.code || profile?.account_number || t('customerAccount')}>
           <div className="mb-4 flex items-center gap-4">
             <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sky-100 text-2xl font-bold text-sky-700">
               {profile?.profile_photo_url ? (
@@ -1978,66 +2714,87 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
             </div>
             <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 text-sm font-bold text-white">
               <Upload className="h-4 w-4" />
-              Photo
+              {t('photo')}
               <input type="file" accept="image/*" className="hidden" onChange={uploadProfilePhoto} disabled={saving} />
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className={cx('inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold', profile?.credit_debit_allowed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
               <ShieldCheck className="h-3.5 w-3.5" />
-              {profile?.credit_debit_allowed ? 'Credit/Debit Allowed' : 'Cash Only'}
+              {profile?.credit_debit_allowed ? t('creditDebitAllowed') : t('cashOnly')}
             </span>
           </div>
           <div className="mt-4 rounded-lg border border-sky-100 bg-slate-50 p-3">
-            <p className="text-sm font-semibold">Mobile {profile?.mobile || customerSession?.mobile || 'Not set'}</p>
-            <p className="mt-1 text-xs text-slate-500">WhatsApp {profile?.whatsapp_number || profile?.mobile || 'Not set'}</p>
-            <p className="mt-1 text-xs text-slate-500">Email {profile?.email || 'Not set'}</p>
+            <p className="text-sm font-semibold">{t('mobile')} {profile?.mobile || customerSession?.mobile || t('notSet')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('whatsapp')} {profile?.whatsapp_number || profile?.mobile || t('notSet')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('email')} {profile?.email || t('notSet')}</p>
           </div>
           </Section>
         )}
 
         {!loading && (
-          <Section title="Mobile Number" subtitle="Used for login and WhatsApp">
+          <Section title={t('mobileNumber')} subtitle={t('mobileSubtitle')}>
             <div className="space-y-3">
-              <ControlledField label="Mobile number" value={mobileInput} onChange={setMobileInput} />
+              <ControlledField label={t('mobileNumber')} value={mobileInput} onChange={setMobileInput} />
               <button type="button" onClick={saveMobileChange} disabled={saving || mobileInput.trim() === (profile?.mobile || '').trim()} className="flex h-11 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-                {saving ? 'Saving...' : 'Update Mobile Number'}
+                {saving ? t('saving') : t('updateMobileNumber')}
               </button>
             </div>
           </Section>
         )}
 
+        {!loading && (
+          <Section title={t('language')} subtitle={t('languageSubtitle')}>
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1 sm:grid-cols-4">
+              {languageOptions.map(option => (
+                <button
+                  key={option.code}
+                  type="button"
+                  onClick={() => changeLanguage(option.code)}
+                  className={cx(
+                    'min-h-11 rounded-md px-2 text-sm font-bold transition',
+                    language === option.code ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'
+                  )}
+                >
+                  {option.nativeLabel}
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">{t('languageSaved')}</p>
+          </Section>
+        )}
+
         {editingAddress && (
-          <Section title={editingAddress === 'new' ? 'Add Address' : 'Edit Address'}>
+          <Section title={editingAddress === 'new' ? t('addAddress') : t('editAddress')}>
             <div className="space-y-4">
-              <ControlledField label="Address name" value={addressForm.address_name} onChange={value => addressField('address_name', value)} />
-              <ControlledField label="Reference" value={addressForm.reference} onChange={value => addressField('reference', value)} />
-              <ControlledField label="Address line" value={addressForm.address_line} onChange={value => addressField('address_line', value)} />
+              <ControlledField label={t('addressName')} value={addressForm.address_name} onChange={value => addressField('address_name', value)} />
+              <ControlledField label={t('reference')} value={addressForm.reference} onChange={value => addressField('reference', value)} />
+              <ControlledField label={t('addressLine')} value={addressForm.address_line} onChange={value => addressField('address_line', value)} />
               <div className="grid grid-cols-2 gap-3">
-                <ControlledField label="City" value={addressForm.city} onChange={value => addressField('city', value)} />
-                <ControlledField label="Phone" value={addressForm.phone} onChange={value => addressField('phone', value)} />
+                <ControlledField label={t('city')} value={addressForm.city} onChange={value => addressField('city', value)} />
+                <ControlledField label={t('phone')} value={addressForm.phone} onChange={value => addressField('phone', value)} />
               </div>
               <label className="flex items-center gap-3 rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm font-semibold">
                 <input type="checkbox" checked={addressForm.is_primary} onChange={event => addressField('is_primary', event.target.checked)} />
-                Primary address
+                {t('primaryAddress')}
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={saveAddress} disabled={saving} className="flex h-11 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-                  {saving ? 'Saving...' : 'Save'}
+                  {saving ? t('saving') : t('save')}
                 </button>
                 <button type="button" onClick={() => setEditingAddress(null)} disabled={saving} className="flex h-11 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
-                  Cancel
+                  {t('cancel')}
                 </button>
               </div>
             </div>
           </Section>
         )}
 
-        <Section title="Saved Addresses" subtitle="Used for pickup and drop locations" action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">Add</button>}>
+        <Section title={t('savedAddresses')} subtitle={t('savedAddressesSubtitle')} action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}>
           <div className="space-y-3">
             {addresses.length === 0 && (
               <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
-                No saved addresses yet.
+                {t('noSavedAddresses')}
               </div>
             )}
             {addresses.map(address => (
@@ -2049,32 +2806,32 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
                     </div>
                     <div className="min-w-0">
                       <p className="font-bold">{address.address_name}</p>
-                      <p className="mt-1 text-sm text-slate-500">{addressText(address) || 'No address line'}</p>
+                      <p className="mt-1 text-sm text-slate-500">{addressText(address) || t('noAddressLine')}</p>
                       {address.reference && <p className="mt-1 text-xs text-slate-400">{address.reference}</p>}
                     </div>
                   </div>
-                  {address.is_primary && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Primary</span>}
+                  {address.is_primary && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">{t('primary')}</span>}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Set primary</button>}
-                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">Edit</button>
-                  <button type="button" onClick={() => deleteAddress(address)} disabled={saving} className="rounded-lg bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">Delete</button>
+                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">{t('setPrimary')}</button>}
+                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">{t('edit')}</button>
+                  <button type="button" onClick={() => deleteAddress(address)} disabled={saving} className="rounded-lg bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">{t('delete')}</button>
                 </div>
               </div>
             ))}
           </div>
         </Section>
 
-        <Section title="Preferences">
-          <InfoLine label="Default payment" value={profile?.credit_debit_allowed ? 'Credit/Debit allowed' : 'Cash on delivery'} />
+        <Section title={t('preferences')}>
+          <InfoLine label={t('defaultPayment')} value={profile?.credit_debit_allowed ? t('creditDebitAllowed') : t('cashOnDelivery')} />
           <div className="mt-3">
-            <InfoLine label="Notifications" value={profile?.email ? 'WhatsApp + Email' : 'WhatsApp'} />
+            <InfoLine label={t('notifications')} value={profile?.email ? `${t('whatsapp')} + ${t('email')}` : t('whatsapp')} />
           </div>
         </Section>
 
         <button type="button" onClick={onLogout} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white text-sm font-bold text-rose-600">
           <LogOut className="h-4 w-4" />
-          Logout
+          {t('logout')}
         </button>
       </main>
     </>
@@ -2092,29 +2849,142 @@ export default function CustomerMobileApp() {
   const [requirements, setRequirements] = useState(initialRequirements)
   const [deliveryStatusByOrder, setDeliveryStatusByOrder] = useState({})
   const [deliveryNotice, setDeliveryNotice] = useState(null)
+  const [googleAuthChecked, setGoogleAuthChecked] = useState(false)
+  const [language, setLanguageState] = useState(() => normalizeLanguage(initialSession?.language || localStorage.getItem(CUSTOMER_LANGUAGE_KEY) || 'en'))
+  const currentLanguage = normalizeLanguage(language)
+  const currentLanguageOption = languageOptions.find(option => option.code === currentLanguage) || languageOptions[0]
+  const i18nValue = useMemo(() => ({
+    language: currentLanguage,
+    dir: currentLanguageOption.dir,
+    setLanguage: nextLanguage => {
+      const normalized = normalizeLanguage(nextLanguage)
+      localStorage.setItem(CUSTOMER_LANGUAGE_KEY, normalized)
+      setLanguageState(normalized)
+    },
+    t: (key, values) => translate(currentLanguage, key, values),
+  }), [currentLanguage, currentLanguageOption.dir])
+
+  useEffect(() => {
+    document.documentElement.lang = currentLanguage
+    document.documentElement.dir = currentLanguageOption.dir
+  }, [currentLanguage, currentLanguageOption.dir])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function completeGoogleLogin() {
+      if (isLoggedIn || googleAuthChecked || !COMPANY_ID) return
+      setGoogleAuthChecked(true)
+
+      const { data: authData, error: authError } = await supabase.auth.getSession()
+      if (cancelled || authError || !authData?.session?.user?.email) return
+
+      const googleUser = authData.session.user
+      const fullName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || googleUser.email
+      let { data, error } = await supabase.rpc('customer_contact_login_with_google', {
+        p_company_id: COMPANY_ID,
+        p_email: googleUser.email,
+        p_full_name: fullName,
+      })
+      if (isMissingRpc(error)) {
+        const fallback = await supabase.rpc('customer_login_with_google', {
+          p_company_id: COMPANY_ID,
+          p_email: googleUser.email,
+          p_full_name: fullName,
+        })
+        data = fallback.data
+        error = fallback.error
+      }
+      if (cancelled || error) return
+
+      const user = data?.[0]
+      if (!user?.contact_id) return
+
+      const session = saveCustomerSession({ ...user, language: currentLanguage })
+      setCustomerSession(session)
+      setIsLoggedIn(true)
+      setScreen('home')
+      setCustomerHash('home')
+    }
+
+    completeGoogleLogin()
+    return () => { cancelled = true }
+  }, [isLoggedIn, googleAuthChecked, currentLanguage])
+
+  async function startGoogleLogin() {
+    const redirectTo = `${window.location.origin}${window.location.pathname}#/customer/login`
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+      },
+    })
+    if (error) {
+      throw error
+    }
+  }
 
   useEffect(() => {
     if (!isLoggedIn || !customerSession?.contact_id) return undefined
 
     let cancelled = false
 
-    async function loadInitialDeliveryStatuses() {
+    function applyDeliveryStatusChange(updatedOrder) {
+      const nextStatus = updatedOrder.delivery_status || 'Awaiting Pickup'
+
+      setDeliveryStatusByOrder(current => {
+        const previousStatus = current[updatedOrder.id]
+        if (previousStatus !== nextStatus) {
+          setDeliveryNotice({
+            orderId: updatedOrder.id,
+            orderNumber: updatedOrder.order_number,
+            deliveryStatus: nextStatus,
+          })
+        }
+        return { ...current, [updatedOrder.id]: nextStatus }
+      })
+
+      setSelectedOrder(current => {
+        if (!current || current.id !== updatedOrder.id) return current
+        return {
+          ...current,
+          deliveryStatus: nextStatus,
+          status: updatedOrder.status || current.status,
+          paymentStatus: updatedOrder.payment_status || current.paymentStatus,
+          raw: {
+            ...(current.raw || {}),
+            ...updatedOrder,
+          },
+        }
+      })
+    }
+
+    async function checkDeliveryStatuses({ notify }) {
       let query = supabase
         .from('delivery_orders')
-        .select('id,delivery_status')
+        .select('id,order_number,status,delivery_status,payment_status')
         .eq('customer_id', customerSession.contact_id)
       if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
 
-      const { data } = await query
+      const { data, error } = await query
       if (cancelled) return
+      if (error) return
 
-      setDeliveryStatusByOrder((data || []).reduce((acc, order) => {
-        acc[order.id] = order.delivery_status || 'Awaiting Pickup'
-        return acc
-      }, {}))
+      if (!notify) {
+        setDeliveryStatusByOrder((data || []).reduce((acc, order) => {
+          acc[order.id] = order.delivery_status || 'Awaiting Pickup'
+          return acc
+        }, {}))
+        return
+      }
+
+      ;(data || []).forEach(applyDeliveryStatusChange)
     }
 
-    loadInitialDeliveryStatuses()
+    checkDeliveryStatuses({ notify: false })
+    const statusPoll = window.setInterval(() => {
+      checkDeliveryStatuses({ notify: true })
+    }, 10000)
 
     const channel = supabase
       .channel(`customer-delivery-status-${customerSession.contact_id}`)
@@ -2127,93 +2997,87 @@ export default function CustomerMobileApp() {
           filter: `customer_id=eq.${customerSession.contact_id}`,
         },
         payload => {
-          const updatedOrder = payload.new
-          const nextStatus = updatedOrder.delivery_status || 'Awaiting Pickup'
-
-          setDeliveryStatusByOrder(current => {
-            const previousStatus = current[updatedOrder.id]
-            if (previousStatus && previousStatus !== nextStatus) {
-              setDeliveryNotice({
-                orderId: updatedOrder.id,
-                orderNumber: updatedOrder.order_number,
-                deliveryStatus: nextStatus,
-              })
-            }
-            return { ...current, [updatedOrder.id]: nextStatus }
-          })
-
-          setSelectedOrder(current => {
-            if (!current || current.id !== updatedOrder.id) return current
-            return {
-              ...current,
-              deliveryStatus: nextStatus,
-              status: updatedOrder.status || current.status,
-              paymentStatus: updatedOrder.payment_status || current.paymentStatus,
-              raw: {
-                ...(current.raw || {}),
-                ...updatedOrder,
-              },
-            }
-          })
+          applyDeliveryStatusChange(payload.new)
         }
       )
       .subscribe()
 
     return () => {
       cancelled = true
+      window.clearInterval(statusPoll)
       supabase.removeChannel(channel)
     }
   }, [isLoggedIn, customerSession])
 
   if (!isLoggedIn && screen === 'otp') {
     return (
-      <OtpScreen
-        onDone={async customer => {
-          if (!COMPANY_ID) throw new Error('Company is not configured for customer registration.')
+      <I18nContext.Provider value={i18nValue}>
+        <OtpScreen
+          onDone={async customer => {
+            if (!COMPANY_ID) throw new Error('Company is not configured for customer registration.')
 
-          const { data, error } = await supabase.rpc('customer_register_with_password', {
-            p_company_id: COMPANY_ID,
-            p_full_name: customer.full_name,
-            p_mobile: customer.mobile,
-            p_email: customer.email,
-            p_otp_channel: customer.otp_channel,
-            p_password: customer.password,
-          })
-
-          if (error) {
-            const message = error.message || ''
-            if (message.includes('CUSTOMER_ALREADY_EXISTS')) {
-              throw new Error('This customer already exists. Please login with the same email/mobile and password.')
+            let { data, error } = await supabase.rpc('customer_contact_register_with_password', {
+              p_company_id: COMPANY_ID,
+              p_full_name: customer.full_name,
+              p_mobile: customer.mobile,
+              p_email: customer.email,
+              p_username: customer.username,
+              p_otp_channel: customer.otp_channel,
+              p_password: customer.password,
+            })
+            if (isMissingRpc(error)) {
+              const fallback = await supabase.rpc('customer_register_with_password', {
+                p_company_id: COMPANY_ID,
+                p_full_name: customer.full_name,
+                p_mobile: customer.mobile,
+                p_email: customer.email,
+                p_otp_channel: customer.otp_channel,
+                p_password: customer.password,
+              })
+              data = fallback.data
+              error = fallback.error
             }
-            if (message.includes('PASSWORD_TOO_SHORT')) {
-              throw new Error('Password must be at least 8 characters.')
-            }
-            if (message.includes('COMPANY_REQUIRED')) {
-              throw new Error('Company is not configured for customer registration.')
-            }
-            // Surface the real Postgres error so the failure can be diagnosed
-            // (e.g. missing column / constraint), instead of a generic message.
-            console.error('customer_register_with_password failed:', error)
-            const detail = [error.message, error.details, error.hint].filter(Boolean).join(' — ')
-            throw new Error(detail || 'Customer registration failed. Please try again.')
-          }
 
-          const user = data?.[0]
-          if (!user?.contact_id) throw new Error('Customer registration did not return a customer profile.')
+            if (error) {
+              const message = error.message || ''
+              if (message.includes('CUSTOMER_ALREADY_EXISTS')) {
+                throw new Error('This customer already exists. Please login with the same email/mobile and password.')
+              }
+              if (message.includes('PASSWORD_TOO_SHORT')) {
+                throw new Error(i18nValue.t('passwordTooShort'))
+              }
+              if (message.includes('COMPANY_REQUIRED')) {
+                throw new Error('Company is not configured for customer registration.')
+              }
+              // Surface the real Postgres error so the failure can be diagnosed
+              // (e.g. missing column / constraint), instead of a generic message.
+              console.error('customer_contact_register_with_password failed:', error)
+              const detail = [error.message, error.details, error.hint].filter(Boolean).join(' — ')
+              throw new Error(detail || 'Customer registration failed. Please try again.')
+            }
 
-          const session = saveCustomerSession(user)
-          setCustomerSession(session)
-          setIsLoggedIn(true)
-          setScreen('home')
-          setCustomerHash('home')
-        }}
-        onBack={() => setScreen('login')}
-      />
+            const user = data?.[0]
+            if (!user?.contact_id) throw new Error('Customer registration did not return a customer profile.')
+
+            const session = saveCustomerSession({ ...user, language: currentLanguage })
+            setCustomerSession(session)
+            setIsLoggedIn(true)
+            setScreen('home')
+            setCustomerHash('home')
+          }}
+          onBack={() => setScreen('login')}
+          onGoogleLogin={startGoogleLogin}
+        />
+      </I18nContext.Provider>
     )
   }
 
   if (!isLoggedIn) {
-    return <LoginScreen onLogin={session => { setCustomerSession(session); setIsLoggedIn(true); setScreen('home'); setCustomerHash('home') }} onOtp={() => setScreen('otp')} />
+    return (
+      <I18nContext.Provider value={i18nValue}>
+        <LoginScreen onLogin={session => { const nextSession = saveCustomerSession({ ...session, language: currentLanguage }); setCustomerSession(nextSession); setIsLoggedIn(true); setScreen('home'); setCustomerHash('home') }} onOtp={() => setScreen('otp')} onGoogleLogin={startGoogleLogin} />
+      </I18nContext.Provider>
+    )
   }
 
   function goTab(tab) {
@@ -2263,7 +3127,7 @@ export default function CustomerMobileApp() {
   if (screen === 'book') {
     content = <BookDeliveryScreen requirements={requirements} setRequirements={setRequirements} customerSession={customerSession} />
   } else if (screen === 'orders') {
-    content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} />
+    content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} deliveryStatusByOrder={deliveryStatusByOrder} />
   } else if (screen === 'orderDetails') {
     activeTab = 'orders'
     content = <OrderDetailsScreen order={selectedOrder} onEdit={editOrder} onBack={() => setScreen('orders')} />
@@ -2287,17 +3151,19 @@ export default function CustomerMobileApp() {
   }
 
   return (
-    <Shell activeTab={activeTab} onTab={goTab}>
-      <DeliveryStatusNotice
-        notice={deliveryNotice}
-        onClose={() => setDeliveryNotice(null)}
-        onOpenOrders={() => {
-          setDeliveryNotice(null)
-          setScreen('orders')
-          setCustomerHash('orders')
-        }}
-      />
-      {content}
-    </Shell>
+    <I18nContext.Provider value={i18nValue}>
+      <Shell activeTab={activeTab} onTab={goTab}>
+        <DeliveryStatusNotice
+          notice={deliveryNotice}
+          onClose={() => setDeliveryNotice(null)}
+          onOpenOrders={() => {
+            setDeliveryNotice(null)
+            setScreen('orders')
+            setCustomerHash('orders')
+          }}
+        />
+        {content}
+      </Shell>
+    </I18nContext.Provider>
   )
 }
