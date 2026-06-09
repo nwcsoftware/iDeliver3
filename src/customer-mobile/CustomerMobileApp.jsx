@@ -30,15 +30,6 @@ const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || '').trim() || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
 const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
 
-function isMissingRpc(error) {
-  const message = error?.message || ''
-  return error?.code === 'PGRST202' || message.includes('Could not find the function')
-}
-
-function isInvalidCredentials(error) {
-  return (error?.message || '').includes('INVALID_CREDENTIALS')
-}
-
 const languageOptions = [
   { code: 'en', label: 'English', nativeLabel: 'English', dir: 'ltr' },
   { code: 'ar', label: 'Arabic', nativeLabel: 'العربية', dir: 'rtl' },
@@ -644,11 +635,7 @@ const I18nContext = createContext({
   t: key => key,
 })
 
-const initialRequirements = [
-  'Buy 1 packet milk',
-  'Buy 2 water bottles',
-  'Pick up from school',
-]
+const initialRequirements = ['']
 
 const emptyAddressForm = {
   address_name: '',
@@ -853,19 +840,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
   const [loading, setLoading] = useState(false)
 
   async function customerLogin(login, secret) {
-    const contactLogin = await supabase.rpc('customer_contact_login', {
-      p_login: login,
-      p_password: secret,
-    })
-    if (!isMissingRpc(contactLogin.error)) return contactLogin
-
-    const legacyLogin = await supabase.rpc('customer_login', {
-      p_login: login,
-      p_password: secret,
-    })
-    if (!isInvalidCredentials(legacyLogin.error)) return legacyLogin
-
-    return supabase.rpc('verify_login', {
+    return supabase.rpc('customer_contact_login', {
       p_login: login,
       p_password: secret,
     })
@@ -876,7 +851,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
     if (msg.includes('INVALID_CREDENTIALS')) return t('invalidCredentials')
     if (msg.includes('ACCOUNT_LOCKED')) return 'Account locked. Please try again later.'
     if (msg.includes('ACCOUNT_SUSPENDED')) return 'This account is suspended. Please contact support.'
-    if (msg.includes('customer_contact_login') || msg.includes('customer_login')) {
+    if (msg.includes('customer_contact_login')) {
       return 'Customer login is not configured in Supabase. Please run the customer auth SQL.'
     }
     return msg || t('loginFailed')
@@ -2549,19 +2524,10 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
     }
 
     setSaving(true)
-    let { data, error: mobileError } = await supabase.rpc('customer_contact_update_mobile', {
+    const { data, error: mobileError } = await supabase.rpc('customer_contact_update_mobile', {
       p_contact_id: customerSession.contact_id,
       p_mobile: mobileInput.trim(),
     })
-    if (isMissingRpc(mobileError)) {
-      const fallback = await supabase.rpc('customer_update_mobile', {
-        p_user_id: customerSession.user_id,
-        p_contact_id: customerSession.contact_id,
-        p_mobile: mobileInput.trim(),
-      })
-      data = fallback.data
-      mobileError = fallback.error
-    }
 
     if (mobileError) {
       const message = mobileError.message || ''
@@ -2894,20 +2860,11 @@ export default function CustomerMobileApp() {
 
       const googleUser = authData.session.user
       const fullName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || googleUser.email
-      let { data, error } = await supabase.rpc('customer_contact_login_with_google', {
+      const { data, error } = await supabase.rpc('customer_contact_login_with_google', {
         p_company_id: COMPANY_ID,
         p_email: googleUser.email,
         p_full_name: fullName,
       })
-      if (isMissingRpc(error)) {
-        const fallback = await supabase.rpc('customer_login_with_google', {
-          p_company_id: COMPANY_ID,
-          p_email: googleUser.email,
-          p_full_name: fullName,
-        })
-        data = fallback.data
-        error = fallback.error
-      }
       if (cancelled || error) return
 
       const user = data?.[0]
@@ -3029,7 +2986,7 @@ export default function CustomerMobileApp() {
           onDone={async customer => {
             if (!COMPANY_ID) throw new Error('Company is not configured for customer registration.')
 
-            let { data, error } = await supabase.rpc('customer_contact_register_with_password', {
+            const { data, error } = await supabase.rpc('customer_contact_register_with_password', {
               p_company_id: COMPANY_ID,
               p_full_name: customer.full_name,
               p_mobile: customer.mobile,
@@ -3038,18 +2995,6 @@ export default function CustomerMobileApp() {
               p_otp_channel: customer.otp_channel,
               p_password: customer.password,
             })
-            if (isMissingRpc(error)) {
-              const fallback = await supabase.rpc('customer_register_with_password', {
-                p_company_id: COMPANY_ID,
-                p_full_name: customer.full_name,
-                p_mobile: customer.mobile,
-                p_email: customer.email,
-                p_otp_channel: customer.otp_channel,
-                p_password: customer.password,
-              })
-              data = fallback.data
-              error = fallback.error
-            }
 
             if (error) {
               const message = error.message || ''
@@ -3117,13 +3062,6 @@ export default function CustomerMobileApp() {
   }
 
   async function logoutCustomer() {
-    if (customerSession?.user_id) {
-      try {
-        await supabase.rpc('logout_user', { p_user_id: customerSession.user_id })
-      } catch {
-        // Local logout should still proceed even if audit logging is unavailable.
-      }
-    }
     clearCustomerSession()
     setCustomerSession(null)
     setIsLoggedIn(false)
