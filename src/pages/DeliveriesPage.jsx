@@ -8,12 +8,16 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { formatMobile } from '../lib/phone'
+import MobileInput from '../components/MobileInput'
 import Badge from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages'
 import { saveOrderPackages } from '../lib/orderPackages'
+import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
+import { saveOrderServices } from '../lib/orderServices'
 
 /* ── constants ───────────────────────────────────────────── */
 
@@ -210,13 +214,20 @@ function lineTotal(it) {
   return Math.max(0, (Number(it.quantity) || 0) * (Number(it.unit_price) || 0) - (Number(it.discount) || 0))
 }
 
-function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurrency = feeCurrency) {
+function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurrency = feeCurrency,
+                    packages = [], services = [], retailInvoices = []) {
   const t = { USD: 0, LBP: 0, EUR: 0 }
+  const add = (cur, n) => { t[cur in t ? cur : 'USD'] += n }
   // Per-item line totals already apply each item's own discount in its currency.
-  for (const it of items) t[it.currency || 'USD'] += lineTotal(it)
-  t[feeCurrency]      += Number(deliveryFee) || 0
-  t[discountCurrency] -= Number(discount)    || 0
-  t[feeCurrency]      += Number(vat)         || 0
+  for (const it of items) add(it.currency || 'USD', lineTotal(it))
+  // Packages have no own currency → counted in the order's primary (fee) currency.
+  for (const p of packages) add(feeCurrency, Number(p.package_price) || 0)
+  // Services and external retail invoice references carry their own currency.
+  for (const s of services) add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
+  for (const r of retailInvoices) add(r.currency || 'USD', Number(r.invoice_value) || 0)
+  add(feeCurrency, Number(deliveryFee) || 0)
+  add(discountCurrency, -(Number(discount) || 0))
+  add(feeCurrency, Number(vat) || 0)
   return t
 }
 
@@ -225,7 +236,7 @@ function SectionLabel({ children }) {
 }
 
 // Order-form sections, in display order. Used to collapse/expand each block.
-const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'packages', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
+const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'packages', 'services', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
 // Sections expanded by default on a new order; the rest start collapsed.
 const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'notes']
 const allSectionsClosed = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, false]))
@@ -257,15 +268,17 @@ function CollapsibleSection({ title, open, onToggle, right, children }) {
 /* Per-currency total of a saved order, from its line items + fee/discount/vat. */
 function orderTotalsByCurrency(o) {
   const t = {}
+  const add = (cur, n) => { if (n) t[cur] = (t[cur] || 0) + n }
   const active = (o.order_items ?? []).filter(it => !it.is_deleted)
-  for (const it of active) {
-    const c = it.currency || 'USD'
-    t[c] = (t[c] || 0) + Number(it.line_total || 0)
-  }
+  for (const it of active) add(it.currency || 'USD', Number(it.line_total || 0))
+  // Packages (primary currency), services & external retail invoices (own currency).
+  for (const p of (o.delivery_packages ?? []))     add(o.currency || 'USD', Number(p.package_price) || 0)
+  for (const s of (o.order_services ?? []))         add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
+  for (const r of (o.retail_goods_invoices ?? []))  add(r.currency || 'USD', Number(r.invoice_value) || 0)
   const discountCur = o.discount_currency || o.currency
-  if (Number(o.delivery_fee) > 0)    t[o.currency]   = (t[o.currency]   || 0) + Number(o.delivery_fee)
-  if (Number(o.discount_amount) > 0) t[discountCur]  = (t[discountCur]  || 0) - Number(o.discount_amount)
-  if (Number(o.vat_amount) > 0)      t[o.currency]   = (t[o.currency]   || 0) + Number(o.vat_amount)
+  add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
+  add(discountCur, Number(o.discount_amount) > 0 ? -Number(o.discount_amount) : 0)
+  add(o.currency, Number(o.vat_amount) > 0 ? Number(o.vat_amount) : 0)
   return t
 }
 
@@ -285,6 +298,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [retailInvoices, setRetailInvoices] = useState([])   // retail_goods_invoices
   const [packages,       setPackages]       = useState([])
   const [origPackageIds, setOrigPackageIds] = useState([])
+  const [services,       setServices]       = useState([])
+  const [origServiceIds, setOrigServiceIds] = useState([])
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [copied,    setCopied]    = useState(null)
@@ -438,6 +453,14 @@ export default function DeliveriesPage({ closed = false }) {
     if (c) applyCustomer(c)
   }
 
+  /* The default "walk-in" customer applied to every new order. Matched by name
+     (case-insensitive) against either the company name or the person's name. */
+  function findGeneralCustomer() {
+    return customers.find(c =>
+      (c.company_name || customerName(c) || '').trim().toLowerCase() === 'general customer'
+    )
+  }
+
   /* Open the quick "new customer" modal, pre-filling from what's typed so far. */
   function openNewCustomer(seedName = customerInput) {
     const parts = (seedName ?? '').trim().split(/\s+/).filter(Boolean)
@@ -521,15 +544,20 @@ export default function DeliveriesPage({ closed = false }) {
   function openAdd() {
     setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
+    setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
     setAddCredit(false)
     setCustomerInput(''); setError(''); setModal('add')
+    // Default to the "GENERAL CUSTOMER" contact; the user can still type/select another.
+    const general = findGeneralCustomer()
+    if (general) applyCustomer(general)
   }
 
   // Credit Order: same form, but pricing sections hidden and credit-only customers.
   function openAddCredit() {
     setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
+    setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())
     setAddCredit(true)
     setCustomerInput(''); setError(''); setModal('add')
@@ -621,6 +649,23 @@ export default function DeliveriesPage({ closed = false }) {
     setPackages(mappedPackages)
     setOrigPackageIds(mappedPackages.map(p => p._id))
 
+    const { data: svcData } = await supabase
+      .from('order_services')
+      .select('*')
+      .eq('order_id', o.id)
+      .order('service_date')
+    const mappedServices = (svcData ?? []).map(sv => ({
+      _id:                     sv.id,
+      service_date:            sv.service_date ?? '',
+      service_description:     sv.service_description ?? '',
+      service_reference:       sv.service_reference ?? '',
+      quantity:                sv.quantity ?? 1,
+      service_fees:            sv.service_fees ?? '',
+      service_fees_currency:   sv.service_fees_currency ?? 'USD',
+    }))
+    setServices(mappedServices)
+    setOrigServiceIds(mappedServices.map(s => s._id))
+
     const existing = customers.find(x => x.id === o.customer_id) || o.customer
     const existingIsCompany = existing && (existing.entity_type === 'company' || existing.contact_type === 'partner')
     setCustomerInput(
@@ -640,6 +685,7 @@ export default function DeliveriesPage({ closed = false }) {
       route:           true,
       assignment:      !!o.driver_id,
       packages:        mappedPackages.length > 0,
+      services:        mappedServices.length > 0,
       items:           (data ?? []).length > 0,
       retail_invoices: (riData ?? []).length > 0,
       totals:          hasTotals,
@@ -652,6 +698,7 @@ export default function DeliveriesPage({ closed = false }) {
   function closeModal() {
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
+    setServices([]); setOrigServiceIds([])
     setCustomerInput(''); setCustomerDropdownOpen(false); setAddCredit(false)
   }
 
@@ -703,7 +750,7 @@ export default function DeliveriesPage({ closed = false }) {
 
     setSaving(true); setError('')
 
-    const totals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency)
+    const totals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
     const itemsInPrimary = items.filter(it => it.currency === form.currency).reduce((s, it) => s + lineTotal(it), 0)
 
     // Derive payment status from the payments list vs the order totals, per currency.
@@ -839,6 +886,14 @@ export default function DeliveriesPage({ closed = false }) {
     })
     if (pkgErr) { setError(pkgErr); setSaving(false); return }
 
+    // ── Sync order services ────────────────────────────────────
+    const svcErr = await saveOrderServices({
+      orderId, services, origIds: origServiceIds,
+      companyId: COMPANY_ID,
+      userId: currentUser?.user_id || null,
+    })
+    if (svcErr) { setError(svcErr); setSaving(false); return }
+
     // ── Credit customer: on close with an unpaid balance, record a sales
     //    invoice so the customer shows up in v_credit_customer_balances. ───────
     if (close && selCustomer?.credit_debit_allowed === true) {
@@ -917,14 +972,11 @@ export default function DeliveriesPage({ closed = false }) {
 
   /* ── totals (live) ───────────────────────────────────────── */
 
-  const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency)
-  const anyItems = items.length > 0 || Number(form.delivery_fee) > 0
+  const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+  const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || Number(form.delivery_fee) > 0
 
   // Credit Order mode: active when adding a credit order, or editing one.
   const isCreditOrder = addCredit || (modal && modal !== 'add' && modal.is_credit_order === true)
-  // Delivery packages sub-form is shown only when the selected contact is a partner.
-  const selectedCustomer  = customers.find(c => c.id === form.customer_id) || null
-  const isPartnerCustomer = selectedCustomer?.contact_type === 'partner'
   // In credit mode the customer pickers list only credit-allowed contacts.
   const pickCustomers = isCreditOrder ? customers.filter(c => c.credit_debit_allowed === true) : customers
   // Shops/warehouses for the retail invoices dropdown = supplier contacts.
@@ -1108,7 +1160,7 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3">
                   <p className="text-slate-100 text-sm">{o.recipient_name}</p>
-                  <p className="text-slate-500 text-xs">{o.recipient_mobile}</p>
+                  <p className="text-slate-500 text-xs">{formatMobile(o.recipient_mobile)}</p>
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   {o.customer ? (
@@ -1297,7 +1349,7 @@ export default function DeliveriesPage({ closed = false }) {
                                   </div>
                                   <div className="min-w-0 flex-1">
                                     <p className="text-slate-100 text-sm truncate">{c.company_name || `${c.first_name} ${c.last_name}`}</p>
-                                    <p className="text-slate-500 text-xs truncate">{c.mobile}</p>
+                                    <p className="text-slate-500 text-xs truncate">{formatMobile(c.mobile)}</p>
                                   </div>
                                   <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>
                                 </button>
@@ -1341,15 +1393,13 @@ export default function DeliveriesPage({ closed = false }) {
                   </div>
                   <div>
                     <label className="label">Mobile *</label>
-                    <input className="input" value={form.recipient_mobile}
-                      onChange={e => fld('recipient_mobile', e.target.value)} placeholder="+961 70 000 000" />
+                    <MobileInput value={form.recipient_mobile} onChange={v => fld('recipient_mobile', v)} />
                   </div>
                 </div>
 
                 <div>
                   <label className="label">WhatsApp</label>
-                  <input className="input" value={form.recipient_whatsapp}
-                    onChange={e => fld('recipient_whatsapp', e.target.value)} placeholder="If different from mobile" />
+                  <MobileInput value={form.recipient_whatsapp} onChange={v => fld('recipient_whatsapp', v)} placeholder="If different from mobile" />
                 </div>
               </CollapsibleSection>
 
@@ -1433,18 +1483,27 @@ export default function DeliveriesPage({ closed = false }) {
                 </div>
               </CollapsibleSection>
 
-              {/* ── Delivery Packages (partners only) ──────────── */}
-              {isPartnerCustomer && (
-                <CollapsibleSection title={`Delivery Packages (${packagesQty})`} open={sectionsOpen.packages} onToggle={v => toggleSection('packages', v)}
-                  right={
-                    <button type="button" onClick={addPackage}
-                      className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
-                      <Plus className="w-3 h-3" /> Add Package
-                    </button>
-                  }>
-                  <OrderPackages packages={packages} setPackages={setPackages} customerName={customerInput.trim()} embedded onAdd={addPackage} />
-                </CollapsibleSection>
-              )}
+              {/* ── Delivery Packages (always shown) ──────────── */}
+              <CollapsibleSection title={`Delivery Packages (${packagesQty})`} open={sectionsOpen.packages} onToggle={v => toggleSection('packages', v)}
+                right={
+                  <button type="button" onClick={addPackage}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Package
+                  </button>
+                }>
+                <OrderPackages packages={packages} setPackages={setPackages} customerName={customerInput.trim()} embedded onAdd={addPackage} />
+              </CollapsibleSection>
+
+              {/* ── Order Services ────────────────────────────── */}
+              <CollapsibleSection title={`Order Services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('services'); setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }]) }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Service
+                  </button>
+                }>
+                <OrderServices services={services} setServices={setServices} embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
+              </CollapsibleSection>
 
               {/* Pricing sections (hidden for Credit Orders) */}
               {!isCreditOrder && (<>
@@ -1643,7 +1702,7 @@ export default function DeliveriesPage({ closed = false }) {
                           <p className={`text-xl font-bold ${isPrimary ? 'text-brand-300' : 'text-slate-200'}`}>
                             {val.toFixed(curr === 'LBP' ? 0 : 2)}
                           </p>
-                          {isPrimary && <p className="text-[10px] text-slate-500 mt-0.5">items + fee − discount + vat</p>}
+                          {isPrimary && <p className="text-[10px] text-slate-500 mt-0.5">items + packages + services + retail + fee − discount + vat</p>}
                         </div>
                       )
                     })}
@@ -1889,11 +1948,11 @@ export default function DeliveriesPage({ closed = false }) {
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                         <span className="text-slate-500 text-xs flex items-center gap-1">
-                          <Phone className="w-3 h-3" />{c.mobile}
+                          <Phone className="w-3 h-3" />{formatMobile(c.mobile)}
                         </span>
                         {c.whatsapp_number && c.whatsapp_number !== c.mobile && (
                           <span className="text-slate-500 text-xs flex items-center gap-1">
-                            <Phone className="w-3 h-3 text-green-500" />{c.whatsapp_number}
+                            <Phone className="w-3 h-3 text-green-500" />{formatMobile(c.whatsapp_number)}
                           </span>
                         )}
                         {c.email && (
@@ -2064,7 +2123,7 @@ export default function DeliveriesPage({ closed = false }) {
                         </div>
                         <div className="min-w-0">
                           <p className="text-slate-100 text-xs truncate">{d.first_name} {d.last_name}</p>
-                          <p className="text-slate-500 text-[10px] truncate">{d.mobile}</p>
+                          <p className="text-slate-500 text-[10px] truncate">{formatMobile(d.mobile)}</p>
                         </div>
                         {popover.order.driver_id === d.id && <Check className="w-3 h-3 text-green-400 ml-auto flex-shrink-0" />}
                       </button>

@@ -5,6 +5,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import { useApp } from '../context/AppContext'
+import { formatMobile } from '../lib/phone'
 import StatCard from '../components/ui/StatCard'
 import Badge from '../components/ui/Badge'
 
@@ -132,7 +133,7 @@ export default function DashboardPage() {
                 <td className="px-5 py-3 font-mono text-xs text-brand-400">{o.order_number}</td>
                 <td className="px-5 py-3">
                   <p className="text-slate-200">{o.recipient_name}</p>
-                  <p className="text-slate-500 text-xs">{o.recipient_mobile}</p>
+                  <p className="text-slate-500 text-xs">{formatMobile(o.recipient_mobile)}</p>
                 </td>
                 <td className="px-5 py-3 text-slate-400">
                   {o.driver ? `${o.driver.first_name} ${o.driver.last_name}` : <span className="text-slate-600">Unassigned</span>}

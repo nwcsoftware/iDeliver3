@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { formatMobile } from '../lib/phone'
+import MobileInput from '../components/MobileInput'
 
 // Roles an admin may assign (super_admin is intentionally excluded).
 const ASSIGNABLE_ROLES = [
@@ -226,7 +228,7 @@ export default function UserAccountsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-400">{u.email || '—'}</td>
-                  <td className="px-4 py-3 text-slate-400">{u.mobile || '—'}</td>
+                  <td className="px-4 py-3 text-slate-400">{u.mobile ? formatMobile(u.mobile) : '—'}</td>
                   <td className="px-4 py-3 text-slate-300">{roleLabel[u.role] ?? u.role}</td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] capitalize border rounded px-2 py-0.5 ${STATUS_STYLES[u.status] ?? STATUS_STYLES.pending}`}>
@@ -289,8 +291,7 @@ export default function UserAccountsPage() {
                 </div>
                 <div>
                   <label className="label">Mobile *</label>
-                  <input className="input" value={form.mobile}
-                    onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} placeholder="+961 70 000 000" />
+                  <MobileInput value={form.mobile} onChange={v => setForm(f => ({ ...f, mobile: v }))} />
                 </div>
               </div>
               <div>

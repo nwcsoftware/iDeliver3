@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { MapPin, Circle } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { formatMobile } from '../lib/phone'
 import Badge from '../components/ui/Badge'
 
 let L            = null
@@ -46,7 +47,7 @@ function DriverMarker({ driver, position }) {
         <div style={{ color: '#f1f5f9', minWidth: 150 }}>
           <p style={{ fontWeight: 600, marginBottom: 4 }}>{driver.first_name} {driver.last_name}</p>
           <p style={{ color: '#94a3b8', fontSize: 12 }}>{driver.driver_status?.replace('_', ' ')}</p>
-          {driver.mobile && <p style={{ color: '#94a3b8', fontSize: 12 }}>{driver.mobile}</p>}
+          {driver.mobile && <p style={{ color: '#94a3b8', fontSize: 12 }}>{formatMobile(driver.mobile)}</p>}
           {driver.driver_license && <p style={{ color: '#94a3b8', fontSize: 12 }}>License: {driver.driver_license}</p>}
         </div>
       </Popup>
@@ -164,7 +165,7 @@ export default function TrackingPage() {
           <div className="absolute bottom-4 left-4 card p-4 w-80 shadow-2xl max-h-64 overflow-y-auto">
             <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Driver Detail</p>
             <p className="text-slate-100 font-semibold">{selectedDriver.first_name} {selectedDriver.last_name}</p>
-            <p className="text-slate-400 text-sm">{selectedDriver.mobile}</p>
+            <p className="text-slate-400 text-sm">{formatMobile(selectedDriver.mobile)}</p>
             {selectedDriver.driver_license && (
               <p className="text-slate-500 text-xs">License: {selectedDriver.driver_license}</p>
             )}
@@ -175,7 +176,7 @@ export default function TrackingPage() {
                   <div key={o.id} className="space-y-0.5">
                     <p className="font-mono text-xs text-brand-400">{o.order_number}</p>
                     <p className="text-slate-300 text-xs truncate">{o.delivery_address}</p>
-                    <p className="text-slate-500 text-xs">{o.recipient_name} · {o.recipient_mobile}</p>
+                    <p className="text-slate-500 text-xs">{o.recipient_name} · {formatMobile(o.recipient_mobile)}</p>
                   </div>
                 ))}
               </div>

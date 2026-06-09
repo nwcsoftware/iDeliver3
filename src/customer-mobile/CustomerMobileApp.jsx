@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
+import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
 const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || '').trim() || null
@@ -1101,6 +1102,8 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                   <input
                     className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
                     value={mobile}
+                    onFocus={() => { if (isBlankMobile(mobile)) setMobile(MOBILE_PREFIX) }}
+                    onBlur={() => { if (isBlankMobile(mobile)) setMobile('') }}
                     onChange={event => { setMobile(event.target.value); setError('') }}
                     placeholder={t('enterMobileNumber')}
                     autoComplete="username"
@@ -1325,7 +1328,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
           </div>
         )}
         {!loading && profile && (
-          <Section title={displayName} subtitle={profile.mobile || customerSession?.mobile || t('customerAccount')}>
+          <Section title={displayName} subtitle={formatMobile(profile.mobile || customerSession?.mobile) || t('customerAccount')}>
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
               <div>
                 <p className="text-xs text-slate-500">{t('creditDebit')}</p>
@@ -2735,8 +2738,8 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
             </span>
           </div>
           <div className="mt-4 rounded-lg border border-sky-100 bg-slate-50 p-3">
-            <p className="text-sm font-semibold">{t('mobile')} {profile?.mobile || customerSession?.mobile || t('notSet')}</p>
-            <p className="mt-1 text-xs text-slate-500">{t('whatsapp')} {profile?.whatsapp_number || profile?.mobile || t('notSet')}</p>
+            <p className="text-sm font-semibold">{t('mobile')} {formatMobile(profile?.mobile || customerSession?.mobile) || t('notSet')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('whatsapp')} {formatMobile(profile?.whatsapp_number || profile?.mobile) || t('notSet')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('email')} {profile?.email || t('notSet')}</p>
           </div>
           </Section>

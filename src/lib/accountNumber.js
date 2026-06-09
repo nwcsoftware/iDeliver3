@@ -1,30 +1,110 @@
 import { supabase } from './supabase'
 
-/**
- * Generate the next 12-digit account number for a given contact type, client-side.
- * Strategy: take the highest existing account_number for that contact_type and
- * add 1, zero-padded to 12 digits (0000 0000 0000). Falls back to 1 when none exist.
- * Each contact_type (customer, supplier, …) keeps its own independent sequence.
- */
-export async function generateAccountNumber(contactType) {
-  const { data, error } = await supabase
-    .from('contacts')
-    .select('account_number')
-    .eq('contact_type', contactType)
-    .not('account_number', 'is', null)
-    .order('account_number', { ascending: false })
-    .limit(1)
-  if (error) throw error
+/** How many digits every generated account number has (3 groups of 4 → "5821 6547 5917"). */
+const ACCOUNT_NUMBER_LENGTH = 12
+/** Safety cap on regeneration attempts when a random number collides with an existing one. */
+const MAX_GENERATION_ATTEMPTS = 25
 
-  const raw = data?.[0]?.account_number
-  const maxNum = raw ? parseInt(String(raw).replace(/\D/g, ''), 10) : 0
-  const next = (Number.isFinite(maxNum) ? maxNum : 0) + 1
-  return String(next).padStart(12, '0')
+/**
+ * Fixed 2-digit prefix each account category starts with, so the leading digits
+ * identify the kind of account at a glance:
+ *   customer 42 · supplier 34 · partner 60 · driver 40 · vehicle 58
+ */
+export const ACCOUNT_PREFIXES = {
+  customer: '42',
+  supplier: '34',
+  partner:  '60',
+  driver:   '40',
+  vehicle:  '58',
 }
 
-/** Backwards-compatible helper for customer account numbers. */
+/**
+ * Generate a random ACCOUNT_NUMBER_LENGTH-digit string that starts with `prefix`.
+ * The prefix occupies the leading digits and the rest are random 0–9, so e.g.
+ * prefix "58" → "582165475917". Uses crypto when available.
+ */
+function randomAccountDigits(prefix = '') {
+  const head = String(prefix).replace(/\D/g, '').slice(0, ACCOUNT_NUMBER_LENGTH)
+  const remaining = ACCOUNT_NUMBER_LENGTH - head.length
+  const bytes = new Uint8Array(remaining)
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < remaining; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  let out = head
+  for (let i = 0; i < remaining; i++) {
+    // When there is no prefix, force the first digit to 1–9 so it stays 12 digits.
+    out += (head.length === 0 && i === 0) ? String((bytes[i] % 9) + 1) : String(bytes[i] % 10)
+  }
+  return out
+}
+
+/**
+ * Generate a random unique account number (starting with `prefix`) for the given
+ * table/column. Tries random numbers, checking the DB for collisions, until it
+ * finds an unused one (or exhausts MAX_GENERATION_ATTEMPTS, after which it
+ * returns the last candidate — collisions at 12 digits are extremely unlikely).
+ */
+async function generateUniqueNumber(table, column, prefix) {
+  let candidate = randomAccountDigits(prefix)
+  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
+    candidate = randomAccountDigits(prefix)
+    const { data, error } = await supabase.from(table).select(column).eq(column, candidate).limit(1)
+    if (error) throw error
+    if (!data || data.length === 0) return candidate   // no collision → unique
+  }
+  return candidate
+}
+
+/**
+ * Generate a unique random 12-digit account number for a contact, prefixed by
+ * the contact type (customer 42 · supplier 34 · partner 60 · driver 40).
+ * Account numbers are unique across the whole contacts table.
+ */
+export async function generateAccountNumber(contactType) {
+  return generateUniqueNumber('contacts', 'account_number', ACCOUNT_PREFIXES[contactType] ?? '')
+}
+
+/** Backwards-compatible helper for customer account numbers (prefix 42). */
 export function generateCustomerAccountNumber() {
   return generateAccountNumber('customer')
+}
+
+/**
+ * Generate a unique random 12-digit vehicle account number (prefix 58).
+ * Checks the whole vehicles table (across companies) for collisions and
+ * regenerates on conflict, so the number is globally unique.
+ * `companyId` is accepted for call-site compatibility but intentionally unused.
+ */
+export async function generateVehicleAccountNumber(/* companyId */) {
+  return generateUniqueNumber('vehicles', 'vehicle_account_number', ACCOUNT_PREFIXES.vehicle)
+}
+
+/**
+ * Generate the next vehicle asset code in the format "VEH-XXX".
+ * Queries the highest existing asset_code matching VEH-<digits>,
+ * extracts the numeric suffix, increments by 1, and zero-pads to 3 digits.
+ * Falls back to "VEH-001" when no codes exist.
+ */
+export async function generateVehicleCode(companyId) {
+  let q = supabase
+    .from('vehicles')
+    .select('asset_code')
+    .ilike('asset_code', 'VEH-%')
+    .order('asset_code', { ascending: false })
+    .limit(1)
+
+  if (companyId) q = q.eq('company_id', companyId)
+
+  const { data, error } = await q
+  if (error) throw error
+
+  const raw = data?.[0]?.asset_code
+  const match = raw ? String(raw).match(/VEH-(\d+)/i) : null
+  const maxNum = match ? parseInt(match[1], 10) : 0
+  const next = (Number.isFinite(maxNum) ? maxNum : 0) + 1
+  return `VEH-${String(next).padStart(3, '0')}`
 }
 
 /** Display a stored account number grouped in fours: 0000 0000 0000 */

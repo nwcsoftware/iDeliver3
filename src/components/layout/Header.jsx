@@ -35,7 +35,7 @@ export default function Header() {
 
   return (
     <header
-      className="h-12 bg-surface-card border-b border-surface-border flex items-center px-4 gap-4 flex-shrink-0"
+      className="relative z-40 h-12 bg-surface-card border-b border-surface-border flex items-center px-4 gap-4 flex-shrink-0"
       style={{ WebkitAppRegion: 'drag' }}
     >
       {/* Title */}

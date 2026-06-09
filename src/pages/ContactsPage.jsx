@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
@@ -307,7 +308,7 @@ export default function ContactsPage({ type }) {
 
                 {/* Contact */}
                 <td className="px-4 py-3 space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-400"><Phone className="w-3 h-3" />{c.mobile}</div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-400"><Phone className="w-3 h-3" />{formatMobile(c.mobile)}</div>
                   {c.email && <div className="flex items-center gap-1.5 text-xs text-slate-500"><Mail className="w-3 h-3" />{c.email}</div>}
                 </td>
 

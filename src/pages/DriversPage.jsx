@@ -1,7 +1,13 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, X, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { formatMobile } from '../lib/phone'
+import MobileInput from '../components/MobileInput'
+
+const CURRENCIES = ['USD', 'LBP', 'EUR']
 
 const emptyForm = {
   first_name:     '',
@@ -13,7 +19,16 @@ const emptyForm = {
   driver_status:  'available',
   city:           '',
   notes:          '',
-  petty_cash_limit: 0,
+  account_number: '',
+}
+
+// Reject if a Supabase call doesn't settle in time, so the form never sticks on "Saving…".
+function withTimeout(thenable, ms, label) {
+  return Promise.race([
+    Promise.resolve(thenable),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out — check your connection and try again.`)), ms)),
+  ])
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -26,6 +41,8 @@ function fmtDutyDate(dateStr, timeStr) {
 
 export default function DriversPage() {
   const { drivers, orders, fetchDrivers, loading, COMPANY_ID } = useApp()
+  const { currentUser } = useAuth()
+  const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || 'You'
 
   // Derive how a driver's duty status should be displayed.
   //  - driver_on_duty must be true (attendance on); otherwise the driver is "Out of duty" (day off).
@@ -75,6 +92,19 @@ export default function DriversPage() {
   const [form,     setForm]     = useState(emptyForm)
   const [saving,   setSaving]   = useState(false)
   const [deleting, setDeleting] = useState(null)
+  const [codeNotice, setCodeNotice] = useState(null)   // { code, account_number, name } after a new driver is created
+  const [pettyCash,    setPettyCash]    = useState([]) // driver_petty_cash rows in the sub-form
+  const [origPettyIds, setOrigPettyIds] = useState([]) // ids loaded on edit, to detect removals
+  const [vehicles,      setVehicles]      = useState([]) // vehicles list for the assignment picker
+  const [assignments,   setAssignments]   = useState([]) // driver_vehicle_assignments rows
+  const [origAssignIds, setOrigAssignIds] = useState([])
+
+  // Vehicles available to assign to a driver.
+  useEffect(() => {
+    let q = supabase.from('vehicles').select('id, asset_code, make, model, type').order('asset_code')
+    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+    q.then(({ data }) => setVehicles(data ?? []))
+  }, [COMPANY_ID])
 
   const statusFilters = ['all', 'available', 'on_duty', 'off_duty', 'inactive']
 
@@ -89,34 +119,185 @@ export default function DriversPage() {
     return matchSearch && matchStatus
   })
 
-  function openAdd()    { setForm(emptyForm); setModal('add') }
-  function openEdit(d)  { setForm({ ...emptyForm, ...d }); setModal(d) }
-  function closeModal() { setModal(null); setForm(emptyForm) }
+  function openAdd() {
+    setForm(emptyForm); setModal('add'); setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([])
+    // Pre-generate the driver account number so it's visible before saving.
+    generateAccountNumber('driver')
+      .then(acct => setForm(f => ({ ...f, account_number: acct })))
+      .catch(() => {})
+  }
+  async function openEdit(d) {
+    setForm({ ...emptyForm, ...d }); setModal(d)
+    // Load this driver's petty-cash entries (creator username shown read-only).
+    const { data } = await supabase
+      .from('driver_petty_cash')
+      .select('id, transaction_date, amount, currency, created_by, creator:user_accounts!created_by(username)')
+      .eq('driver_id', d.id)
+      .order('transaction_date', { ascending: false })
+    const rows = (data ?? []).map(r => ({
+      _id:              r.id,
+      transaction_date: r.transaction_date ? r.transaction_date.slice(0, 10) : '',
+      amount:           r.amount ?? '',
+      currency:         r.currency ?? 'USD',
+      created_by:       r.created_by,
+      created_by_name:  r.creator?.username || '—',
+    }))
+    setPettyCash(rows); setOrigPettyIds(rows.map(r => r._id))
+    // Load this driver's vehicle assignments.
+    const { data: aData } = await supabase
+      .from('driver_vehicle_assignments')
+      .select('id, vehicle_id, start_date')
+      .eq('driver_id', d.id)
+      .order('start_date', { ascending: false })
+    const aRows = (aData ?? []).map(a => ({
+      _id: a.id, vehicle_id: a.vehicle_id, start_date: a.start_date ? a.start_date.slice(0, 10) : '',
+    }))
+    setAssignments(aRows); setOrigAssignIds(aRows.map(a => a._id))
+  }
+  function closeModal() {
+    setModal(null); setForm(emptyForm)
+    setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([])
+  }
+
+  /* ── petty cash sub-form ─────────────────────────────────── */
+  function addPetty() {
+    setPettyCash(p => [...p, {
+      transaction_date: new Date().toISOString().slice(0, 10),
+      amount: '', currency: 'USD',
+      created_by: currentUser?.user_id || null,
+      created_by_name: currentUserName,
+      _key: Date.now(),
+    }])
+  }
+  function removePetty(i) { setPettyCash(p => p.filter((_, idx) => idx !== i)) }
+  function setPetty(i, k, v) { setPettyCash(p => { const n = [...p]; n[i] = { ...n[i], [k]: v }; return n }) }
+
+  // Persist the petty-cash rows for a driver: delete removed, update existing, insert new.
+  async function syncPettyCash(driverId) {
+    const keepIds  = pettyCash.filter(p => p._id).map(p => p._id)
+    const toDelete = origPettyIds.filter(id => !keepIds.includes(id))
+    if (toDelete.length) {
+      const { error } = await supabase.from('driver_petty_cash').delete().in('id', toDelete)
+      if (error) throw error
+    }
+    for (const p of pettyCash) {
+      const amt = Number(p.amount)
+      if (!amt) continue   // skip blank rows
+      const row = {
+        transaction_date: p.transaction_date || new Date().toISOString().slice(0, 10),
+        amount:           amt,
+        currency:         p.currency || 'USD',
+      }
+      if (p._id) {
+        const { error } = await supabase.from('driver_petty_cash').update(row).eq('id', p._id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('driver_petty_cash').insert([{
+          driver_id:        driverId,
+          transaction_type: 'allocation',
+          created_by:       currentUser?.user_id || null,
+          ...row,
+        }])
+        if (error) throw error
+      }
+    }
+  }
+
+  /* ── assigned vehicles sub-form ──────────────────────────── */
+  function addAssign() {
+    setAssignments(a => [...a, { vehicle_id: '', start_date: new Date().toISOString().slice(0, 10), _key: Date.now() }])
+  }
+  function removeAssign(i) { setAssignments(a => a.filter((_, idx) => idx !== i)) }
+  function setAssign(i, k, v) { setAssignments(a => { const n = [...a]; n[i] = { ...n[i], [k]: v }; return n }) }
+
+  // Persist vehicle assignments for a driver: delete removed, update existing, insert new.
+  async function syncAssignments(driverId) {
+    const keepIds  = assignments.filter(a => a._id).map(a => a._id)
+    const toDelete = origAssignIds.filter(id => !keepIds.includes(id))
+    if (toDelete.length) {
+      const { error } = await supabase.from('driver_vehicle_assignments').delete().in('id', toDelete)
+      if (error) throw error
+    }
+    for (const a of assignments) {
+      if (!a.vehicle_id) continue   // skip rows with no vehicle selected
+      const row = { vehicle_id: a.vehicle_id, start_date: a.start_date || new Date().toISOString().slice(0, 10) }
+      if (a._id) {
+        const { error } = await supabase.from('driver_vehicle_assignments').update(row).eq('id', a._id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('driver_vehicle_assignments').insert([{
+          driver_id:  driverId,
+          created_by: currentUser?.user_id || null,
+          ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+          ...row,
+        }])
+        if (error) throw error
+      }
+    }
+  }
 
   async function handleSave() {
     setSaving(true)
+    // Auto-generate the driver account number before saving (kept if already set).
+    let accountNumber = form.account_number
+    if (!accountNumber) {
+      try { accountNumber = await generateAccountNumber('driver') } catch { /* leave blank */ }
+    }
+    // Null-safe: editing an existing driver spreads DB rows whose optional fields
+    // can be null, so guard every .trim() (a null.trim() used to throw and hang the form).
     const payload = {
       contact_type:    'driver',
-      first_name:      form.first_name.trim(),
-      last_name:       form.last_name.trim(),
-      mobile:          form.mobile.trim(),
-      whatsapp_number: form.whatsapp_number.trim() || null,
-      email:           form.email.trim() || null,
-      driver_license:  form.driver_license.trim() || null,
+      first_name:      (form.first_name || '').trim(),
+      last_name:       (form.last_name  || '').trim(),
+      mobile:          (form.mobile     || '').trim(),
+      whatsapp_number: form.whatsapp_number?.trim() || null,
+      email:           form.email?.trim()           || null,
+      driver_license:  form.driver_license?.trim()  || null,
       driver_status:   form.driver_status,
-      city:            form.city.trim() || null,
-      notes:           form.notes.trim() || null,
-      petty_cash_limit: Number(form.petty_cash_limit) || 0,
+      city:            form.city?.trim()            || null,
+      notes:           form.notes?.trim()           || null,
+      account_number:  accountNumber || null,
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
-    if (modal === 'add') {
-      await supabase.from('contacts').insert([payload])
-    } else {
-      await supabase.from('contacts').update(payload).eq('id', modal.id)
+    try {
+      if (modal === 'add') {
+        // The DB trigger generates contacts.code (e.g. DRV-000123) on insert; read it back to show the user.
+        const { data, error } = await withTimeout(
+          supabase.from('contacts').insert([payload]).select('id,code,account_number,first_name,last_name').single(),
+          15000, 'Saving the driver',
+        )
+        if (error) throw error
+        await syncPettyCash(data.id)
+        await syncAssignments(data.id)
+        await fetchDrivers()
+        closeModal()
+        setCodeNotice({
+          code: data?.code,
+          account_number: data?.account_number,
+          name: `${data?.first_name ?? ''} ${data?.last_name ?? ''}`.trim(),
+        })
+      } else {
+        // `code` is intentionally not in the payload (it stays locked).
+        const { error } = await withTimeout(
+          supabase.from('contacts').update(payload).eq('id', modal.id),
+          15000, 'Saving the driver',
+        )
+        if (error) throw error
+        await syncPettyCash(modal.id)
+        await syncAssignments(modal.id)
+        await fetchDrivers()
+        closeModal()
+      }
+    } catch (e) {
+      const msg = e?.message || String(e)
+      if (/duplicate key|unique/i.test(msg)) {
+        alert('Could not save: that mobile number is already used by another contact.')
+      } else {
+        alert(`Could not save driver: ${msg}`)
+      }
+    } finally {
+      setSaving(false)
     }
-    await fetchDrivers()
-    setSaving(false)
-    closeModal()
   }
 
   async function handleDelete(id) {
@@ -188,7 +369,7 @@ export default function DriversPage() {
                 </td>
                 <td className="px-5 py-3">
                   <div className="space-y-0.5">
-                    <span className="text-slate-400 flex items-center gap-1.5 text-xs"><Phone className="w-3 h-3" />{driver.mobile}</span>
+                    <span className="text-slate-400 flex items-center gap-1.5 text-xs"><Phone className="w-3 h-3" />{formatMobile(driver.mobile)}</span>
                     {driver.email && <span className="text-slate-400 flex items-center gap-1.5 text-xs"><Mail className="w-3 h-3" />{driver.email}</span>}
                   </div>
                 </td>
@@ -234,7 +415,7 @@ export default function DriversPage() {
       {/* Modal */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-lg p-6 space-y-4 overflow-y-auto max-h-[90vh]">
+          <div className="card w-full max-w-2xl p-6 space-y-4 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100">
                 {modal === 'add' ? 'Add Driver' : 'Edit Driver'}
@@ -243,24 +424,47 @@ export default function DriversPage() {
             </div>
 
             <div className="space-y-3">
+              {/* System-generated, locked fields (cannot be modified) */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">First Name *</label>
+                  <label className="label">Driver Code</label>
+                  <input
+                    className="input font-mono tracking-wider text-slate-300 cursor-not-allowed opacity-90"
+                    value={form.code ?? ''}
+                    placeholder={modal === 'add' ? 'Auto-generated on save' : '—'}
+                    readOnly
+                    title="The driver code is generated automatically and cannot be changed"
+                  />
+                </div>
+                <div>
+                  <label className="label">Account Number</label>
+                  <input
+                    className="input font-mono tracking-wider text-slate-300 cursor-not-allowed opacity-90"
+                    value={form.account_number ? formatAccountNumber(form.account_number) : ''}
+                    placeholder={modal === 'add' ? 'Generating…' : '—'}
+                    readOnly
+                    title="The account number is generated automatically and cannot be changed"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label text-fuchsia-300">First Name *</label>
                   <input className="input" value={form.first_name} onChange={e => field('first_name', e.target.value)} placeholder="John" />
                 </div>
                 <div>
-                  <label className="label">Last Name *</label>
+                  <label className="label text-fuchsia-300">Last Name *</label>
                   <input className="input" value={form.last_name} onChange={e => field('last_name', e.target.value)} placeholder="Doe" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Mobile *</label>
-                  <input className="input" value={form.mobile} onChange={e => field('mobile', e.target.value)} placeholder="+1 555 000 0000" />
+                  <label className="label text-fuchsia-300">Mobile *</label>
+                  <MobileInput value={form.mobile} onChange={v => field('mobile', v)} />
                 </div>
                 <div>
                   <label className="label">WhatsApp</label>
-                  <input className="input" value={form.whatsapp_number} onChange={e => field('whatsapp_number', e.target.value)} placeholder="If different from mobile" />
+                  <MobileInput value={form.whatsapp_number} onChange={v => field('whatsapp_number', v)} placeholder="If different from mobile" />
                 </div>
               </div>
               <div>
@@ -277,24 +481,147 @@ export default function DriversPage() {
                   <input className="input" value={form.city} onChange={e => field('city', e.target.value)} placeholder="Beirut" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Status</label>
-                  <select className="input" value={form.driver_status} onChange={e => field('driver_status', e.target.value)}>
-                    <option value="available">Available</option>
-                    <option value="on_duty">On Duty</option>
-                    <option value="off_duty">Off Duty</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Petty Cash Limit ($)</label>
-                  <input type="number" min="0" step="0.01" className="input" value={form.petty_cash_limit} onChange={e => field('petty_cash_limit', e.target.value)} placeholder="0.00" />
-                </div>
+              <div>
+                <label className="label">Status</label>
+                <select className="input" value={form.driver_status} onChange={e => field('driver_status', e.target.value)}>
+                  <option value="available">Available</option>
+                  <option value="on_duty">On Duty</option>
+                  <option value="off_duty">Off Duty</option>
+                  <option value="inactive">Inactive</option>
+                </select>
               </div>
               <div>
                 <label className="label">Notes</label>
                 <textarea className="input resize-none" rows={2} value={form.notes} onChange={e => field('notes', e.target.value)} placeholder="Optional notes…" />
+              </div>
+
+              {/* Petty cash sub-form — multiple entries, any currency. Created By is locked. */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="label mb-0">Petty Cash</label>
+                  <button type="button" onClick={addPetty}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Petty Cash
+                  </button>
+                </div>
+                <div className="border border-surface-border rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
+                        <th className="text-left px-3 py-2 w-[26%]">Date</th>
+                        <th className="text-left px-3 py-2 w-[24%]">Amount</th>
+                        <th className="text-left px-3 py-2 w-[18%]">Currency</th>
+                        <th className="text-left px-3 py-2 w-[26%]">Created By</th>
+                        <th className="w-[6%]"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pettyCash.length === 0 ? (
+                        <tr><td colSpan={5} className="px-3 py-5 text-center text-slate-600">No petty cash — click "Add Petty Cash"</td></tr>
+                      ) : pettyCash.map((p, idx) => (
+                        <tr key={p._id ?? p._key ?? idx} className="border-t border-surface-border/50">
+                          <td className="px-3 py-2">
+                            <input type="date" className="input py-1.5 text-xs" value={p.transaction_date}
+                              onChange={e => setPetty(idx, 'transaction_date', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={p.amount}
+                              onChange={e => setPetty(idx, 'amount', e.target.value)} placeholder="0.00" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs" value={p.currency}
+                              onChange={e => setPetty(idx, 'currency', e.target.value)}>
+                              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input className="input py-1.5 text-xs text-slate-400 cursor-not-allowed opacity-90"
+                              value={p.created_by_name || '—'} readOnly
+                              title="Set automatically to the signed-in user and cannot be changed" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <button type="button" onClick={() => removePetty(idx)}
+                              className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Totals per currency */}
+                {pettyCash.some(p => Number(p.amount) > 0) && (
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    {CURRENCIES.map(cur => {
+                      const total = pettyCash.filter(p => p.currency === cur)
+                        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+                      if (!total) return null
+                      return (
+                        <div key={cur} className="rounded-lg bg-surface-hover border border-surface-border px-3 py-1.5 text-xs">
+                          <span className="text-slate-500 uppercase tracking-wider mr-2">{cur} total</span>
+                          <span className="font-semibold text-slate-100">{total.toFixed(cur === 'LBP' ? 0 : 2)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Assigned vehicles sub-form — one or more, shows on the vehicle's history. */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="label mb-0">Assigned Vehicles</label>
+                  <button type="button" onClick={addAssign}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Assign Vehicle
+                  </button>
+                </div>
+                <div className="border border-surface-border rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
+                        <th className="text-left px-3 py-2 w-[30%]">Vehicle Code</th>
+                        <th className="text-left px-3 py-2 w-[40%]">Description</th>
+                        <th className="text-left px-3 py-2 w-[24%]">Start Date</th>
+                        <th className="w-[6%]"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assignments.length === 0 ? (
+                        <tr><td colSpan={4} className="px-3 py-5 text-center text-slate-600">No vehicles assigned — click "Assign Vehicle"</td></tr>
+                      ) : assignments.map((a, idx) => {
+                        const veh = vehicles.find(v => v.id === a.vehicle_id)
+                        const desc = veh ? ([veh.make, veh.model].filter(Boolean).join(' ') || veh.type || '—') : '—'
+                        return (
+                          <tr key={a._id ?? a._key ?? idx} className="border-t border-surface-border/50">
+                            <td className="px-3 py-2">
+                              <select className="input py-1.5 text-xs" value={a.vehicle_id}
+                                onChange={e => setAssign(idx, 'vehicle_id', e.target.value)}>
+                                <option value="">— Select —</option>
+                                {vehicles.map(v => <option key={v.id} value={v.id}>{v.asset_code}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 text-slate-400">{desc}</td>
+                            <td className="px-3 py-2">
+                              <input type="date" className="input py-1.5 text-xs" value={a.start_date}
+                                onChange={e => setAssign(idx, 'start_date', e.target.value)} />
+                            </td>
+                            <td className="px-3 py-2">
+                              <button type="button" onClick={() => removeAssign(idx)}
+                                className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {vehicles.length === 0 && (
+                  <p className="text-[11px] text-slate-500">No vehicles exist yet — add them in the Vehicles page first.</p>
+                )}
               </div>
             </div>
 
@@ -303,11 +630,43 @@ export default function DriversPage() {
               <button
                 className="btn-primary"
                 onClick={handleSave}
-                disabled={!form.first_name.trim() || !form.last_name.trim() || !form.mobile.trim() || saving}
+                disabled={!form.first_name?.trim() || !form.last_name?.trim() || !form.mobile?.trim() || saving}
               >
                 <Check className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Driver'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* New-driver code notification */}
+      {codeNotice && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="card w-full max-w-sm p-6 space-y-4 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-fuchsia-500/15 border border-fuchsia-500/30 flex items-center justify-center">
+              <Check className="w-6 h-6 text-fuchsia-300" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-100">Driver Saved</h3>
+              <p className="text-sm text-slate-400 mt-1">
+                {codeNotice.name || 'The new driver'} has been created with a new driver code.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-surface-hover border border-fuchsia-500/30 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-wider text-slate-500">Driver Code</p>
+                <p className="text-base font-mono font-bold text-fuchsia-300 mt-1 break-all">{codeNotice.code || '—'}</p>
+              </div>
+              <div className="rounded-lg bg-surface-hover border border-fuchsia-500/30 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-wider text-slate-500">Account Number</p>
+                <p className="text-base font-mono font-bold text-fuchsia-300 mt-1 break-all">
+                  {codeNotice.account_number ? formatAccountNumber(codeNotice.account_number) : '—'}
+                </p>
+              </div>
+            </div>
+            <button className="btn-primary w-full justify-center" onClick={() => setCodeNotice(null)}>
+              <Check className="w-4 h-4" /> Done
+            </button>
           </div>
         </div>
       )}

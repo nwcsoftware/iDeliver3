@@ -43,7 +43,10 @@ export function AppProvider({ children }) {
         driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
         customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, company_name, credit_debit_allowed),
         zone:delivery_zones(id, name),
-        order_items(currency, line_total, is_deleted)
+        order_items(currency, line_total, is_deleted),
+        delivery_packages(package_price),
+        order_services(service_fees, service_fees_currency),
+        retail_goods_invoices(invoice_value, currency)
       `)
       .order('created_at', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)

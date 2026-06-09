@@ -1,5 +1,6 @@
 import React from 'react'
 import { formatAccountNumber } from '../../lib/accountNumber'
+import MobileInput from '../MobileInput'
 
 /* Contact types that get a system-generated account number on creation. */
 export const ACCOUNT_NUMBER_TYPES = ['customer', 'supplier', 'partner']
@@ -116,11 +117,11 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Mobile *</label>
-          <input className="input" value={form.mobile} onChange={e => setField('mobile', e.target.value)} placeholder="+961 70 000 000" />
+          <MobileInput value={form.mobile} onChange={v => setField('mobile', v)} />
         </div>
         <div>
           <label className="label">WhatsApp</label>
-          <input className="input" value={form.whatsapp_number} onChange={e => setField('whatsapp_number', e.target.value)} placeholder="If different" />
+          <MobileInput value={form.whatsapp_number} onChange={v => setField('whatsapp_number', v)} placeholder="If different" />
         </div>
       </div>
 
