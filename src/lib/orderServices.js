@@ -28,11 +28,13 @@ export async function saveOrderServices({ orderId, services, origIds = [], compa
 
   for (const s of valid) {
     const fields = {
-      service_date:           s.service_date || null,
+      // service_date and service_fees are NOT NULL in order_services — default
+      // blanks to today / 0 so a part-filled service row never blocks the save.
+      service_date:           s.service_date || new Date().toISOString().slice(0, 10),
       service_description:    s.service_description?.trim() || null,
       service_reference:      s.service_reference?.trim() || null,
       quantity:               Number(s.quantity) || 1,
-      service_fees:           s.service_fees === '' || s.service_fees == null ? null : Number(s.service_fees),
+      service_fees:           s.service_fees === '' || s.service_fees == null ? 0 : Number(s.service_fees),
       service_fees_currency:  s.service_fees_currency || 'USD',
       updated_by:             userId,
     }
@@ -40,8 +42,9 @@ export async function saveOrderServices({ orderId, services, origIds = [], compa
       const { error } = await supabase.from('order_services').update(fields).eq('id', s._id)
       if (error) return error.message
     } else {
+      // order_id and company_id are inherited from the parent order.
       const { error } = await supabase.from('order_services')
-        .insert([{ order_id: orderId, created_by: userId, ...(companyId ? { company_id: companyId } : {}), ...fields }])
+        .insert([{ order_id: orderId, company_id: companyId, created_by: userId, ...fields }])
       if (error) return error.message
     }
   }

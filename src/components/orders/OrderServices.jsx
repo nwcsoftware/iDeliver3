@@ -61,13 +61,13 @@ export default function OrderServices({ services, setServices, embedded = false,
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
-                <th className="text-left px-3 py-2">Date</th>
+                <th className="text-left px-3 py-2 w-36">Date</th>
                 <th className="text-left px-3 py-2">Reference</th>
                 <th className="text-left px-3 py-2">Description</th>
-                <th className="text-center px-3 py-2 w-16">Qty</th>
-                <th className="text-right px-3 py-2">Fees</th>
-                <th className="text-center px-3 py-2 w-20">Currency</th>
-                <th className="text-right px-3 py-2 w-10">Actions</th>
+                <th className="text-center px-2 py-2 w-20">Qty</th>
+                <th className="text-right px-3 py-2 w-24">Fees</th>
+                <th className="text-center px-2 py-2 w-20">Currency</th>
+                <th className="text-right px-2 py-2 w-10">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -88,8 +88,8 @@ export default function OrderServices({ services, setServices, embedded = false,
                       value={s.service_description || ''}
                       onChange={e => update(i, 'service_description', e.target.value)} />
                   </td>
-                  <td className="px-3 py-2">
-                    <input type="number" className="input text-xs text-center" min="1" value={s.quantity || 1}
+                  <td className="px-2 py-2">
+                    <input type="number" className="input text-xs text-center px-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" min="1" value={s.quantity || 1}
                       onChange={e => update(i, 'quantity', Math.max(1, parseInt(e.target.value) || 1))} />
                   </td>
                   <td className="px-3 py-2">

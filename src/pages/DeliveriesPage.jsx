@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
@@ -290,6 +290,11 @@ export default function DeliveriesPage({ closed = false }) {
   const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID } = useApp()
   const { currentUser } = useAuth()
 
+  // Remembers the id of an order created during this modal session, so if a
+  // later step (items, packages, services…) fails the retry UPDATEs that order
+  // instead of inserting a duplicate. Reset whenever the modal opens/closes.
+  const savedOrderIdRef = useRef(null)
+
   const [search,    setSearch]    = useState('')
   const [filter,    setFilter]    = useState('all')
   const [modal,     setModal]     = useState(null)
@@ -542,6 +547,7 @@ export default function DeliveriesPage({ closed = false }) {
   }
 
   function openAdd() {
+    savedOrderIdRef.current = null
     setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
@@ -555,6 +561,7 @@ export default function DeliveriesPage({ closed = false }) {
 
   // Credit Order: same form, but pricing sections hidden and credit-only customers.
   function openAddCredit() {
+    savedOrderIdRef.current = null
     setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
@@ -564,6 +571,7 @@ export default function DeliveriesPage({ closed = false }) {
   }
 
   async function openEdit(o) {
+    savedOrderIdRef.current = null
     setForm({
       ...BASE_FORM, ...o,
       status:           normalizeStatus(o.status),
@@ -696,6 +704,7 @@ export default function DeliveriesPage({ closed = false }) {
   }
 
   function closeModal() {
+    savedOrderIdRef.current = null
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
@@ -799,19 +808,35 @@ export default function DeliveriesPage({ closed = false }) {
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
 
-    let orderId
-    if (modal === 'add') {
-      const { data, error: e } = await supabase.from('delivery_orders').insert([payload]).select('id').single()
+    // Reuse the order from this session if one was already created (a previous
+    // attempt that failed on a later step), so retries never duplicate the order.
+    let orderId = (modal !== 'add' && modal?.id) || savedOrderIdRef.current || null
+    // "recovering" = re-saving an order that was created earlier this session
+    // (modal still 'add'); its child rows weren't tracked, so clear them first.
+    const recovering = modal === 'add' && !!savedOrderIdRef.current
+
+    let orderCompanyId = (modal !== 'add' && modal?.company_id) || COMPANY_ID || null
+    if (!orderId) {
+      const { data, error: e } = await supabase.from('delivery_orders').insert([payload]).select('id, company_id').single()
       if (e) { setError(e.message); setSaving(false); return }
       orderId = data.id
+      orderCompanyId = data.company_id || orderCompanyId   // inherit company from the saved order
+      savedOrderIdRef.current = orderId
     } else {
-      const { error: e } = await supabase.from('delivery_orders').update(payload).eq('id', modal.id)
+      const { error: e } = await supabase.from('delivery_orders').update(payload).eq('id', orderId)
       if (e) { setError(e.message); setSaving(false); return }
-      orderId = modal.id
       // Soft-delete existing items
       await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', orderId).eq('is_deleted', false)
       // Retail invoices have no soft-delete flag — replace the set outright.
       await supabase.from('retail_goods_invoices').delete().eq('order_id', orderId)
+      // On a recovery retry, also clear children that were written untracked on
+      // the failed attempt so they are not duplicated when re-saved below.
+      if (recovering) {
+        await supabase.from('delivery_packages').delete().eq('order_id', orderId)
+        await supabase.from('order_services').delete().eq('order_id', orderId)
+        await supabase.from('payment_collections').delete().eq('order_id', orderId)
+        await supabase.from('account_transactions').delete().eq('order_id', orderId)
+      }
     }
 
     if (items.length > 0) {
@@ -887,12 +912,107 @@ export default function DeliveriesPage({ closed = false }) {
     if (pkgErr) { setError(pkgErr); setSaving(false); return }
 
     // ── Sync order services ────────────────────────────────────
+    //    order_id and company_id are inherited from the order automatically.
     const svcErr = await saveOrderServices({
       orderId, services, origIds: origServiceIds,
-      companyId: COMPANY_ID,
+      companyId: orderCompanyId,
       userId: currentUser?.user_id || null,
     })
     if (svcErr) { setError(svcErr); setSaving(false); return }
+
+    // ── On "Mark Closed": post each line of the order to account_transactions ──
+    //    The main order number is carried onto every row. Amounts go to
+    //    credit_amount in each line's own currency.
+    if (close) {
+      const orderNumber = (modal && modal !== 'add') ? modal.order_number : null
+      // The customer's account number, carried onto every posted row.
+      const customerAccount = selCustomer?.account_number || form.main_account || null
+      const txnDate = new Date().toISOString().slice(0, 10)   // close date
+      const base = {
+        order_id:           orderId,
+        order_number:       orderNumber,
+        transaction_number: orderNumber,        // order number on every row
+        customer_id:        form.customer_id,
+        account_number:     customerAccount,    // customer account number on every row
+        company_id:         COMPANY_ID || null,
+        branch_id:          currentUser?.branch_id || null,
+        created_by:         currentUser?.user_id || null,
+        debit_amount:       0,
+        exchange_rate:      1,
+      }
+      const txns = []
+
+      // Delivery packages → PACKAGE (no own currency → order currency)
+      for (const p of packages) {
+        txns.push({
+          ...base,
+          transaction_date:        txnDate,
+          transaction_reference:   p.tracking_number || null,
+          quantity:                Number(p.quantity) || 1,
+          credit_amount:           Number(p.package_price) || 0,
+          currency_code:           form.currency,
+          transaction_type:        'PACKAGE',
+        })
+      }
+      // Order services → SERVICES
+      for (const s of services) {
+        txns.push({
+          ...base,
+          transaction_date:        s.service_date || txnDate,
+          transaction_reference:   s.service_reference || null,
+          transaction_description: s.service_description || null,
+          quantity:                Number(s.quantity) || 1,
+          credit_amount:           Number(s.service_fees) || 0,
+          currency_code:           s.service_fees_currency || 'USD',
+          transaction_type:        'SERVICES',
+        })
+      }
+      // Local retail items → INVENTORY ITEM
+      for (const it of items) {
+        const prod = products.find(pr => pr.id === it.product_id)
+        txns.push({
+          ...base,
+          transaction_date:        txnDate,
+          transaction_reference:   prod?.code || null,
+          transaction_description: prod?.name || null,
+          quantity:                Number(it.quantity) || 1,
+          credit_amount:           lineTotal(it),
+          currency_code:           it.currency || 'USD',
+          transaction_type:        'INVENTORY ITEM',
+        })
+      }
+      // External retail invoice references → MARKET INVOICE
+      for (const r of retailInvoices.filter(x => x.shop_name?.trim())) {
+        txns.push({
+          ...base,
+          transaction_date:        r.invoice_date || txnDate,
+          transaction_reference:   r.invoice_reference || null,
+          transaction_description: r.shop_name.trim(),
+          quantity:                1,
+          credit_amount:           Number(r.invoice_value) || 0,
+          currency_code:           r.currency || 'USD',
+          transaction_type:        'MARKET INVOICE',
+        })
+      }
+      // Delivery fee → DELIVERY FEES
+      if (Number(form.delivery_fee) > 0) {
+        txns.push({
+          ...base,
+          transaction_date:        txnDate,
+          transaction_reference:   orderNumber,
+          transaction_description: '3asari3 KOUSBA - MAIN branch',
+          quantity:                1,
+          credit_amount:           Number(form.delivery_fee) || 0,
+          currency_code:           form.currency,
+          transaction_type:        'DELIVERY FEES',
+        })
+      }
+
+      if (txns.length > 0) {
+        const { error: te } = await supabase.from('account_transactions').insert(txns)
+        if (te) { setError(`Order closed, but posting account transactions failed: ${te.message}`); setSaving(false); return }
+      }
+    }
 
     // ── Credit customer: on close with an unpaid balance, record a sales
     //    invoice so the customer shows up in v_credit_customer_balances. ───────
