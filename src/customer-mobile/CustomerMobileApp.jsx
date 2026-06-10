@@ -26,7 +26,8 @@ import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
-const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || '').trim() || null
+const DEFAULT_COMPANY_ID = '0e7eae0e-9a0b-4408-8847-e03232c0a460'
+const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || DEFAULT_COMPANY_ID || '').trim() || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
 const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
 
