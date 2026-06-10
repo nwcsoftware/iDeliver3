@@ -100,7 +100,71 @@ Do not copy the image as a template.
 
 ## Resume Here
 
-We paused after agreeing on the clean architecture:
+Current pause point:
+
+```text
+We are working in the customer mobile login screen / new user registration flow.
+```
+
+Recent customer mobile changes:
+
+```text
+Login screen logo restored from customer-app-step1.
+Login uses contacts username/password path, not user_accounts.
+New user registration collects username and password for contacts.
+Google login button added to both login and new-user registration screens.
+New-user registration layout was tightened for smaller mobile screens.
+My Orders now displays and filters by delivery_status instead of order status.
+Customer mobile language switching was added for English, Arabic, French, and Romanian.
+```
+
+Current changed files to keep in scope:
+
+```text
+src/customer-mobile/CustomerMobileApp.jsx
+src/assets/ideliver-logo-login.png
+supabase-fix27.sql
+```
+
+Important database/auth setup still pending:
+
+```text
+Run supabase-fix27.sql in the Supabase SQL Editor before deploying the latest auth changes.
+It adds contacts.username and contacts.password and creates the customer_contact_* RPC functions.
+Without this SQL, login/register will fail because the frontend calls RPCs that do not exist yet.
+```
+
+Google login setup in Supabase:
+
+```text
+Updated in Supabase.
+Supabase Authentication > Providers > Google is enabled.
+Google OAuth Client ID and Client Secret have been added.
+Google Cloud redirect URI:
+https://zwcrmkgixdarkwppsgzl.supabase.co/auth/v1/callback
+```
+
+Allowed redirect URLs to add in Supabase:
+
+```text
+http://127.0.0.1:5176/#/customer/login
+https://mobile-chi-six.vercel.app/#/customer/login
+```
+
+Local customer mobile URL used during this work:
+
+```text
+http://127.0.0.1:5176/#/customer/login
+```
+
+Build status:
+
+```text
+npm run build passed after the login/register changes.
+Supabase Google provider setup was updated after that build; run npm run build again after the next code change.
+```
+
+Earlier architecture agreement:
 
 ```text
 Develop Electron/React customer UI.
@@ -110,24 +174,3 @@ Do not create a separate backend now.
 Keep staff workflow unchanged.
 Customer-created orders should appear in the existing staff delivery workflow.
 ```
-
-Next development step:
-
-```text
-Build the Customer App Shell at #/customer
-```
-
-The first visible screen should include:
-
-```text
-customer greeting
-search bar
-Shop Products action
-Book Delivery action
-My Orders shortcut
-Profile shortcut
-bottom navigation
-```
-
-After the screen is reviewed, commit the step on the customer app branch and continue one step at a time.
-
