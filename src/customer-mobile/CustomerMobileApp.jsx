@@ -738,10 +738,10 @@ function Shell({ children, activeTab, onTab }) {
   ]
 
   return (
-    <div className="h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="relative mx-auto flex h-screen max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
+    <div className="min-h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
+      <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
         <div className="flex-1 overflow-y-auto pb-20">{children}</div>
-        <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
+        <nav className="fixed bottom-0 left-0 z-20 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
             {nav.map(item => {
               const Icon = item.icon
@@ -906,7 +906,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
 
   return (
     <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-6 text-[#071923]" dir={dir}>
-      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-md items-center">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-full px-2 sm:px-0 md:max-w-md items-center">
         <form onSubmit={submitLogin} className="w-full rounded-lg border border-sky-100 bg-white p-5 shadow-sm shadow-sky-100/70">
           <div className="mb-7 text-center">
             <img src={ideliverLoginLogo} alt="iDeliver" className="mx-auto h-20 w-auto object-contain" />
@@ -1052,7 +1052,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
 
   return (
     <div className="min-h-dvh overflow-y-auto bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="mx-auto min-h-dvh max-w-md bg-[#f8fdff] pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="mx-auto min-h-dvh w-full max-w-full px-2 sm:px-0 md:max-w-md bg-[#f8fdff] pb-[max(1rem,env(safe-area-inset-bottom))]">
         <Header title={t('customerRegistration')} subtitle={t('firstTimeSetup')} back onBack={step === 'otp' ? () => setStep('details') : onBack} />
         <main className="space-y-3 px-4 py-4">
           {step === 'details' && (
@@ -1747,7 +1747,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
           </div>
         )}
 
-        <div className="fixed bottom-[76px] left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-sky-100 bg-white/95 px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur">
+        <div className="fixed bottom-[76px] left-0 z-20 w-full max-w-full px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95">
           <button type="button" onClick={submitRequest} disabled={saving || loading} className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
             {saving ? t('submitting') : t('submitRequest')}
           </button>
