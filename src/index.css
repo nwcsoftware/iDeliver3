@@ -6,10 +6,15 @@
   * {
     @apply border-surface-border;
   }
+  html, body, #root {
+    min-height: 100%;
+    overflow-x: hidden;
+  }
   body {
     @apply bg-surface text-slate-100 font-sans antialiased;
     user-select: none;
-    overflow: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   input, textarea, select {
     user-select: text;
