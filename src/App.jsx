@@ -15,6 +15,7 @@ import CompanyPage      from './pages/CompanyPage'
 import ProductsPage          from './pages/ProductsPage'
 import PurchaseInvoicesPage  from './pages/PurchaseInvoicesPage'
 import RetailInvoicesPage     from './pages/RetailInvoicesPage'
+import AccountTransactionsPage from './pages/AccountTransactionsPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
@@ -71,6 +72,7 @@ function AppShell() {
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/purchase-invoices"    element={<PurchaseInvoicesPage />} />
                 <Route path="/retail-invoices"      element={<RetailInvoicesPage />} />
+                <Route path="/account-transactions" element={<AccountTransactionsPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />

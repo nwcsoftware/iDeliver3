@@ -139,7 +139,7 @@ export default function LoginPage() {
 
           {/* Footer */}
           <p className="text-center text-slate-600 text-xs">
-            iDeliver III &nbsp;·&nbsp; v3.00.005
+            iDeliver III &nbsp;·&nbsp; v3.00.006
           </p>
         </div>
       </div>

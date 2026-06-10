@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
-  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe,
+  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -334,6 +334,12 @@ export default function DeliveriesPage({ closed = false }) {
   const [quickBusy,            setQuickBusy]            = useState(false)
   const [sectionsOpen,         setSectionsOpen]         = useState(allSectionsClosed)
   const [addCredit,            setAddCredit]            = useState(false)   // creating a Credit Order
+  // Quick "Pay" from the list — records a payment on an order without opening the full form.
+  const [payModal,             setPayModal]             = useState(null)   // order being paid | null
+  const [payForm,              setPayForm]              = useState(EMPTY_PAYMENT)
+  const [payPaid,              setPayPaid]              = useState({ USD: 0, LBP: 0 })
+  const [paySaving,            setPaySaving]            = useState(false)
+  const [payError,             setPayError]             = useState('')
 
   const toggleSection = (id, val) => setSectionsOpen(s => ({ ...s, [id]: val }))
   const openSection   = (id) => setSectionsOpen(s => (s[id] ? s : { ...s, [id]: true }))
@@ -720,6 +726,58 @@ export default function DeliveriesPage({ closed = false }) {
   function removePayment(i) { setPayments(p => p.filter((_, idx) => idx !== i)) }
   function setPayment(i, k, v) {
     setPayments(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next })
+  }
+
+  /* ── quick "Pay" from the list ───────────────────────────────
+     Records one payment_collections row on an order and recomputes the order's
+     payment_status / collected totals — same effect as the form's Payments section. */
+  async function openPay(o) {
+    setPayModal(o)
+    setPayForm({ ...EMPTY_PAYMENT, paid_at: new Date().toISOString().slice(0, 10) })
+    setPayPaid({ USD: 0, LBP: 0 })
+    setPayError(''); setPaySaving(false)
+    const { data } = await supabase.from('payment_collections').select('amount_usd,amount_lbp').eq('order_id', o.id)
+    const paid = (data ?? []).reduce(
+      (a, p) => ({ USD: a.USD + (Number(p.amount_usd) || 0), LBP: a.LBP + (Number(p.amount_lbp) || 0) }),
+      { USD: 0, LBP: 0 },
+    )
+    setPayPaid(paid)
+  }
+  function closePay() { setPayModal(null); setPayForm(EMPTY_PAYMENT); setPayError(''); setPaySaving(false) }
+  function setPayFld(k, v) { setPayForm(f => ({ ...f, [k]: v })); setPayError('') }
+
+  async function savePayment() {
+    const o = payModal
+    if (!o) return
+    const amt = round2(payForm.amount)
+    if (!(amt > 0)) { setPayError('Enter an amount greater than 0.'); return }
+    setPaySaving(true); setPayError('')
+
+    // 1. Insert the payment (same shape as the form's Payments section).
+    const cols = payForm.currency === 'LBP' ? { amount_lbp: amt, amount_usd: 0 } : { amount_usd: amt, amount_lbp: 0 }
+    const { error: pe } = await supabase.from('payment_collections').insert([{
+      order_id:        o.id,
+      collection_type: payForm.method || 'cash',
+      ...cols,
+      collected_at:    payForm.paid_at || new Date().toISOString(),
+      notes:           payForm.notes?.trim() || null,
+    }])
+    if (pe) { setPayError(pe.message); setPaySaving(false); return }
+
+    // 2. Recompute the order's payment status / collected totals from all payments.
+    const { data: allPays } = await supabase.from('payment_collections').select('amount_usd,amount_lbp').eq('order_id', o.id)
+    const paidUSD = round2((allPays ?? []).reduce((s, p) => s + (Number(p.amount_usd) || 0), 0))
+    const paidLBP = round2((allPays ?? []).reduce((s, p) => s + (Number(p.amount_lbp) || 0), 0))
+    const status  = derivePaymentStatus({ USD: paidUSD, LBP: paidLBP, EUR: 0 }, orderTotalsByCurrency(o))
+    const { error: ue } = await supabase.from('delivery_orders').update({
+      payment_status:           status,
+      collection_from_customer: collectionFromPayStatus(status),
+      collected_usd:            paidUSD,
+      collected_lbp:            paidLBP,
+    }).eq('id', o.id)
+    if (ue) { setPayError(ue.message); setPaySaving(false); return }
+
+    await fetchOrders(); closePay(); setPaySaving(false)
   }
 
   /* ── items helpers ───────────────────────────────────────── */
@@ -1336,6 +1394,11 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
+                    <button onClick={() => openPay(o)} disabled={o.isclosed}
+                      title={o.isclosed ? 'Closed — locked' : 'Record payment'}
+                      className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Banknote className="w-4 h-4" />
+                    </button>
                     <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
                       title={o.isclosed ? 'View (closed)' : 'Edit'}>
                       <Edit2 className="w-4 h-4" />
@@ -2134,6 +2197,96 @@ export default function DeliveriesPage({ closed = false }) {
                 disabled={savingCustomer || (newCustomer.entity_type === 'company' && !newCustomer.company_name.trim()) || !newCustomer.first_name.trim() || !newCustomer.last_name.trim() || !newCustomer.mobile.trim()}>
                 <Check className="w-4 h-4" />
                 {savingCustomer ? 'Saving…' : 'Save & Use'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Pay modal ────────────────────────────────────── */}
+      {payModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4">
+          <div className="card w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
+                  <Banknote className="w-4 h-4 text-green-400" /> Record Payment
+                </h2>
+                <p className="text-xs mt-0.5">
+                  <span className="font-mono text-brand-400">{payModal.order_number}</span>
+                  {payModal.customer && <span className="text-slate-500"> · {customerListName(payModal.customer)}</span>}
+                </p>
+              </div>
+              <button onClick={closePay} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+
+            {/* Order totals vs already paid, per currency */}
+            {(() => {
+              const totals = orderTotalsByCurrency(payModal)
+              const rows = PAYMENT_CURRENCIES
+                .map(cur => ({ cur, total: round2(totals[cur] || 0), paid: round2(payPaid[cur] || 0) }))
+                .filter(r => r.total > 0 || r.paid > 0)
+              if (rows.length === 0) return null
+              return (
+                <div className="rounded-lg border border-surface-border bg-surface-hover px-3 py-2 text-xs space-y-1">
+                  {rows.map(r => {
+                    const dp = r.cur === 'LBP' ? 0 : 2
+                    const pending = round2(r.total - r.paid)
+                    return (
+                      <div key={r.cur} className="flex items-center justify-between">
+                        <span className="text-slate-500 font-semibold">{r.cur}</span>
+                        <span className="text-slate-300">
+                          Total {r.total.toFixed(dp)} · Paid {r.paid.toFixed(dp)} ·{' '}
+                          <span className={pending > 0 ? 'text-yellow-400' : pending < 0 ? 'text-cyan-400' : 'text-green-400'}>
+                            Pending {pending.toFixed(dp)}
+                          </span>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Method</label>
+                <select className="input" value={payForm.method} onChange={e => setPayFld('method', e.target.value)}>
+                  {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Currency</label>
+                <select className="input" value={payForm.currency} onChange={e => setPayFld('currency', e.target.value)}>
+                  {PAYMENT_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Amount</label>
+                <input type="number" min="0" step="0.01" className="input" value={payForm.amount}
+                  onChange={e => setPayFld('amount', e.target.value)} placeholder="0.00" autoFocus />
+              </div>
+              <div>
+                <label className="label">Date</label>
+                <input type="date" className="input" value={payForm.paid_at}
+                  onChange={e => setPayFld('paid_at', e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="label">Notes</label>
+              <input className="input" value={payForm.notes} onChange={e => setPayFld('notes', e.target.value)} placeholder="Optional" />
+            </div>
+
+            {payError && (
+              <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />{payError}
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end pt-1">
+              <button className="btn-ghost" onClick={closePay}>Cancel</button>
+              <button className="btn-primary" onClick={savePayment} disabled={paySaving || !(round2(payForm.amount) > 0)}>
+                <Check className="w-4 h-4" /> {paySaving ? 'Saving…' : 'Record Payment'}
               </button>
             </div>
           </div>

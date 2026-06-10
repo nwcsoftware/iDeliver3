@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -22,6 +22,7 @@ const bottomNav = [
   { to: '/products',           icon: Tag,             label: 'Products'  },
   { to: '/purchase-invoices',  icon: FileText,        label: 'Purchases' },
   { to: '/retail-invoices',    icon: Receipt,         label: 'Retail Invoices' },
+  { to: '/account-transactions', icon: BookText,      label: 'Account Transactions' },
   { to: '/vehicles',           icon: Car,             label: 'Vehicles'  },
   { to: '/company',            icon: Building2,       label: 'Company'   },
 ]
