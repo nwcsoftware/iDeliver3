@@ -98,6 +98,8 @@ export default function DriversPage() {
   const [vehicles,      setVehicles]      = useState([]) // vehicles list for the assignment picker
   const [assignments,   setAssignments]   = useState([]) // driver_vehicle_assignments rows
   const [origAssignIds, setOrigAssignIds] = useState([])
+  const [latestVehicle, setLatestVehicle] = useState({}) // driver_id -> "code | make | model | color"
+  const [pettyTotals,   setPettyTotals]   = useState({}) // driver_id -> { USD, LBP, EUR }
 
   // Vehicles available to assign to a driver.
   useEffect(() => {
@@ -105,6 +107,43 @@ export default function DriversPage() {
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     q.then(({ data }) => setVehicles(data ?? []))
   }, [COMPANY_ID])
+
+  // Latest assigned vehicle per driver (most recent assignment) for the list.
+  useEffect(() => {
+    supabase
+      .from('driver_vehicle_assignments')
+      .select('driver_id, start_date, created_at, vehicle:vehicles(asset_code, make, model, color)')
+      .order('start_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const map = {}
+        for (const a of (data ?? [])) {
+          // First row per driver is the latest due to the ordering above.
+          if (!map[a.driver_id] && a.vehicle) {
+            map[a.driver_id] = [a.vehicle.asset_code, a.vehicle.make, a.vehicle.model, a.vehicle.color]
+              .filter(Boolean).join(' | ')
+          }
+        }
+        setLatestVehicle(map)
+      })
+  }, [drivers])
+
+  // Per-currency petty cash totals per driver (sum of allocations, matching the
+  // driver form's per-currency totals).
+  useEffect(() => {
+    supabase
+      .from('driver_petty_cash')
+      .select('driver_id, amount, currency')
+      .then(({ data }) => {
+        const map = {}
+        for (const r of (data ?? [])) {
+          const cur = r.currency || 'USD'
+          if (!map[r.driver_id]) map[r.driver_id] = {}
+          map[r.driver_id][cur] = (map[r.driver_id][cur] || 0) + (Number(r.amount) || 0)
+        }
+        setPettyTotals(map)
+      })
+  }, [drivers])
 
   const statusFilters = ['all', 'available', 'on_duty', 'off_duty', 'inactive']
 
@@ -344,16 +383,16 @@ export default function DriversPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Driver', 'Contact', 'License', 'City', 'Status', 'Petty Cash', ''].map(h => (
+              {['Driver', 'Contact', 'License', 'Vehicle', 'City', 'Status', 'Petty Cash', ''].map(h => (
                 <th key={h} className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading.drivers ? (
-              <tr><td colSpan={7} className="px-5 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-5 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={7} className="px-5 py-10 text-center text-slate-500">No drivers found</td></tr>
+              <tr><td colSpan={8} className="px-5 py-10 text-center text-slate-500">No drivers found</td></tr>
             ) : filtered.map(driver => (
               <tr key={driver.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors">
                 <td className="px-5 py-3">
@@ -379,6 +418,11 @@ export default function DriversPage() {
                     : <span className="text-slate-600 text-xs">—</span>
                   }
                 </td>
+                <td className="px-5 py-3">
+                  <input readOnly value={latestVehicle[driver.id] || ''} placeholder="—"
+                    title={latestVehicle[driver.id] || 'No vehicle assigned'}
+                    className="input py-1 text-xs font-mono bg-surface-hover/40 text-slate-300 w-56 cursor-default" />
+                </td>
                 <td className="px-5 py-3 text-slate-400 text-xs">{driver.city || '—'}</td>
                 <td className="px-5 py-3">
                   {(() => {
@@ -391,8 +435,22 @@ export default function DriversPage() {
                     )
                   })()}
                 </td>
-                <td className="px-5 py-3 text-slate-400 text-xs">
-                  {driver.petty_cash_limit > 0 ? `$${Number(driver.petty_cash_limit).toFixed(2)}` : '—'}
+                <td className="px-5 py-3">
+                  {(() => {
+                    const t = pettyTotals[driver.id] || {}
+                    const entries = CURRENCIES.filter(c => Number(t[c]) > 0)
+                    if (entries.length === 0) return <span className="text-slate-600 text-xs">—</span>
+                    return (
+                      <div className="space-y-0.5">
+                        {entries.map(c => (
+                          <div key={c} className="text-xs font-medium text-slate-100 whitespace-nowrap">
+                            <span className="text-slate-500 text-[10px] mr-1">{c}</span>
+                            {Number(t[c]).toFixed(c === 'LBP' ? 0 : 2)}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </td>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-2 justify-end">

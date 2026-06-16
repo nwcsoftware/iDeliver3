@@ -10,6 +10,7 @@ const CATEGORIES = [
   { value: 'clothing',            label: 'Clothing' },
   { value: 'other',               label: 'Other' },
 ]
+const CURRENCIES   = ['USD', 'LBP', 'EUR']
 const TYPES        = ['parcel', 'box', 'envelope', 'pallet', 'bag', 'crate']
 const SIZES        = [
   { value: 'small', label: 'Small' },
@@ -33,10 +34,17 @@ const PAYMENT_TYPES = [
 ]
 
 export const EMPTY_PACKAGE = {
-  tracking_number: '', category: 'other', type: 'bag', package_size: 'small',
+  tracking_number: '', provider_id: '', category: 'other', type: 'bag', package_size: 'small',
   handling: 'regular', vehicle_type: '', quantity: 1, weight_kg: '',
   description: '',
-  base_price: '', package_price: '', paid: false, payment_type: '',
+  base_price: '', package_price: '', currency: 'USD', paid: false, payment_type: '',
+}
+
+/* Display name for a provider contact: company name first, else person name. */
+function providerName(c) {
+  return (c.company_name?.trim())
+    || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
+    || '—'
 }
 
 /**
@@ -48,7 +56,7 @@ export const EMPTY_PACKAGE = {
  *   onAdd       - optional parent-owned "Add Package" handler (used when the
  *                 Add button lives in the collapsible section header)
  */
-export default function OrderPackages({ packages, setPackages, customerName = '', embedded = false, onAdd }) {
+export default function OrderPackages({ packages, setPackages, providers = [], customerName = '', embedded = false, onAdd }) {
   const trackingRefs = React.useRef({})        // rowKey -> tracking <input>
   const prevLen      = React.useRef(packages.length)
 
@@ -94,20 +102,35 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
         <p className="text-xs text-slate-600 border border-dashed border-surface-border rounded-lg px-3 py-4 text-center">
           No packages yet — click "Add Package".
         </p>
-      ) : packages.map((p, i) => (
+      ) : packages.map((p, i) => {
+        const provider = providers.find(pr => pr.id === p.provider_id)
+        const paidToName = provider ? providerName(provider) : 'provider'
+        return (
         <div key={p._id ?? p._key ?? i} data-package-row className="border border-surface-border rounded-lg p-3 space-y-2 bg-surface-hover/30">
-          <div className="flex items-center gap-2">
-            <input className="input flex-1" placeholder="Tracking number"
-              ref={el => {
-                const rk = p._id ?? p._key ?? i
-                if (el) trackingRefs.current[rk] = el; else delete trackingRefs.current[rk]
-              }}
-              onKeyDown={trackingKeyDown}
-              value={p.tracking_number} onChange={e => update(i, 'tracking_number', e.target.value)} />
-            <button type="button" onClick={() => remove(i)} title="Remove package"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0">
-              <Trash2 className="w-4 h-4" />
-            </button>
+          <div>
+            <label className="label text-fuchsia-300">Package provider *</label>
+            <select required className="input py-1.5 text-xs" value={p.provider_id || ''}
+              onChange={e => update(i, 'provider_id', e.target.value)}>
+              <option value="">— Select provider —</option>
+              {providers.map(pr => <option key={pr.id} value={pr.id}>{providerName(pr)}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="label text-fuchsia-300">Package reference *</label>
+            <div className="flex items-center gap-2">
+              <input required className="input flex-1" placeholder="Package reference"
+                ref={el => {
+                  const rk = p._id ?? p._key ?? i
+                  if (el) trackingRefs.current[rk] = el; else delete trackingRefs.current[rk]
+                }}
+                onKeyDown={trackingKeyDown}
+                value={p.tracking_number} onChange={e => update(i, 'tracking_number', e.target.value)} />
+              <button type="button" onClick={() => remove(i)} title="Remove package"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -115,7 +138,6 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
             <OptionButtons label="Type"     options={TYPES}      value={p.type}         onChange={v => update(i, 'type', v)} />
             <OptionButtons label="Size"     options={SIZES}      value={p.package_size} onChange={v => update(i, 'package_size', v)} />
             <OptionButtons label="Handling" options={HANDLINGS}  value={p.handling}     onChange={v => update(i, 'handling', v)} clearable={false} />
-            <OptionButtons label="Vehicle"  options={VEHICLES}   value={p.vehicle_type} onChange={v => update(i, 'vehicle_type', v)} />
             <div className="w-28">
               <label className="label">Weight (kg)</label>
               <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={p.weight_kg}
@@ -139,14 +161,16 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
           {/* Pricing */}
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="label">Base Price</label>
-              <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={p.base_price}
-                onChange={e => update(i, 'base_price', e.target.value)} placeholder="0.00" />
-            </div>
-            <div>
               <label className="label">Package Price</label>
               <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={p.package_price}
                 onChange={e => update(i, 'package_price', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label className="label">Currency</label>
+              <select className="input py-1.5 text-xs" value={p.currency || 'USD'}
+                onChange={e => update(i, 'currency', e.target.value)}>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
           </div>
 
@@ -160,7 +184,7 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
                   : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'
                 }`}>
               {p.paid ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
-              Paid directly to {customerName || 'customer'}
+              Paid directly to {paidToName}
             </button>
             <div className="flex-1 min-w-[140px]">
               <label className="label">Payment Type</label>
@@ -171,7 +195,8 @@ export default function OrderPackages({ packages, setPackages, customerName = ''
             </div>
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

@@ -2,13 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
-  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote,
+  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
+  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
+import { orderTotalsByCurrency, orderCollectedByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import Badge from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
@@ -24,7 +27,6 @@ import { saveOrderServices } from '../lib/orderServices'
 // Order lifecycle status (stored values + display labels)
 const ORDER_STATUS_OPTIONS = [
   { value: 'scheduled',   label: 'Scheduled' },
-  { value: 'confirmed',   label: 'Confirmed' },
   { value: 'in_progress', label: 'In Progress' },
   { value: 'completed',   label: 'Completed' },
 ]
@@ -54,6 +56,43 @@ function normalizeStatus(s) {
   if (['assigned', 'picked_up', 'in_transit', 'return_requested'].includes(s)) return 'in_progress'
   if (['delivered', 'returned'].includes(s)) return 'completed'
   return s   // cancelled, failed, or anything unknown → leave as-is
+}
+
+// A deactivated order = cancelled or failed. Such orders (and closed ones) are
+// locked: no edit, payment, status change or driver assignment from the list.
+function isDeactivated(o) { return ['cancelled', 'failed'].includes(o?.status) }
+function isRowLocked(o)   { return o?.isclosed === true || isDeactivated(o) }
+
+// Once the driver has picked the order up (delivery status past "Awaiting
+// Pickup"), the assigned driver can no longer be changed.
+function isPickedUp(o)    { return !!o?.delivery_status && o.delivery_status !== 'Awaiting Pickup' }
+
+// Fully paid = the whole balance has been collected; there's nothing left to
+// collect, so the list shows a "paid" hint instead of the quick-Pay button.
+function isFullyPaid(o)   { return o?.payment_status === 'paid_to_office' }
+
+// Order confirmation flag (delivery_orders.order_confirmed). Not-confirmed rows
+// are highlighted in light fuchsia in the list.
+function isConfirmed(o) { return o?.order_confirmed === true }
+
+// The scheduled deadline = scheduled_date at scheduled_time_to (else _from, else
+// end of day). Used to flag overdue orders in the list.
+function orderDeadline(o) {
+  if (!o?.scheduled_date) return null
+  const d = String(o.scheduled_date).slice(0, 10)
+  const t = String(o.scheduled_time_to || o.scheduled_time_from || '23:59').slice(0, 5)
+  const dt = new Date(`${d}T${t}`)
+  return isNaN(dt.getTime()) ? null : dt
+}
+
+// Overdue = an active order (scheduled / confirmed / in progress, i.e. not yet
+// completed and not cancelled/failed/closed) whose scheduled deadline has passed.
+// Covers both "scheduled but not started in time" and "in progress past the date".
+function isOverdue(o) {
+  if (!o || o.isclosed) return false
+  if (!['scheduled', 'confirmed', 'in_progress'].includes(normalizeStatus(o.status))) return false
+  const dl = orderDeadline(o)
+  return !!dl && Date.now() > dl.getTime()
 }
 
 // The `status` column is the order_status enum, which has no scheduled/in_progress/completed
@@ -136,8 +175,8 @@ const PAYMENT_METHODS = [
   { value: 'other',         label: 'Other' },
 ]
 
-// payment_collections only has USD/LBP columns, so payments are limited to these.
-const PAYMENT_CURRENCIES = ['USD', 'LBP']
+// Payments are stored as a single amount + currency, so any order currency works.
+const PAYMENT_CURRENCIES = CURRENCIES
 
 const EMPTY_PAYMENT = { method: 'cash', amount: '', currency: 'USD', paid_at: '', notes: '' }
 
@@ -220,8 +259,9 @@ function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurr
   const add = (cur, n) => { t[cur in t ? cur : 'USD'] += n }
   // Per-item line totals already apply each item's own discount in its currency.
   for (const it of items) add(it.currency || 'USD', lineTotal(it))
-  // Packages have no own currency → counted in the order's primary (fee) currency.
-  for (const p of packages) add(feeCurrency, Number(p.package_price) || 0)
+  // Packages carry their own currency. A package already paid directly to its
+  // provider is excluded from the order total.
+  for (const p of packages) if (!p.paid) add(p.currency || feeCurrency, Number(p.package_price) || 0)
   // Services and external retail invoice references carry their own currency.
   for (const s of services) add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
   for (const r of retailInvoices) add(r.currency || 'USD', Number(r.invoice_value) || 0)
@@ -238,7 +278,7 @@ function SectionLabel({ children }) {
 // Order-form sections, in display order. Used to collapse/expand each block.
 const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'packages', 'services', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
 // Sections expanded by default on a new order; the rest start collapsed.
-const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'notes']
+const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'notes']
 const allSectionsClosed = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, false]))
 const allSectionsOpen   = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, true]))
 const defaultNewSections = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, DEFAULT_OPEN_SECTIONS.includes(s)]))
@@ -247,10 +287,14 @@ const defaultNewSections = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, D
    clicking the header also expands it, so a fresh (all-collapsed) order opens
    one section at a time as the user moves through it. `right` is an optional
    header action (e.g. an Add button) that opens the section when used. */
-function CollapsibleSection({ title, open, onToggle, right, children }) {
+function CollapsibleSection({ title, open, onToggle, right, children, accent }) {
+  const accentStyles = {
+    fuchsia: { border: 'border-fuchsia-500/40', header: 'bg-fuchsia-500/10' },
+    blue:    { border: 'border-blue-500/40',    header: 'bg-blue-500/10' },
+  }[accent]
   return (
-    <div className="border border-surface-border rounded-lg overflow-hidden">
-      <div className="flex items-center bg-surface-hover/40">
+    <div className={`border rounded-lg overflow-hidden ${accentStyles ? accentStyles.border : 'border-surface-border'}`}>
+      <div className={`flex items-center ${accentStyles ? accentStyles.header : 'bg-surface-hover/40'}`}>
         <button type="button"
           onClick={() => onToggle(!open)}
           onFocus={() => { if (!open) onToggle(true) }}
@@ -265,23 +309,6 @@ function CollapsibleSection({ title, open, onToggle, right, children }) {
   )
 }
 
-/* Per-currency total of a saved order, from its line items + fee/discount/vat. */
-function orderTotalsByCurrency(o) {
-  const t = {}
-  const add = (cur, n) => { if (n) t[cur] = (t[cur] || 0) + n }
-  const active = (o.order_items ?? []).filter(it => !it.is_deleted)
-  for (const it of active) add(it.currency || 'USD', Number(it.line_total || 0))
-  // Packages (primary currency), services & external retail invoices (own currency).
-  for (const p of (o.delivery_packages ?? []))     add(o.currency || 'USD', Number(p.package_price) || 0)
-  for (const s of (o.order_services ?? []))         add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
-  for (const r of (o.retail_goods_invoices ?? []))  add(r.currency || 'USD', Number(r.invoice_value) || 0)
-  const discountCur = o.discount_currency || o.currency
-  add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
-  add(discountCur, Number(o.discount_amount) > 0 ? -Number(o.discount_amount) : 0)
-  add(o.currency, Number(o.vat_amount) > 0 ? Number(o.vat_amount) : 0)
-  return t
-}
-
 function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2) }
 
 /* ── page ─────────────────────────────────────────────────── */
@@ -294,9 +321,13 @@ export default function DeliveriesPage({ closed = false }) {
   // later step (items, packages, services…) fails the retry UPDATEs that order
   // instead of inserting a duplicate. Reset whenever the modal opens/closes.
   const savedOrderIdRef = useRef(null)
+  const driverSearchRef = useRef(null)
+  const handledEditRef  = useRef(null)   // deep-link: open an order from ?edit=<id>
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [search,    setSearch]    = useState('')
   const [filter,    setFilter]    = useState('all')
+  const [sort,      setSort]      = useState({ col: null, dir: null })  // column sort: asc | desc | null
   const [modal,     setModal]     = useState(null)
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
@@ -311,6 +342,11 @@ export default function DeliveriesPage({ closed = false }) {
   const [toggling,  setToggling]  = useState(null)
   const [customers,          setCustomers]          = useState([])
   const [products,           setProducts]           = useState([])
+  const [providers,          setProviders]          = useState([])   // "Online" contacts → package providers
+  const [orderTypes,         setOrderTypes]         = useState([])   // custom order types (DB)
+  const [addingType,         setAddingType]         = useState(false)
+  const [newTypeName,        setNewTypeName]        = useState('')
+  const [typeBusy,           setTypeBusy]           = useState(false)
   const [customerPickerOpen, setCustomerPickerOpen] = useState(false)
   const [customerSearch,     setCustomerSearch]     = useState('')
   const [customerInput,        setCustomerInput]        = useState('')
@@ -330,6 +366,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [dateTo,               setDateTo]               = useState('')
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status', order, x, y }
+  const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
+  const hoverPanelRef = useRef(null)
   const [driverQuickSearch,    setDriverQuickSearch]    = useState('')
   const [quickBusy,            setQuickBusy]            = useState(false)
   const [sectionsOpen,         setSectionsOpen]         = useState(allSectionsClosed)
@@ -351,17 +389,60 @@ export default function DeliveriesPage({ closed = false }) {
   const fetchLookups = useCallback(async () => {
     // A delivery can be for any contact, so the picker includes customers,
     // partners and suppliers.
-    const [{ data: custs }, { data: prods }] = await Promise.all([
+    let typesQ = supabase.from('order_types').select('id, name').eq('is_active', true).order('name')
+    if (COMPANY_ID) typesQ = typesQ.eq('company_id', COMPANY_ID)
+    const [{ data: custs }, { data: prods }, { data: types }, { data: provs }] = await Promise.all([
       supabase.from('contacts')
         .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
         .in('contact_type', ['customer', 'partner', 'supplier']),
       supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
+      typesQ,
+      // Package providers — contacts categorised as "Online".
+      supabase.from('contacts')
+        .select('id,first_name,last_name,company_name,contact_type,account_number,code')
+        .eq('contact_category', 'Online'),
     ])
     setCustomers(custs ?? [])
     setProducts(prods  ?? [])
-  }, [])
+    setOrderTypes(types ?? [])
+    setProviders(provs ?? [])
+  }, [COMPANY_ID])
 
   useEffect(() => { fetchLookups() }, [fetchLookups])
+
+  // Deep link: /deliveries?edit=<orderId> opens that order and jumps to Items.
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || loading.orders || handledEditRef.current === editId) return
+    const o = orders.find(x => x.id === editId)
+    if (!o) return   // wait until the orders list includes it
+    handledEditRef.current = editId
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('edit'); return p }, { replace: true })
+    ;(async () => {
+      await openEdit(o)
+      setSectionsOpen(s => ({ ...s, items: true }))
+      setTimeout(() => {
+        document.getElementById('order-section-items')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 350)
+    })()
+  }, [searchParams, orders, loading.orders])
+
+  /* Create a custom order type inline and select it for this order. */
+  async function createOrderType() {
+    const name = newTypeName.trim()
+    if (!name) return
+    setTypeBusy(true)
+    const { data, error: e } = await supabase
+      .from('order_types')
+      .insert([{ name, is_active: true, ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}) }])
+      .select('id, name')
+      .single()
+    setTypeBusy(false)
+    if (e) { setError(e.message); return }
+    setOrderTypes(ts => [...ts, data].sort((a, b) => a.name.localeCompare(b.name)))
+    fld('order_type', data.name)
+    setAddingType(false); setNewTypeName('')
+  }
 
   /* ── filter ──────────────────────────────────────────────── */
 
@@ -417,14 +498,49 @@ export default function DeliveriesPage({ closed = false }) {
     setDriverFilter(''); setCustomerFilter(''); setCategoryFilter(''); setSourceFilter(''); setDateFrom(''); setDateTo('')
   }
 
+  // Sortable column header → value extractor. Headers not listed here aren't sortable.
+  const SORT_GETTERS = {
+    'Order #':   o => o.order_number ?? '',
+    'Recipient': o => o.recipient_name ?? '',
+    'Customer':  o => o.customer ? customerListName(o.customer) : '',
+    'Driver':    o => o.driver ? `${o.driver.first_name ?? ''} ${o.driver.last_name ?? ''}`.trim() : '',
+    'Address':   o => o.delivery_address ?? '',
+    'Amount(s)': o => Number(o.total_amount) || 0,
+    'Status':    o => normalizeStatus(o.status) ?? '',
+    'Payment':   o => o.payment_status ?? '',
+  }
+  // Click a header: none → A→Z → Z→A → none.
+  function toggleSort(col) {
+    if (!SORT_GETTERS[col]) return
+    setSort(s => s.col !== col ? { col, dir: 'asc' }
+              : s.dir === 'asc' ? { col, dir: 'desc' }
+              : { col: null, dir: null })
+  }
+
+  // Apply the active column sort to the filtered rows.
+  const sorted = (() => {
+    const get = sort.col && SORT_GETTERS[sort.col]
+    if (!get || !sort.dir) return filtered
+    const arr = [...filtered].sort((a, b) => {
+      const va = get(a), vb = get(b)
+      const cmp = (typeof va === 'number' && typeof vb === 'number')
+        ? va - vb
+        : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
+      return sort.dir === 'asc' ? cmp : -cmp
+    })
+    return arr
+  })()
+
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
   const pendingsSummary = (() => {
     const cur = { USD: { order: 0, paid: 0 }, LBP: { order: 0, paid: 0 }, EUR: { order: 0, paid: 0 } }
     for (const o of filtered) {
       const tt = orderTotalsByCurrency(o)
-      for (const c of CURRENCIES) cur[c].order += (tt[c] || 0)
-      cur.USD.paid += Number(o.collected_usd) || 0
-      cur.LBP.paid += Number(o.collected_lbp) || 0
+      const cc = orderCollectedByCurrency(o)
+      for (const c of CURRENCIES) {
+        cur[c].order += (tt[c] || 0)
+        cur[c].paid  += (cc[c] || 0)
+      }
     }
     const rows = CURRENCIES
       .map(c => ({ cur: c, order: round2(cur[c].order), paid: round2(cur[c].paid) }))
@@ -621,17 +737,15 @@ export default function DeliveriesPage({ closed = false }) {
     })))
     const { data: payData } = await supabase
       .from('payment_collections')
-      .select('id,collection_type,amount_usd,amount_lbp,collected_at,notes')
+      .select('id,collection_type,amount,currency,collected_at,notes')
       .eq('order_id', o.id)
       .order('collected_at')
     const mappedPayments = (payData ?? []).map(pc => {
-      const lbp = Number(pc.amount_lbp) || 0
-      const usd = Number(pc.amount_usd) || 0
       return {
         _id:      pc.id,
         method:   pc.collection_type || 'cash',
-        currency: lbp > 0 ? 'LBP' : 'USD',
-        amount:   round2(lbp > 0 ? lbp : usd) || '',
+        currency: pc.currency || 'USD',
+        amount:   round2(pc.amount) || '',
         paid_at:  pc.collected_at ? pc.collected_at.slice(0, 10) : '',
         notes:    pc.notes ?? '',
       }
@@ -647,6 +761,7 @@ export default function DeliveriesPage({ closed = false }) {
     const mappedPackages = (pkgData ?? []).map(pk => ({
       _id:             pk.id,
       tracking_number: pk.tracking_number ?? '',
+      provider_id:     pk.provider_id ?? '',
       category:        pk.category ?? '',
       type:            pk.type ?? '',
       package_size:    pk.package_size ?? '',
@@ -657,6 +772,7 @@ export default function DeliveriesPage({ closed = false }) {
       description:     pk.description ?? '',
       base_price:      pk.base_price ?? '',
       package_price:   pk.package_price ?? '',
+      currency:        pk.currency ?? 'USD',
       paid:            !!pk.paid,
       payment_type:    pk.payment_type ?? '',
     }))
@@ -671,6 +787,7 @@ export default function DeliveriesPage({ closed = false }) {
     const mappedServices = (svcData ?? []).map(sv => ({
       _id:                     sv.id,
       service_date:            sv.service_date ?? '',
+      provider_id:             sv.provider_id ?? '',
       service_description:     sv.service_description ?? '',
       service_reference:       sv.service_reference ?? '',
       quantity:                sv.quantity ?? 1,
@@ -697,7 +814,7 @@ export default function DeliveriesPage({ closed = false }) {
       order_type:      true,
       customer:        true,
       route:           true,
-      assignment:      !!o.driver_id,
+      assignment:      true,
       packages:        mappedPackages.length > 0,
       services:        mappedServices.length > 0,
       items:           (data ?? []).length > 0,
@@ -732,16 +849,13 @@ export default function DeliveriesPage({ closed = false }) {
      Records one payment_collections row on an order and recomputes the order's
      payment_status / collected totals — same effect as the form's Payments section. */
   async function openPay(o) {
+    if (isRowLocked(o)) return   // closed or deactivated orders are locked
     setPayModal(o)
     setPayForm({ ...EMPTY_PAYMENT, paid_at: new Date().toISOString().slice(0, 10) })
-    setPayPaid({ USD: 0, LBP: 0 })
+    setPayPaid({})
     setPayError(''); setPaySaving(false)
-    const { data } = await supabase.from('payment_collections').select('amount_usd,amount_lbp').eq('order_id', o.id)
-    const paid = (data ?? []).reduce(
-      (a, p) => ({ USD: a.USD + (Number(p.amount_usd) || 0), LBP: a.LBP + (Number(p.amount_lbp) || 0) }),
-      { USD: 0, LBP: 0 },
-    )
-    setPayPaid(paid)
+    const { data } = await supabase.from('payment_collections').select('amount,currency').eq('order_id', o.id)
+    setPayPaid(paidByCurrency(data ?? []))
   }
   function closePay() { setPayModal(null); setPayForm(EMPTY_PAYMENT); setPayError(''); setPaySaving(false) }
   function setPayFld(k, v) { setPayForm(f => ({ ...f, [k]: v })); setPayError('') }
@@ -753,27 +867,48 @@ export default function DeliveriesPage({ closed = false }) {
     if (!(amt > 0)) { setPayError('Enter an amount greater than 0.'); return }
     setPaySaving(true); setPayError('')
 
-    // 1. Insert the payment (same shape as the form's Payments section).
-    const cols = payForm.currency === 'LBP' ? { amount_lbp: amt, amount_usd: 0 } : { amount_usd: amt, amount_lbp: 0 }
+    const cur = payForm.currency
+    const dp  = cur === 'LBP' ? 0 : 2
+
+    // 1. Read current payments and check the new amount won't exceed the order's
+    //    balance in this currency. Hint the actual amount that can still be paid.
+    const { data: prevPays, error: fe } = await supabase
+      .from('payment_collections').select('amount,currency').eq('order_id', o.id)
+    if (fe) { setPayError(fe.message); setPaySaving(false); return }
+    const paidPrev    = paidByCurrency(prevPays ?? [])   // { USD, LBP, EUR }
+    const totals      = orderTotalsByCurrency(o)
+    const orderCur    = round2(totals[cur] || 0)
+    const paidCurPrev = round2(paidPrev[cur] || 0)
+    const remaining   = round2(orderCur - paidCurPrev)
+    if (amt > remaining) {
+      setPayPaid(paidPrev)   // refresh the modal summary
+      setPayError(
+        remaining > 0
+          ? `Amount exceeds the order balance. The most you can pay in ${cur} is ${remaining.toFixed(dp)}.`
+          : `This order's ${cur} balance is already fully paid (nothing left to pay).`,
+      )
+      setPaySaving(false)
+      return
+    }
+
+    // 2. Insert the payment (single amount + currency).
     const { error: pe } = await supabase.from('payment_collections').insert([{
       order_id:        o.id,
       collection_type: payForm.method || 'cash',
-      ...cols,
+      amount:          amt,
+      currency:        cur,
       collected_at:    payForm.paid_at || new Date().toISOString(),
       notes:           payForm.notes?.trim() || null,
     }])
     if (pe) { setPayError(pe.message); setPaySaving(false); return }
 
-    // 2. Recompute the order's payment status / collected totals from all payments.
-    const { data: allPays } = await supabase.from('payment_collections').select('amount_usd,amount_lbp').eq('order_id', o.id)
-    const paidUSD = round2((allPays ?? []).reduce((s, p) => s + (Number(p.amount_usd) || 0), 0))
-    const paidLBP = round2((allPays ?? []).reduce((s, p) => s + (Number(p.amount_lbp) || 0), 0))
-    const status  = derivePaymentStatus({ USD: paidUSD, LBP: paidLBP, EUR: 0 }, orderTotalsByCurrency(o))
+    // 3. Recompute the order's payment status (collected totals are derived from
+    //    payment_collections, no longer stored on the order).
+    const paidCur = { ...paidPrev, [cur]: round2(paidCurPrev + amt) }
+    const status  = derivePaymentStatus(paidCur, totals)
     const { error: ue } = await supabase.from('delivery_orders').update({
       payment_status:           status,
       collection_from_customer: collectionFromPayStatus(status),
-      collected_usd:            paidUSD,
-      collected_lbp:            paidLBP,
     }).eq('id', o.id)
     if (ue) { setPayError(ue.message); setPaySaving(false); return }
 
@@ -814,6 +949,21 @@ export default function DeliveriesPage({ closed = false }) {
     if (!form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
     if (!form.delivery_address.trim()) return setError('Delivery address is required.')
     if (!form.customer_id)             return setError('Please select a customer.')
+    // Package provider and reference are mandatory on every package row.
+    for (const p of packages) {
+      if (!p.provider_id)             return setError('Each package needs a Package provider.')
+      if (!p.tracking_number?.trim()) return setError('Each package needs a Package reference.')
+    }
+
+    // Backstop for "Mark Closed": besides the disabled button, re-verify the close
+    // requirements at save-time so an order can never be locked while ineligible
+    // (status Completed, delivery Delivered, and fully collected / zero pending —
+    // payment waived only for credit orders / credit-allowed customers).
+    if (close && (alreadyClosed || !canClose)) {
+      return setError(alreadyClosed
+        ? 'This order is already closed.'
+        : 'Cannot close — order must be: ' + closeRequirements.join(', ') + '.')
+    }
 
     setSaving(true); setError('')
 
@@ -825,7 +975,6 @@ export default function DeliveriesPage({ closed = false }) {
     const derivedPaymentStatus = ['closed', 'refunded'].includes(form.payment_status)
       ? form.payment_status                         // preserve terminal states on edit
       : derivePaymentStatus(paidCur, totals)
-    const collectedCols = { collected_usd: round2(paidCur.USD), collected_lbp: round2(paidCur.LBP) }
     // Money collection state, derived from payments (driver-collected cash recorded as payments).
     const collectionStatus = collectionFromPayStatus(derivePaymentStatus(paidCur, totals))
     // "Mark Closed" locks the order via the isclosed flag.
@@ -848,7 +997,6 @@ export default function DeliveriesPage({ closed = false }) {
       delivery_status:          form.delivery_status || null,
       collection_from_customer: collectionStatus,
       payment_status:       derivedPaymentStatus,
-      ...collectedCols,
       ...closeCols,
       delivery_fee:         Number(form.delivery_fee)    || 0,
       currency:             form.currency,
@@ -863,6 +1011,10 @@ export default function DeliveriesPage({ closed = false }) {
       scheduled_date:        form.scheduled_date               || null,
       scheduled_time_from:   form.scheduled_time_from          || null,
       scheduled_time_to:     form.scheduled_time_to            || null,
+      // Staff-created orders are confirmed on creation (online orders arrive
+      // unconfirmed and are confirmed via the globe popup) and are tagged as
+      // entered by the call center.
+      ...(modal === 'add' ? { order_confirmed: true, order_source: 'Call center' } : {}),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
 
@@ -945,12 +1097,10 @@ export default function DeliveriesPage({ closed = false }) {
 
     for (const p of persistable) {
       const amt  = round2(p.amount)
-      const cols = p.currency === 'LBP'
-        ? { amount_lbp: amt, amount_usd: 0 }
-        : { amount_usd: amt, amount_lbp: 0 }
       const row = {
         collection_type: p.method || 'cash',
-        ...cols,
+        amount:          amt,
+        currency:        p.currency || 'USD',
         collected_at:    p.paid_at || new Date().toISOString(),
         notes:           p.notes?.trim() || null,
       }
@@ -1001,14 +1151,16 @@ export default function DeliveriesPage({ closed = false }) {
       const txns = []
 
       // Delivery packages → PACKAGE (no own currency → order currency)
+      // Packages paid directly to the provider are not posted to the ledger.
       for (const p of packages) {
+        if (p.paid) continue
         txns.push({
           ...base,
           transaction_date:        txnDate,
           transaction_reference:   p.tracking_number || null,
           quantity:                Number(p.quantity) || 1,
           credit_amount:           Number(p.package_price) || 0,
-          currency_code:           form.currency,
+          currency_code:           p.currency || form.currency,
           transaction_type:        'PACKAGE',
         })
       }
@@ -1108,7 +1260,7 @@ export default function DeliveriesPage({ closed = false }) {
   /* ── quick actions (driver / status popovers) ────────────── */
 
   function openPopover(type, order, e) {
-    if (order.isclosed) return                        // closed orders are locked
+    if (isRowLocked(order)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const width = type === 'driver' ? 240 : 176
     setDriverQuickSearch('')
@@ -1130,6 +1282,20 @@ export default function DeliveriesPage({ closed = false }) {
   async function quickSetStatus(order, uiStatus) {
     setQuickBusy(true)
     await supabase.from('delivery_orders').update({ status: toDbStatus(uiStatus) }).eq('id', order.id)
+    await fetchOrders()
+    setQuickBusy(false); setPopover(null)
+  }
+
+  // Online order confirmation — sets the order_confirmed flag (not the status).
+  async function quickConfirmOrder(order, confirmed = true) {
+    setQuickBusy(true)
+    await supabase.from('delivery_orders')
+      .update({
+        order_confirmed: confirmed,
+        confirmed_at:    confirmed ? new Date().toISOString() : null,
+        confirmed_by:    confirmed ? (currentUser?.user_id || null) : null,
+      })
+      .eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
   }
@@ -1182,9 +1348,9 @@ export default function DeliveriesPage({ closed = false }) {
   const paymentStatus = derivePaymentStatus(paidByCur, totals)
   const collectionFromCustomer = collectionFromPayStatus(paymentStatus)
 
-  // A closed order is locked: no edits, cannot be cancelled or deleted.
-  const orderLocked   = modal && modal !== 'add' && modal.isclosed === true
-  const alreadyClosed = orderLocked
+  // A closed OR deactivated (cancelled/failed) order is locked: view-only, no edits.
+  const orderLocked   = modal && modal !== 'add' && (modal.isclosed === true || isDeactivated(modal))
+  const alreadyClosed = modal && modal !== 'add' && modal.isclosed === true
   // Credit customers may close an order with an unpaid balance (it becomes a receivable).
   const customerAllowsCredit = customers.find(c => c.id === form.customer_id)?.credit_debit_allowed === true
   // "Mark Closed" eligibility. Credit orders: driver assigned + Completed +
@@ -1214,8 +1380,14 @@ export default function DeliveriesPage({ closed = false }) {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input className="input pl-9" placeholder={closed ? 'Search closed orders…' : 'Search orders…'}
+            <input className={`input pl-9 ${search ? 'pr-9' : ''}`} placeholder={closed ? 'Search closed orders…' : 'Search orders…'}
               value={search} onChange={e => setSearch(e.target.value)} />
+            {search && (
+              <button type="button" onClick={() => setSearch('')} title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
           {!closed && (
             <div className="flex items-center gap-1 flex-wrap">
@@ -1302,18 +1474,40 @@ export default function DeliveriesPage({ closed = false }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #','Recipient','Customer','Driver','Address','Amount(s)','Status','Payment',''].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
-              ))}
+              {['Order #','Recipient','Customer','Driver','Address','Status','Payment',''].map(h => {
+                const sortable = !!SORT_GETTERS[h]
+                const active   = sort.col === h
+                return (
+                  <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">
+                    {sortable ? (
+                      <button type="button" onClick={() => toggleSort(h)}
+                        className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-slate-200 transition-colors ${active ? 'text-brand-300' : ''}`}
+                        title="Click to sort">
+                        {h}
+                        {active
+                          ? (sort.dir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)
+                          : <ChevronsUpDown className="w-3 h-3 opacity-40" />}
+                      </button>
+                    ) : h}
+                  </th>
+                )
+              })}
             </tr>
           </thead>
-          <tbody>
+          <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
-            ) : filtered.map(o => (
-              <tr key={o.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${['cancelled','failed'].includes(o.status) ? 'opacity-50' : ''}`}>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+            ) : sorted.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
+            ) : sorted.map(o => (
+              <tr key={o.id}
+                onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
+                onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
+                className={`border-b border-surface-border/50 transition-colors ${
+                isDeactivated(o) ? 'opacity-50 hover:bg-surface-hover/40'
+                : isOverdue(o)   ? 'bg-red-500/10 hover:bg-red-500/20'
+                :                  'hover:bg-surface-hover/40'} ${
+                isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => copyNum(o.order_number)}
@@ -1322,7 +1516,7 @@ export default function DeliveriesPage({ closed = false }) {
                       {copied === o.order_number && <Check className="w-3 h-3 text-green-400" />}
                     </button>
                     {isOnlineOrder(o) && (
-                      <button type="button" disabled={o.isclosed}
+                      <button type="button" disabled={isRowLocked(o)}
                         onClick={(e) => openPopover('online', o, e)}
                         title="Online order — confirm"
                         className="inline-flex text-cyan-400 hover:text-cyan-300 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1330,8 +1524,17 @@ export default function DeliveriesPage({ closed = false }) {
                       </button>
                     )}
                   </div>
+                  <button type="button" onClick={(e) => openPopover('online', o, e)} disabled={isRowLocked(o)}
+                    title="Click to change confirmation"
+                    className={`inline-flex items-center gap-1 text-[10px] mt-1 px-1.5 py-0.5 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
+                    isConfirmed(o)
+                      ? 'text-green-400 bg-green-500/10 border-green-500/20'
+                      : 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/30'}`}>
+                    {isConfirmed(o) ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                    {isConfirmed(o) ? 'Confirmed' : 'Not confirmed'}
+                  </button>
                   {o.isclosed && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1 ml-1">
                       <Lock className="w-3 h-3" /> Closed
                     </span>
                   )}
@@ -1343,7 +1546,14 @@ export default function DeliveriesPage({ closed = false }) {
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   {o.customer ? (
                     <div>
-                      <p className="text-slate-300">{customerListName(o.customer)}</p>
+                      <p className="text-slate-300 flex items-center gap-1.5">
+                        {customerListName(o.customer)}
+                        {o.customer.credit_debit_allowed && (
+                          <span title="Credit customer — credit order" className="inline-flex text-amber-400">
+                            <CreditCard className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </p>
                       {o.customer.account_number && (
                         <p className="text-slate-500 text-[11px] font-mono tracking-wider">{formatAccountNumber(o.customer.account_number)}</p>
                       )}
@@ -1352,9 +1562,9 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   <div className="flex items-center gap-1.5">
-                    <button type="button" disabled={o.isclosed}
+                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o)}
                       onClick={(e) => openPopover('driver', o, e)}
-                      title={o.isclosed ? 'Closed — locked' : 'Assign driver'}
+                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : 'Assign driver'}
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Truck className="w-3.5 h-3.5" />
                     </button>
@@ -1363,26 +1573,9 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs max-w-[130px] truncate">{o.delivery_address}</td>
                 <td className="px-4 py-3">
-                  {(() => {
-                    const t = orderTotalsByCurrency(o)
-                    const entries = Object.entries(t).filter(([, v]) => v > 0)
-                    if (entries.length === 0) return <span className="text-slate-600 text-xs">—</span>
-                    return (
-                      <div className="space-y-0.5">
-                        {entries.map(([curr, amt]) => (
-                          <div key={curr} className="text-xs font-medium text-slate-100">
-                            <span className="text-slate-500 text-[10px] mr-1">{curr}</span>
-                            {Number(amt).toFixed(curr === 'LBP' ? 0 : 2)}
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })()}
-                </td>
-                <td className="px-4 py-3">
-                  <button type="button" disabled={o.isclosed}
+                  <button type="button" disabled={isRowLocked(o)}
                     onClick={(e) => openPopover('status', o, e)}
-                    title={o.isclosed ? 'Closed — locked' : 'Change status'}
+                    title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Change status'}
                     className="disabled:cursor-not-allowed hover:opacity-80 transition-opacity">
                     <Badge status={normalizeStatus(o.status)} />
                   </button>
@@ -1394,13 +1587,20 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openPay(o)} disabled={o.isclosed}
-                      title={o.isclosed ? 'Closed — locked' : 'Record payment'}
-                      className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Banknote className="w-4 h-4" />
-                    </button>
+                    {isFullyPaid(o) ? (
+                      <span title="Fully paid — nothing to collect"
+                        className="p-1.5 inline-flex items-center text-green-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </span>
+                    ) : (
+                      <button onClick={() => openPay(o)} disabled={isRowLocked(o)}
+                        title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Record payment'}
+                        className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Banknote className="w-4 h-4" />
+                      </button>
+                    )}
                     <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
-                      title={o.isclosed ? 'View (closed)' : 'Edit'}>
+                      title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button onClick={() => toggleCancel(o)} disabled={toggling === o.id || o.isclosed}
@@ -1477,12 +1677,42 @@ export default function DeliveriesPage({ closed = false }) {
               {/* ── Order Type (top, above Customer) ───────────── */}
               <CollapsibleSection title="Order Type" open={sectionsOpen.order_type} onToggle={v => toggleSection('order_type', v)}>
                 <div>
-                  <label className="label">Order Type</label>
-                  <select className="input" value={form.order_type || ''}
-                    onChange={e => fld('order_type', e.target.value)}>
-                    <option value="">—</option>
-                    {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <div className="flex items-center justify-between">
+                    <label className="label">Order Type</label>
+                    {!addingType && (
+                      <button type="button" onClick={() => { setAddingType(true); setNewTypeName('') }}
+                        className="text-[11px] text-brand-400 hover:text-brand-300 mb-1">
+                        <Plus className="w-3 h-3 inline -mt-0.5" /> New type
+                      </button>
+                    )}
+                  </div>
+                  {addingType ? (
+                    <div className="flex items-center gap-1.5">
+                      <input autoFocus className="input" value={newTypeName}
+                        onChange={e => setNewTypeName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createOrderType() } }}
+                        placeholder="New order type" />
+                      <button type="button" onClick={createOrderType} disabled={typeBusy || !newTypeName.trim()}
+                        className="btn-primary px-2 py-2 disabled:opacity-50" title="Create order type">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button type="button" onClick={() => { setAddingType(false); setNewTypeName('') }}
+                        className="btn-ghost p-2 text-slate-500" title="Cancel">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <select className="input" value={form.order_type || ''}
+                      onChange={e => fld('order_type', e.target.value)}>
+                      <option value="">—</option>
+                      {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                      {orderTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                      {form.order_type
+                        && !ORDER_TYPES.some(t => t.value === form.order_type)
+                        && !orderTypes.some(t => t.name === form.order_type)
+                        && <option value={form.order_type}>{form.order_type}</option>}
+                    </select>
+                  )}
                 </div>
               </CollapsibleSection>
 
@@ -1491,7 +1721,7 @@ export default function DeliveriesPage({ closed = false }) {
 
                 {/* Customer first — drives auto-fill. Type to search/add, or use the picker button. */}
                 <div>
-                  <label className="label">Customer *</label>
+                  <label className="label text-fuchsia-300">Customer *</label>
                   <div className="relative">
                     <div className="flex items-center gap-2">
                       <div className="relative flex-1 min-w-0">
@@ -1570,12 +1800,12 @@ export default function DeliveriesPage({ closed = false }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label">Recipient Name *</label>
+                    <label className="label text-fuchsia-300">Recipient Name *</label>
                     <input className="input" value={form.recipient_name}
                       onChange={e => fld('recipient_name', e.target.value)} placeholder="Jane Smith" />
                   </div>
                   <div>
-                    <label className="label">Mobile *</label>
+                    <label className="label text-fuchsia-300">Mobile *</label>
                     <MobileInput value={form.recipient_mobile} onChange={v => fld('recipient_mobile', v)} />
                   </div>
                 </div>
@@ -1595,7 +1825,7 @@ export default function DeliveriesPage({ closed = false }) {
                       onChange={e => fld('pickup_address', e.target.value)} placeholder="Warehouse address" />
                   </div>
                   <div>
-                    <label className="label">Delivery Address *</label>
+                    <label className="label text-fuchsia-300">Delivery Address *</label>
                     <input className="input" value={form.delivery_address}
                       onChange={e => fld('delivery_address', e.target.value)} placeholder="Auto-filled from customer or enter manually" />
                   </div>
@@ -1628,16 +1858,22 @@ export default function DeliveriesPage({ closed = false }) {
               </CollapsibleSection>
 
               {/* ── Assignment & Status ────────────────────────── */}
-              <CollapsibleSection title="Assignment & Status" open={sectionsOpen.assignment} onToggle={v => toggleSection('assignment', v)}>
+              <CollapsibleSection title="Assignment & Status" accent="fuchsia" open={sectionsOpen.assignment} onToggle={v => toggleSection('assignment', v)}>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Driver</label>
-                    <select className="input" value={form.driver_id} onChange={e => fld('driver_id', e.target.value)}>
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed"
+                      value={form.driver_id} onChange={e => fld('driver_id', e.target.value)}
+                      disabled={isPickedUp(form)}
+                      title={isPickedUp(form) ? 'Picked up — driver can no longer be changed' : undefined}>
                       <option value="">— Unassigned —</option>
                       {drivers.filter(d => ['available','on_duty'].includes(d.driver_status)).map(d => (
                         <option key={d.id} value={d.id}>{d.first_name} {d.last_name}</option>
                       ))}
                     </select>
+                    {isPickedUp(form) && (
+                      <p className="text-[11px] text-slate-500 mt-1">Locked — driver already picked up the order.</p>
+                    )}
                   </div>
                   <div>
                     <label className="label">Order Status</label>
@@ -1674,7 +1910,7 @@ export default function DeliveriesPage({ closed = false }) {
                     <Plus className="w-3 h-3" /> Add Package
                   </button>
                 }>
-                <OrderPackages packages={packages} setPackages={setPackages} customerName={customerInput.trim()} embedded onAdd={addPackage} />
+                <OrderPackages packages={packages} setPackages={setPackages} providers={providers} customerName={customerInput.trim()} embedded onAdd={addPackage} />
               </CollapsibleSection>
 
               {/* ── Order Services ────────────────────────────── */}
@@ -1685,12 +1921,15 @@ export default function DeliveriesPage({ closed = false }) {
                     <Plus className="w-3 h-3" /> Add Service
                   </button>
                 }>
-                <OrderServices services={services} setServices={setServices} embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
+                <OrderServices services={services} setServices={setServices}
+                  suppliers={customers.filter(c => c.contact_type === 'supplier')}
+                  embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
               </CollapsibleSection>
 
               {/* Pricing sections (hidden for Credit Orders) */}
               {!isCreditOrder && (<>
               {/* ── Items ─────────────────────────────────────── */}
+              <div id="order-section-items" className="scroll-mt-4" />
               <CollapsibleSection title={`Local retail items (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
                 right={
                   <button type="button" onClick={() => { openSection('items'); addItem() }}
@@ -1845,7 +2084,7 @@ export default function DeliveriesPage({ closed = false }) {
               </CollapsibleSection>
 
               {/* ── Delivery Fees & Totals ─────────────────────── */}
-              <CollapsibleSection title="Delivery & Totals" open={sectionsOpen.totals} onToggle={v => toggleSection('totals', v)}>
+              <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={sectionsOpen.totals} onToggle={v => toggleSection('totals', v)}>
 
                 <div className="grid grid-cols-4 gap-3">
                   <div>
@@ -1892,9 +2131,12 @@ export default function DeliveriesPage({ closed = false }) {
                   </div>
                 )}
               </CollapsibleSection>
+              </>)}
 
               {/* ── Payments ──────────────────────────────────── */}
-              <CollapsibleSection title="Payments" open={sectionsOpen.payments} onToggle={v => toggleSection('payments', v)}
+              {/* Outside the credit-order block: payments (incl. quick-Pay from
+                  the list) must be visible/editable on every order. */}
+              <CollapsibleSection title="Payments" accent="blue" open={sectionsOpen.payments} onToggle={v => toggleSection('payments', v)}
                 right={
                   <button type="button" onClick={() => { openSection('payments'); addPayment() }}
                     className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
@@ -1997,7 +2239,6 @@ export default function DeliveriesPage({ closed = false }) {
                   )}
                 </div>
               </CollapsibleSection>
-              </>)}
 
               {/* ── Notes ─────────────────────────────────────── */}
               <CollapsibleSection title="Notes" open={sectionsOpen.notes} onToggle={v => toggleSection('notes', v)}>
@@ -2360,6 +2601,15 @@ export default function DeliveriesPage({ closed = false }) {
         </div>
       )}
 
+      {/* ── Amounts hover preview (follows the cursor; read-only) ── */}
+      {hoverSummary && !popover && (
+        <div ref={hoverPanelRef}
+          className="fixed z-[55] pointer-events-none card border border-surface-border rounded-lg shadow-xl overflow-hidden"
+          style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 300 }}>
+          <AmountSummaryContent order={hoverSummary.order} />
+        </div>
+      )}
+
       {/* ── Quick action popover (driver / status) ─────────────── */}
       {popover && (
         <div className="fixed inset-0 z-[60]" onClick={() => !quickBusy && setPopover(null)}>
@@ -2373,8 +2623,14 @@ export default function DeliveriesPage({ closed = false }) {
                 <div className="p-2 border-b border-surface-border">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                    <input autoFocus className="input pl-8 py-1.5 text-xs" placeholder="Search driver…"
+                    <input ref={driverSearchRef} autoFocus className={`input pl-8 py-1.5 text-xs ${driverQuickSearch ? 'pr-8' : ''}`} placeholder="Search driver…"
                       value={driverQuickSearch} onChange={e => setDriverQuickSearch(e.target.value)} />
+                    {driverQuickSearch && (
+                      <button type="button" onClick={() => { setDriverQuickSearch(''); driverSearchRef.current?.focus() }} title="Clear search"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="max-h-60 overflow-y-auto">
@@ -2406,11 +2662,19 @@ export default function DeliveriesPage({ closed = false }) {
               </>
             ) : popover.type === 'online' ? (
               <div className="p-1">
-                <button onClick={() => quickSetStatus(popover.order, 'confirmed')} disabled={quickBusy}
-                  className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-surface-hover">
-                  <Badge status="confirmed" />
-                  <span className="text-xs text-slate-300">Confirm order</span>
-                </button>
+                {[{ val: true, label: 'Confirmed' }, { val: false, label: 'Not confirmed' }].map(opt => {
+                  const active = isConfirmed(popover.order) === opt.val
+                  return (
+                    <button key={String(opt.val)} onClick={() => quickConfirmOrder(popover.order, opt.val)} disabled={quickBusy}
+                      className={`w-full flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-surface-hover ${active ? 'bg-surface-hover' : ''}`}>
+                      {opt.val
+                        ? <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                        : <AlertCircle className="w-4 h-4 text-fuchsia-300 flex-shrink-0" />}
+                      <span className={`text-xs ${opt.val ? 'text-green-300' : 'text-fuchsia-300'}`}>{opt.label}</span>
+                      {active && <Check className="w-3.5 h-3.5 text-green-400 ml-auto" />}
+                    </button>
+                  )
+                })}
               </div>
             ) : (
               <div className="p-1">

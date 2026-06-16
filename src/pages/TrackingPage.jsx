@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { MapPin, Circle } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { formatMobile } from '../lib/phone'
 import Badge from '../components/ui/Badge'
@@ -69,10 +70,30 @@ export default function TrackingPage() {
   const [mapReady,  setMapReady]  = useState(false)
   const [MapCmp,    setMapCmp]    = useState(null)
   const [selected,  setSelected]  = useState(null)
+  const [latestVehicle, setLatestVehicle] = useState({})  // driver_id -> "code | make | model | color"
 
   useEffect(() => {
     loadLeaflet().then(() => { setMapCmp(() => MapContainer); setMapReady(true) })
   }, [])
+
+  // Latest assigned vehicle per driver (most recent assignment).
+  useEffect(() => {
+    supabase
+      .from('driver_vehicle_assignments')
+      .select('driver_id, start_date, created_at, vehicle:vehicles(asset_code, make, model, color)')
+      .order('start_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const map = {}
+        for (const a of (data ?? [])) {
+          if (!map[a.driver_id] && a.vehicle) {
+            map[a.driver_id] = [a.vehicle.asset_code, a.vehicle.make, a.vehicle.model, a.vehicle.color]
+              .filter(Boolean).join(' | ')
+          }
+        }
+        setLatestVehicle(map)
+      })
+  }, [drivers])
 
   const activeDrivers    = drivers.filter(d => d.driver_status === 'available' || d.driver_status === 'on_duty')
   const inTransitOrders  = orders.filter(o => o.status === 'in_transit')
@@ -121,6 +142,13 @@ export default function TrackingPage() {
                   <div className="mt-2 pl-12">
                     <p className="text-xs text-slate-500">→ <span className="text-slate-300 truncate">{currentOrder.delivery_address}</span></p>
                     <p className="text-xs font-mono text-brand-500">{currentOrder.order_number}</p>
+                  </div>
+                )}
+                {latestVehicle[driver.id] && (
+                  <div className="mt-2 pl-12">
+                    <p className="text-[11px] text-fuchsia-300 font-mono">
+                      {latestVehicle[driver.id]}
+                    </p>
                   </div>
                 )}
               </button>

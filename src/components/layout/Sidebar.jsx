@@ -1,30 +1,35 @@
 import React, { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import logo from '../../assets/Logo.png'
 
+// Main sidebar: the everyday driver-dispatch screens only.
 const mainNav = [
   { to: '/',                   icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/deliveries',         icon: Package,         label: 'Orders'        },
   { to: '/closed-orders',      icon: PackageCheck,    label: 'Closed Orders' },
-  { to: '/drivers',            icon: Users,           label: 'Drivers'   },
+  { to: '/driver-dues',        icon: HandCoins,       label: 'Driver Settlements' },
   { to: '/tracking',           icon: MapPin,          label: 'Tracking'  },
-  { to: '/reports',            icon: BarChart3,       label: 'Reports'   },
 ]
 
-const bottomNav = [
-  { to: '/products',           icon: Tag,             label: 'Products'  },
-  { to: '/purchase-invoices',  icon: FileText,        label: 'Purchases' },
-  { to: '/retail-invoices',    icon: Receipt,         label: 'Retail Invoices' },
-  { to: '/account-transactions', icon: BookText,      label: 'Account Transactions' },
-  { to: '/vehicles',           icon: Car,             label: 'Vehicles'  },
-  { to: '/company',            icon: Building2,       label: 'Company'   },
+// Everything else lives in the hamburger fly-out menu.
+const secondaryNav = [
+  { to: '/drivers',              icon: Users,           label: 'Drivers' },
+  { to: '/reports',              icon: BarChart3,       label: 'Reports' },
+  { to: '/products',             icon: Tag,             label: 'Products'  },
+  { to: '/price-list',           icon: ClipboardList,   label: 'Price List' },
+  { to: '/returnable-items',     icon: RotateCcw,       label: 'Returnable Items' },
+  { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
+  { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
+  { to: '/account-transactions', icon: BookText,        label: 'Account Transactions' },
+  { to: '/vehicles',             icon: Car,             label: 'Vehicles'  },
+  { to: '/company',              icon: Building2,       label: 'Company'   },
 ]
 
 const contactsSubItems = [
@@ -35,6 +40,7 @@ const contactsSubItems = [
 
 const settingsSubItems = [
   { to: '/settings/users', icon: UserCog, label: 'User Accounts' },
+  { to: '/settings/reset', icon: Trash2,  label: 'Reset Data' },
 ]
 
 function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave }) {
@@ -62,17 +68,12 @@ function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave 
 export default function Sidebar() {
   const { stats } = useApp()
   const { hasRole } = useAuth()
-  const location  = useLocation()
 
   const isAdmin = hasRole('super_admin', 'admin')
 
   const [collapsed,     setCollapsed]     = useState(true)
-  const [contactsOpen,  setContactsOpen]  = useState(false)
-  const [settingsOpen,  setSettingsOpen]  = useState(false)
+  const [secondaryOpen, setSecondaryOpen] = useState(false)   // hamburger fly-out menu
   const [tip,           setTip]           = useState({ label: '', y: 0, visible: false })
-
-  const isContactsActive = location.pathname.startsWith('/contacts/')
-  const isSettingsActive = location.pathname.startsWith('/settings/')
 
   function showTip(e, label) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -81,16 +82,6 @@ export default function Sidebar() {
   function hideTip() { setTip(t => ({ ...t, visible: false })) }
 
   function handleCollapse() { setCollapsed(true); setTip(t => ({ ...t, visible: false })) }
-
-  function handleContactsClick() {
-    if (collapsed) { setCollapsed(false); setContactsOpen(true) }
-    else setContactsOpen(o => !o)
-  }
-
-  function handleSettingsClick() {
-    if (collapsed) { setCollapsed(false); setSettingsOpen(true) }
-    else setSettingsOpen(o => !o)
-  }
 
   return (
     <>
@@ -124,6 +115,21 @@ export default function Sidebar() {
         {/* ── Nav ───────────────────────────────────────────────── */}
         <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
 
+          {/* Hamburger — toggles the secondary fly-out menu */}
+          <button
+            onClick={() => setSecondaryOpen(o => !o)}
+            onMouseEnter={collapsed ? (e) => showTip(e, 'Menu') : undefined}
+            onMouseLeave={collapsed ? hideTip : undefined}
+            className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-150 border mb-1
+              ${collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5'}
+              ${secondaryOpen
+                ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
+                : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'}`}
+          >
+            <Menu className="w-[18px] h-[18px] flex-shrink-0" />
+            {!collapsed && <span>Menu</span>}
+          </button>
+
           {/* Main nav items */}
           {mainNav.map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed}
@@ -131,101 +137,6 @@ export default function Sidebar() {
               onMouseLeave={collapsed ? hideTip : undefined}
             />
           ))}
-
-          {/* ── Contacts group ──────────────────────────────────── */}
-          <div>
-            <button
-              onClick={handleContactsClick}
-              onMouseEnter={collapsed ? (e) => showTip(e, 'Contacts') : undefined}
-              onMouseLeave={collapsed ? hideTip : undefined}
-              className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-150 border
-                ${collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5'}
-                ${isContactsActive
-                  ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'
-                }`}
-            >
-              <BookUser className="w-[18px] h-[18px] flex-shrink-0" />
-              {!collapsed && (
-                <>
-                  <span className="flex-1 text-left">Contacts</span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${contactsOpen ? 'rotate-180' : ''}`} />
-                </>
-              )}
-            </button>
-
-            {/* Sub-items — expanded sidebar only */}
-            {!collapsed && contactsOpen && (
-              <div className="ml-3 mt-0.5 pl-2.5 border-l border-surface-border space-y-0.5">
-                {contactsSubItems.map(({ to, icon: Icon, label }) => (
-                  <NavLink key={to} to={to}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors duration-150 border
-                       ${isActive
-                         ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
-                         : 'text-slate-500 hover:text-slate-100 hover:bg-surface-hover border-transparent'
-                       }`
-                    }
-                  >
-                    <Icon className="w-4 h-4 flex-shrink-0" />
-                    <span>{label}</span>
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Bottom nav items */}
-          {bottomNav.map(({ to, icon, label }) => (
-            <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed}
-              onMouseEnter={collapsed ? (e) => showTip(e, label) : undefined}
-              onMouseLeave={collapsed ? hideTip : undefined}
-            />
-          ))}
-
-          {/* ── Settings group (admins only) ────────────────────── */}
-          {isAdmin && (
-            <div>
-              <button
-                onClick={handleSettingsClick}
-                onMouseEnter={collapsed ? (e) => showTip(e, 'Settings') : undefined}
-                onMouseLeave={collapsed ? hideTip : undefined}
-                className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-150 border
-                  ${collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5'}
-                  ${isSettingsActive
-                    ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'
-                  }`}
-              >
-                <Settings className="w-[18px] h-[18px] flex-shrink-0" />
-                {!collapsed && (
-                  <>
-                    <span className="flex-1 text-left">Settings</span>
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${settingsOpen ? 'rotate-180' : ''}`} />
-                  </>
-                )}
-              </button>
-
-              {!collapsed && settingsOpen && (
-                <div className="ml-3 mt-0.5 pl-2.5 border-l border-surface-border space-y-0.5">
-                  {settingsSubItems.map(({ to, icon: Icon, label }) => (
-                    <NavLink key={to} to={to}
-                      className={({ isActive }) =>
-                        `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors duration-150 border
-                         ${isActive
-                           ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
-                           : 'text-slate-500 hover:text-slate-100 hover:bg-surface-hover border-transparent'
-                         }`
-                      }
-                    >
-                      <Icon className="w-4 h-4 flex-shrink-0" />
-                      <span>{label}</span>
-                    </NavLink>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </nav>
 
         {/* ── Expand button (collapsed) ──────────────────────────── */}
@@ -262,6 +173,51 @@ export default function Sidebar() {
           </div>
         )}
       </aside>
+
+      {/* ── Secondary fly-out menu — sits right next to the sidebar and moves
+            with it (collapse/expand) since it's the next flex sibling. ──────── */}
+      {secondaryOpen && (
+        <aside className="w-56 flex-shrink-0 bg-surface-card border-r border-surface-border flex flex-col transition-all duration-200">
+          <div className="h-[64px] flex items-center justify-between px-4 border-b border-surface-border">
+            <span className="text-sm font-semibold text-slate-200">Menu</span>
+            <button onClick={() => setSecondaryOpen(false)}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-surface-hover transition-colors"
+              title="Close menu">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+            {[
+              ...secondaryNav,
+              { _section: 'Contacts' },
+              ...contactsSubItems,
+              ...(isAdmin ? [{ _section: 'Settings' }, ...settingsSubItems] : []),
+            ].map((item, idx) => {
+              if (item._section) {
+                return (
+                  <p key={`sec-${idx}`} className="px-3 pt-3 pb-1 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                    {item._section}
+                  </p>
+                )
+              }
+              const Icon = item.icon
+              return (
+                <NavLink key={item.to} to={item.to} end={item.to === '/'}
+                  onClick={() => setSecondaryOpen(false)}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 border
+                     ${isActive
+                       ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
+                       : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'}`
+                  }>
+                  <Icon className="w-[18px] h-[18px] flex-shrink-0" />
+                  <span>{item.label}</span>
+                </NavLink>
+              )
+            })}
+          </nav>
+        </aside>
+      )}
 
       {/* ── Floating tooltip ───────────────────────────────────── */}
       {collapsed && tip.visible && (

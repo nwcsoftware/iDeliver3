@@ -10,6 +10,8 @@
 --    Returns the full user profile on success, raises an exception on failure.
 -- =============================================================================
 
+DROP FUNCTION IF EXISTS public.verify_login(TEXT, TEXT) CASCADE;
+
 CREATE OR REPLACE FUNCTION public.verify_login(
   p_login    TEXT,   -- username, email, or mobile
   p_password TEXT
@@ -121,6 +123,8 @@ GRANT EXECUTE ON FUNCTION public.verify_login(TEXT, TEXT) TO authenticated;
 --    Stamps user_logbook; session clearing is done client-side.
 -- =============================================================================
 
+DROP FUNCTION IF EXISTS public.logout_user(UUID) CASCADE;
+
 CREATE OR REPLACE FUNCTION public.logout_user(p_user_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -140,6 +144,8 @@ GRANT EXECUTE ON FUNCTION public.logout_user(UUID) TO authenticated;
 -- =============================================================================
 -- 3. change_password RPC
 -- =============================================================================
+
+DROP FUNCTION IF EXISTS public.change_password(UUID, TEXT, TEXT) CASCADE;
 
 CREATE OR REPLACE FUNCTION public.change_password(
   p_user_id     UUID,

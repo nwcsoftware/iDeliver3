@@ -1,18 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Tag, DollarSign, Package, Barcode,
+  Tag, DollarSign, Package, Barcode, Circle,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 
 const UNITS = ['pcs', 'kg', 'g', 'liter', 'ml', 'box', 'bag', 'meter', 'pair', 'set']
 
+const FLAG_COLORS = {
+  purple: 'bg-purple-500/15 border-purple-500/40 text-purple-300',
+  cyan:   'bg-cyan-500/15 border-cyan-500/40 text-cyan-300',
+  amber:  'bg-amber-500/15 border-amber-500/40 text-amber-300',
+}
+
+// On/off toggle button used for the product flags.
+function FlagToggle({ active, onClick, color = 'cyan', children }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active}
+      className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-medium border transition-colors select-none
+        ${active ? FLAG_COLORS[color] : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
+      {active ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
+      {children}
+    </button>
+  )
+}
+
 const EMPTY_FORM = {
   code: '', name: '', description: '', barcode: '',
   unit_of_measure: 'pcs', unit_cost: '', unit_price: '',
   currency: 'USD', reorder_level: '', reorder_quantity: '',
-  is_deliverable: true, is_retail: true,
+  is_deliverable: true, is_retail: true, is_returnable: false,
   category_id: '',
 }
 
@@ -29,6 +47,10 @@ export default function ProductsPage() {
   const [saving,      setSaving]      = useState(false)
   const [error,       setError]       = useState('')
   const [toggling,    setToggling]    = useState(null)
+  // Inline "create new category" inside the product form.
+  const [addingCat,   setAddingCat]   = useState(false)
+  const [newCatName,  setNewCatName]  = useState('')
+  const [catBusy,     setCatBusy]     = useState(false)
 
   /* ── data ─────────────────────────────────────────────────── */
 
@@ -71,9 +93,26 @@ export default function ProductsPage() {
 
   function fld(key, val) { setForm(f => ({ ...f, [key]: val })); setError('') }
 
-  function openAdd()    { setForm(EMPTY_FORM); setError(''); setModal('add') }
-  function openEdit(p)  { setForm({ ...EMPTY_FORM, ...p, category_id: p.category_id ?? '' }); setError(''); setModal(p) }
-  function closeModal() { setModal(null); setForm(EMPTY_FORM); setError('') }
+  function openAdd()    { setForm(EMPTY_FORM); setError(''); setModal('add'); setAddingCat(false); setNewCatName('') }
+  function openEdit(p)  { setForm({ ...EMPTY_FORM, ...p, category_id: p.category_id ?? '' }); setError(''); setModal(p); setAddingCat(false); setNewCatName('') }
+  function closeModal() { setModal(null); setForm(EMPTY_FORM); setError(''); setAddingCat(false); setNewCatName('') }
+
+  /* Create a new product category inline and select it for this product. */
+  async function createCategory() {
+    const name = newCatName.trim()
+    if (!name) return
+    setCatBusy(true)
+    const { data, error: e } = await supabase
+      .from('product_categories')
+      .insert([{ name, is_active: true, ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}) }])
+      .select('id, name')
+      .single()
+    setCatBusy(false)
+    if (e) { setError(e.message); return }
+    setCategories(cs => [...cs, data].sort((a, b) => a.name.localeCompare(b.name)))
+    fld('category_id', data.id)
+    setAddingCat(false); setNewCatName('')
+  }
 
   async function handleSave() {
     if (!form.code.trim()) return setError('Product code is required.')
@@ -95,6 +134,7 @@ export default function ProductsPage() {
       reorder_quantity: Number(form.reorder_quantity) || 0,
       is_deliverable:   form.is_deliverable,
       is_retail:        form.is_retail,
+      is_returnable:    form.is_returnable,
       category_id:      form.category_id           || null,
     }
 
@@ -214,6 +254,7 @@ export default function ProductsPage() {
                   <div className="flex gap-1 flex-wrap">
                     {p.is_retail     && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">Retail</span>}
                     {p.is_deliverable && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Delivery</span>}
+                    {p.is_returnable && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">Returnable</span>}
                   </div>
                 </td>
 
@@ -268,21 +309,46 @@ export default function ProductsPage() {
               {/* Code + Name */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Code *</label>
+                  <label className="label text-fuchsia-300">Code *</label>
                   <input className="input font-mono uppercase" value={form.code}
                     onChange={e => fld('code', e.target.value)} placeholder="PRD-001" />
                 </div>
                 <div>
-                  <label className="label">Category</label>
-                  <select className="input" value={form.category_id} onChange={e => fld('category_id', e.target.value)}>
-                    <option value="">— None —</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <div className="flex items-center justify-between">
+                    <label className="label">Category</label>
+                    {!addingCat && (
+                      <button type="button" onClick={() => { setAddingCat(true); setNewCatName('') }}
+                        className="text-[11px] text-brand-400 hover:text-brand-300 mb-1">
+                        <Plus className="w-3 h-3 inline -mt-0.5" /> New
+                      </button>
+                    )}
+                  </div>
+                  {addingCat ? (
+                    <div className="flex items-center gap-1.5">
+                      <input autoFocus className="input" value={newCatName}
+                        onChange={e => setNewCatName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createCategory() } }}
+                        placeholder="New category name" />
+                      <button type="button" onClick={createCategory} disabled={catBusy || !newCatName.trim()}
+                        className="btn-primary px-2 py-2 disabled:opacity-50" title="Create category">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button type="button" onClick={() => { setAddingCat(false); setNewCatName('') }}
+                        className="btn-ghost p-2 text-slate-500" title="Cancel">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <select className="input" value={form.category_id} onChange={e => fld('category_id', e.target.value)}>
+                      <option value="">— None —</option>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
 
               <div>
-                <label className="label">Product Name *</label>
+                <label className="label text-fuchsia-300">Product Name *</label>
                 <input className="input" value={form.name}
                   onChange={e => fld('name', e.target.value)} placeholder="Product name" />
               </div>
@@ -344,18 +410,17 @@ export default function ProductsPage() {
                 </div>
               </div>
 
-              {/* Flags */}
-              <div className="flex items-center gap-6 pt-1">
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
-                  <input type="checkbox" className="w-4 h-4 rounded accent-brand-500"
-                    checked={form.is_retail} onChange={e => fld('is_retail', e.target.checked)} />
-                  Retail item
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
-                  <input type="checkbox" className="w-4 h-4 rounded accent-brand-500"
-                    checked={form.is_deliverable} onChange={e => fld('is_deliverable', e.target.checked)} />
-                  Deliverable
-                </label>
+              {/* Flags — toggle buttons */}
+              <div>
+                <label className="label">Flags</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <FlagToggle active={form.is_retail}      onClick={() => fld('is_retail', !form.is_retail)}           color="purple">Retail item</FlagToggle>
+                  <FlagToggle active={form.is_deliverable} onClick={() => fld('is_deliverable', !form.is_deliverable)} color="cyan">Deliverable</FlagToggle>
+                  <FlagToggle active={form.is_returnable}  onClick={() => fld('is_returnable', !form.is_returnable)}    color="amber">Returnable</FlagToggle>
+                </div>
+                {form.is_returnable && (
+                  <p className="text-[10px] text-amber-300/80 mt-1">Tracked in the Returnable Items page (e.g. shisha, gas cylinders).</p>
+                )}
               </div>
             </div>
 

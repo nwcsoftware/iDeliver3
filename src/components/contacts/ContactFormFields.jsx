@@ -1,6 +1,53 @@
-import React from 'react'
+import React, { useState } from 'react'
+import { Plus, Check, X } from 'lucide-react'
 import { formatAccountNumber } from '../../lib/accountNumber'
 import MobileInput from '../MobileInput'
+
+/* A <select> whose list can be extended inline. Picking "+ Add new…" reveals a
+   text input; the typed value is persisted via onAddOption and then selected. */
+function AddableSelect({ value, options, placeholder, addPlaceholder = 'New value', onChange, onAddOption }) {
+  const [adding, setAdding] = useState(false)
+  const [text,   setText]   = useState('')
+  const [busy,   setBusy]   = useState(false)
+
+  async function confirm() {
+    const name = text.trim()
+    if (!name) return
+    setBusy(true)
+    const saved = await onAddOption(name)
+    setBusy(false)
+    if (saved == null) return            // insert failed — keep the input open
+    onChange(saved)
+    setAdding(false); setText('')
+  }
+
+  if (adding) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <input className="input" autoFocus value={text} placeholder={addPlaceholder}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirm() } }} />
+        <button type="button" onClick={confirm} disabled={busy || !text.trim()}
+          className="btn-ghost p-2 text-green-400 disabled:opacity-40" title="Add">
+          <Check className="w-4 h-4" />
+        </button>
+        <button type="button" onClick={() => { setAdding(false); setText('') }}
+          className="btn-ghost p-2 text-slate-500" title="Cancel">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <select className="input" value={value ?? ''}
+      onChange={e => { e.target.value === '__add__' ? setAdding(true) : onChange(e.target.value) }}>
+      <option value="">{placeholder || '— Select —'}</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+      <option value="__add__">+ Add new…</option>
+    </select>
+  )
+}
 
 /* Contact types that get a system-generated account number on creation. */
 export const ACCOUNT_NUMBER_TYPES = ['customer', 'supplier', 'partner']
@@ -89,7 +136,7 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       {isCompany && (
         <>
           <div>
-            <label className="label">Company Name *</label>
+            <label className="label text-fuchsia-300">Company Name *</label>
             <input className="input" value={form.company_name}
               onChange={e => setField('company_name', e.target.value)} placeholder="Acme Trading SARL" />
           </div>
@@ -104,11 +151,11 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       {/* Name */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">{isCompany ? 'Contact First Name *' : 'First Name *'}</label>
+          <label className="label text-fuchsia-300">{isCompany ? 'Contact First Name *' : 'First Name *'}</label>
           <input className="input" value={form.first_name} onChange={e => setField('first_name', e.target.value)} placeholder="John" />
         </div>
         <div>
-          <label className="label">{isCompany ? 'Contact Last Name *' : 'Last Name *'}</label>
+          <label className="label text-fuchsia-300">{isCompany ? 'Contact Last Name *' : 'Last Name *'}</label>
           <input className="input" value={form.last_name} onChange={e => setField('last_name', e.target.value)} placeholder="Doe" />
         </div>
       </div>
@@ -116,7 +163,7 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       {/* Contact */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">Mobile *</label>
+          <label className="label text-fuchsia-300">Mobile *</label>
           <MobileInput value={form.mobile} onChange={v => setField('mobile', v)} />
         </div>
         <div>
@@ -148,7 +195,11 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
           {extraFields.map(ef => (
             <div key={ef.key}>
               <label className="label">{ef.label}</label>
-              {ef.type === 'select' ? (
+              {ef.type === 'select' && ef.addable ? (
+                <AddableSelect value={form[ef.key]} options={ef.options} placeholder={ef.placeholder}
+                  addPlaceholder={ef.addPlaceholder}
+                  onChange={v => setField(ef.key, v)} onAddOption={ef.onAddOption} />
+              ) : ef.type === 'select' ? (
                 <select className="input" value={form[ef.key] ?? ''}
                   onChange={e => setField(ef.key, e.target.value)}>
                   <option value="">{ef.placeholder || '— Select —'}</option>

@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 
 /* A package row is considered "filled" once it has any meaningful content. */
 function isFilled(p) {
-  return [p.tracking_number, p.category, p.type, p.package_size, p.vehicle_type,
+  return [p.tracking_number, p.provider_id, p.category, p.type, p.package_size, p.vehicle_type,
           p.description, p.base_price, p.package_price]
     .some(v => String(v ?? '').trim() !== '')
 }
@@ -32,6 +32,7 @@ export async function saveOrderPackages({ orderId, packages, origIds = [], compa
   for (const p of valid) {
     const fields = {
       contact_code:    contactCode,
+      provider_id:     p.provider_id || null,
       tracking_number: p.tracking_number?.trim() || null,
       category:        p.category   || null,
       type:            p.type       || null,
@@ -44,6 +45,7 @@ export async function saveOrderPackages({ orderId, packages, origIds = [], compa
       notes:           p.notes?.trim() || null,
       base_price:      p.base_price === '' || p.base_price == null ? null : Number(p.base_price),
       package_price:   p.package_price === '' || p.package_price == null ? null : Number(p.package_price),
+      currency:        p.currency || 'USD',
       paid:            !!p.paid,
       payment_type:    p.payment_type || null,
       updated_by:      userId,

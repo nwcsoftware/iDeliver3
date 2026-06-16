@@ -5,11 +5,19 @@ const CURRENCIES = ['USD', 'LBP', 'EUR']
 
 export const EMPTY_SERVICE = {
   service_date: '',
+  provider_id: '',
   service_description: '',
   service_reference: '',
   quantity: 1,
   service_fees: '',
   service_fees_currency: 'USD',
+}
+
+/* Display name for a supplier contact: company name first, else person name. */
+function supplierName(c) {
+  return (c.company_name?.trim())
+    || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
+    || '—'
 }
 
 /**
@@ -18,9 +26,10 @@ export const EMPTY_SERVICE = {
  * Props:
  *   services     - array of service objects
  *   setServices  - state setter
+ *   suppliers    - supplier contacts for the "Service provider" dropdown
  *   onAdd        - optional parent-owned "Add Service" handler
  */
-export default function OrderServices({ services, setServices, embedded = false, onAdd }) {
+export default function OrderServices({ services, setServices, suppliers = [], embedded = false, onAdd }) {
   const referenceRefs = useRef({})
   const prevLen = useRef(services.length)
 
@@ -62,6 +71,7 @@ export default function OrderServices({ services, setServices, embedded = false,
             <thead>
               <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
                 <th className="text-left px-3 py-2 w-36">Date</th>
+                <th className="text-left px-3 py-2 w-44">Service provider</th>
                 <th className="text-left px-3 py-2">Reference</th>
                 <th className="text-left px-3 py-2">Description</th>
                 <th className="text-center px-2 py-2 w-20">Qty</th>
@@ -76,6 +86,13 @@ export default function OrderServices({ services, setServices, embedded = false,
                   <td className="px-3 py-2">
                     <input type="date" className="input text-xs" value={s.service_date || today}
                       onChange={e => update(i, 'service_date', e.target.value)} max={today} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <select className="input text-xs" value={s.provider_id || ''}
+                      onChange={e => update(i, 'provider_id', e.target.value)}>
+                      <option value="">— Select supplier —</option>
+                      {suppliers.map(sup => <option key={sup.id} value={sup.id}>{supplierName(sup)}</option>)}
+                    </select>
                   </td>
                   <td className="px-3 py-2">
                     <input className="input text-xs font-mono" placeholder="REF-001"

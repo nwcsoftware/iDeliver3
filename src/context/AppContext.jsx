@@ -25,12 +25,29 @@ export function AppProvider({ children }) {
     setLoading(l => ({ ...l, drivers: true }))
     let q = supabase
       .from('contacts')
-      .select('*')
+      .select(`
+        *,
+        assigned_vehicle:driver_vehicle_assignments(
+          id,
+          vehicle:vehicles(id, asset_code, make, model, color, type, plate_number)
+        )
+      `)
       .eq('contact_type', 'driver')
       .order('created_at', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data, error } = await q
-    if (!error && data) setDrivers(data.map(normalizeDriver))
+    if (!error && data) {
+      setDrivers(data.map(d => {
+        // Get the latest assigned vehicle (if any)
+        const latestAssignment = d.assigned_vehicle?.sort((a, b) => 
+          new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0)
+        )[0]
+        return {
+          ...normalizeDriver(d),
+          assigned_vehicle: latestAssignment?.vehicle ?? null
+        }
+      }))
+    }
     setLoading(l => ({ ...l, drivers: false }))
   }, [])
 
@@ -44,9 +61,10 @@ export function AppProvider({ children }) {
         customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, company_name, credit_debit_allowed),
         zone:delivery_zones(id, name),
         order_items(currency, line_total, is_deleted),
-        delivery_packages(package_price),
+        delivery_packages(package_price, paid, currency),
         order_services(service_fees, service_fees_currency),
-        retail_goods_invoices(invoice_value, currency)
+        retail_goods_invoices(invoice_value, currency),
+        payment_collections(amount, currency)
       `)
       .order('created_at', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)

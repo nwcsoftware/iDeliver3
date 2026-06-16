@@ -1427,8 +1427,8 @@ function mapCustomerOrder(order, invoices = [], payments = []) {
     .filter(Boolean)
   const invoiceTotal = invoices.reduce((sum, invoice) => sum + Number(invoice.invoice_value || 0), 0)
   const invoiceCurrency = invoices[0]?.currency || order.currency || 'USD'
-  const paidUsd = payments.reduce((sum, payment) => sum + Number(payment.amount_usd || 0), 0)
-  const paidLbp = payments.reduce((sum, payment) => sum + Number(payment.amount_lbp || 0), 0)
+  const paidUsd = payments.reduce((sum, p) => sum + ((p.currency || 'USD') === 'USD' ? Number(p.amount || 0) : 0), 0)
+  const paidLbp = payments.reduce((sum, p) => sum + (p.currency === 'LBP' ? Number(p.amount || 0) : 0), 0)
 
   return {
     id: order.id,
@@ -1911,7 +1911,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
             .in('order_id', ids),
           supabase
             .from('payment_collections')
-            .select('id, order_id, collection_type, amount_usd, amount_lbp, collected_at')
+            .select('id, order_id, collection_type, amount, currency, collected_at')
             .in('order_id', ids),
         ])
         if (cancelled) return
@@ -2129,8 +2129,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
                 <p className="text-sm font-bold capitalize text-orange-800">{payment.collection_type || t('payment')}</p>
                 <p className="mt-1 text-xs text-orange-700">{formatDateTime(payment.collected_at)}</p>
                 <p className="mt-3 text-sm font-semibold text-slate-950">
-                  USD {Number(payment.amount_usd || 0).toFixed(2)}
-                  {Number(payment.amount_lbp || 0) > 0 ? ` / LBP ${Number(payment.amount_lbp).toFixed(0)}` : ''}
+                  {(payment.currency || 'USD')} {Number(payment.amount || 0).toFixed((payment.currency === 'LBP') ? 0 : 2)}
                 </p>
               </div>
             )) : (

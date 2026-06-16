@@ -15,10 +15,14 @@ import CompanyPage      from './pages/CompanyPage'
 import ProductsPage          from './pages/ProductsPage'
 import PurchaseInvoicesPage  from './pages/PurchaseInvoicesPage'
 import RetailInvoicesPage     from './pages/RetailInvoicesPage'
+import PriceListPage          from './pages/PriceListPage'
+import ReturnableItemsPage     from './pages/ReturnableItemsPage'
 import AccountTransactionsPage from './pages/AccountTransactionsPage'
+import DriverDuesPage           from './pages/DriverDuesPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
+import ResetOrdersPage        from './pages/ResetOrdersPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import logo             from './assets/Logo.png'
 
@@ -72,12 +76,16 @@ function AppShell() {
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/purchase-invoices"    element={<PurchaseInvoicesPage />} />
                 <Route path="/retail-invoices"      element={<RetailInvoicesPage />} />
+                <Route path="/price-list"           element={<PriceListPage />} />
+                <Route path="/returnable-items"     element={<ReturnableItemsPage />} />
                 <Route path="/account-transactions" element={<AccountTransactionsPage />} />
+                <Route path="/driver-dues"          element={<DriverDuesPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
+                <Route path="/settings/reset"      element={<ResetOrdersPage />} />
               </Routes>
             </main>
           </div>

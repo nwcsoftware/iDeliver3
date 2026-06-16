@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 
 /* A service row is considered "filled" once it has any meaningful content. */
 function isFilled(s) {
-  return [s.service_description, s.service_reference, s.service_fees]
+  return [s.service_description, s.service_reference, s.service_fees, s.provider_id]
     .some(v => String(v ?? '').trim() !== '')
 }
 
@@ -31,6 +31,7 @@ export async function saveOrderServices({ orderId, services, origIds = [], compa
       // service_date and service_fees are NOT NULL in order_services — default
       // blanks to today / 0 so a part-filled service row never blocks the save.
       service_date:           s.service_date || new Date().toISOString().slice(0, 10),
+      provider_id:            s.provider_id || null,
       service_description:    s.service_description?.trim() || null,
       service_reference:      s.service_reference?.trim() || null,
       quantity:               Number(s.quantity) || 1,

@@ -444,8 +444,8 @@ export default function VehiclesPage() {
             </div>
             <div className="space-y-3">
               <div>
-                <label className="label">Driver *</label>
-                <select className="input" value={assignmentForm.driver_id} 
+                <label className="label text-fuchsia-300">Driver *</label>
+                <select className="input" value={assignmentForm.driver_id}
                   onChange={e => { setAssignmentForm(f => ({ ...f, driver_id: e.target.value })); setAssignmentError('') }}>
                   <option value="">Select a driver…</option>
                   {drivers.map(d => (
@@ -456,7 +456,7 @@ export default function VehiclesPage() {
                 </select>
               </div>
               <div>
-                <label className="label">Start Date *</label>
+                <label className="label text-fuchsia-300">Start Date *</label>
                 <input type="date" className="input" value={assignmentForm.start_date}
                   onChange={e => { setAssignmentForm(f => ({ ...f, start_date: e.target.value })); setAssignmentError('') }} />
               </div>

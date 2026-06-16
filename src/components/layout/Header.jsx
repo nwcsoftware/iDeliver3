@@ -1,7 +1,14 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Minus, Square, X, Bell, LogOut, ChevronDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
+import { useApp } from '../../context/AppContext'
+
+// An online (external) order arrives unconfirmed; mirror DeliveriesPage logic:
+// order_source starting with EXT = external, order_confirmed !== true = pending.
+const isUnconfirmedOnlineOrder = (o) =>
+  (o?.order_source || '').trim().toUpperCase().startsWith('EXT') &&
+  o?.order_confirmed !== true
 
 const pageTitles = {
   '/':           'Dashboard',
@@ -26,8 +33,16 @@ export default function Header() {
   const location             = useLocation()
   const title                = pageTitles[location.pathname] || 'iDeliver III'
   const { currentUser, logout } = useAuth()
+  const { orders }           = useApp()
   const electron             = window.electron
   const [userMenu, setUserMenu] = useState(false)
+
+  // Count of new online orders not yet confirmed → bell badge.
+  const pendingCount = useMemo(
+    () => orders.filter(isUnconfirmedOnlineOrder).length,
+    [orders],
+  )
+  const badgeLabel = pendingCount > 10 ? '10+' : String(pendingCount)
 
   const initials = currentUser
     ? `${currentUser.first_name?.[0] ?? ''}${currentUser.last_name?.[0] ?? ''}`.toUpperCase() || 'U'
@@ -46,10 +61,20 @@ export default function Header() {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' }}
       >
-        {/* Notification bell */}
-        <button className="btn-ghost p-2 relative">
+        {/* Notification bell — new online orders awaiting confirmation */}
+        <button
+          className="btn-ghost p-2 relative"
+          title={pendingCount > 0
+            ? `${pendingCount} online order${pendingCount === 1 ? '' : 's'} awaiting confirmation`
+            : 'No pending online orders'}
+        >
           <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-brand-500 rounded-full" />
+          {pendingCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center
+                             rounded-full bg-brand-500 text-white text-[10px] font-bold leading-none">
+              {badgeLabel}
+            </span>
+          )}
         </button>
 
         {/* User menu */}

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -14,6 +14,9 @@ import { saveContactAddresses } from '../lib/contactAddresses'
 
 /* ── type config ─────────────────────────────────────────── */
 
+// Seed business types; users can add their own (persisted in business_types).
+const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
+
 const TYPE_CONFIG = {
   supplier: {
     title:       'Suppliers',
@@ -24,8 +27,10 @@ const TYPE_CONFIG = {
     extraFields: [
       { key: 'supplier_code', label: 'Supplier Code', type: 'text', placeholder: 'SUP-001' },
       { key: 'payment_terms', label: 'Payment Terms (days)', type: 'number', placeholder: '30' },
-      { key: 'shop_type', label: 'BUISINESS TYPE', type: 'select', placeholder: '— Select —',
-        options: ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other'] },
+      { key: 'shop_type', label: 'Business Type', type: 'select', placeholder: '— Select —',
+        options: DEFAULT_BUSINESS_TYPES },
+      { key: 'contact_category', label: 'Contact Category', type: 'select', placeholder: '— Select —',
+        options: [] },
     ],
   },
   customer: {
@@ -44,8 +49,23 @@ const TYPE_CONFIG = {
     bg:          'bg-purple-600/20 border-purple-600/30',
     extraFields: [
       { key: 'partner_percentage', label: 'Commission %', type: 'number', placeholder: '10' },
+      { key: 'shop_type', label: 'Business Type', type: 'select', placeholder: '— Select —',
+        options: DEFAULT_BUSINESS_TYPES },
+      { key: 'contact_category', label: 'Contact Category', type: 'select', placeholder: '— Select —',
+        options: [] },
     ],
   },
+}
+
+// A random 12-character password of letters and digits.
+function generatePassword(len = 12) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(len)
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < len; i++) bytes[i] = Math.floor(Math.random() * 256)
+  let out = ''
+  for (let i = 0; i < len; i++) out += chars[bytes[i] % chars.length]
+  return out
 }
 
 const BASE_FORM = {
@@ -55,7 +75,7 @@ const BASE_FORM = {
   email: '', city: '', address: '', notes: '',
   account_number: '', credit_debit_allowed: false,
   // supplier extras
-  supplier_code: '', payment_terms: '', shop_type: '',
+  supplier_code: '', payment_terms: '', shop_type: '', contact_category: '',
   // partner extras
   partner_percentage: '',
 }
@@ -63,7 +83,8 @@ const BASE_FORM = {
 export default function ContactsPage({ type }) {
   const cfg = TYPE_CONFIG[type] ?? TYPE_CONFIG.customer
   const { COMPANY_ID } = useApp()
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
+  const isAdmin = hasRole('super_admin', 'admin')
 
   const [contacts,  setContacts]  = useState([])
   const [loading,   setLoading]   = useState(true)
@@ -74,8 +95,21 @@ export default function ContactsPage({ type }) {
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [toggling,  setToggling]  = useState(null)
+  const [businessTypes,     setBusinessTypes]     = useState([])   // custom types from business_types
+  const [contactCategories, setContactCategories] = useState([])   // custom contact_categories
   const [addresses,      setAddresses]      = useState([])
   const [origAddressIds, setOrigAddressIds] = useState([])
+  // Customer "User Account & Security" collapsible section (admin only).
+  const [credOpen,     setCredOpen]     = useState(false)
+  const [resetting,    setResetting]    = useState(false)
+  const [usernameInput, setUsernameInput] = useState('') // read-only customer username
+  const [pwInput,      setPwInput]      = useState('')   // admin-entered new password
+  const [showPw,       setShowPw]       = useState(false)
+  const [editingPw,    setEditingPw]    = useState(false) // true once Reset is pressed (new pw is visible)
+  const [newPassword,  setNewPassword]  = useState('')   // confirmation shown after a reset
+  const [credError,    setCredError]    = useState('')
+
+  const PW_MIN = 12
 
   /* ── fetch ───────────────────────────────────────────────── */
 
@@ -93,6 +127,55 @@ export default function ContactsPage({ type }) {
   }, [cfg.contactType, COMPANY_ID])
 
   useEffect(() => { fetchContacts() }, [fetchContacts])
+
+  /* ── user-extensible lookups (supplier form) ─────────────── */
+
+  const fetchLookups = useCallback(async () => {
+    if (!['supplier', 'partner'].includes(type)) return
+    const load = async (table) => {
+      let q = supabase.from(table).select('name').eq('is_active', true).order('name')
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data } = await q
+      return (data ?? []).map(r => r.name)
+    }
+    const [bt, cc] = await Promise.all([load('business_types'), load('contact_categories')])
+    setBusinessTypes(bt); setContactCategories(cc)
+  }, [type, COMPANY_ID])
+
+  useEffect(() => { fetchLookups() }, [fetchLookups])
+
+  /* Insert a value into a lookup table inline; returns the saved name (reusing
+     an existing one, case-insensitively) or null on error. */
+  function makeAdder(table, defaults, current, setCurrent) {
+    return async (name) => {
+      const clean = name.trim()
+      if (!clean) return null
+      const existing = [...defaults, ...current].find(t => t.toLowerCase() === clean.toLowerCase())
+      if (existing) return existing
+      const { error } = await supabase.from(table)
+        .insert([{ name: clean, is_active: true, ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}) }])
+      if (error) { setError(error.message); return null }
+      setCurrent(ts => [...ts, clean].sort((a, b) => a.localeCompare(b)))
+      return clean
+    }
+  }
+
+  // Inject merged options + the inline "add" handler onto each addable field.
+  const ADDABLE = {
+    shop_type:        { defaults: DEFAULT_BUSINESS_TYPES, current: businessTypes,     add: makeAdder('business_types',     DEFAULT_BUSINESS_TYPES, businessTypes,     setBusinessTypes),     placeholder: 'New business type' },
+    contact_category: { defaults: [],                     current: contactCategories, add: makeAdder('contact_categories', [],                     contactCategories, setContactCategories), placeholder: 'New contact category' },
+  }
+  const formExtraFields = cfg.extraFields.map(ef => {
+    const a = ADDABLE[ef.key]
+    if (!a) return ef
+    return {
+      ...ef,
+      options: [...new Set([...a.defaults, ...a.current])],
+      addable: true,
+      addPlaceholder: a.placeholder,
+      onAddOption: a.add,
+    }
+  })
 
   /* ── filter ──────────────────────────────────────────────── */
 
@@ -124,6 +207,7 @@ export default function ContactsPage({ type }) {
   async function openEdit(c) {
     setForm({ ...BASE_FORM, ...c, entity_type: c.entity_type || 'individual' })
     setAddresses([]); setOrigAddressIds([]); setError(''); setModal(c)
+    setCredOpen(false); setUsernameInput(c.username || ''); setPwInput(''); setShowPw(false); setEditingPw(false); setNewPassword(''); setCredError('')
     const { data } = await supabase
       .from('contact_addresses')
       .select('*')
@@ -140,7 +224,52 @@ export default function ContactsPage({ type }) {
     setAddresses(rows)
     setOrigAddressIds(rows.map(r => r._id))
   }
-  function closeModal() { setModal(null); setForm(BASE_FORM); setAddresses([]); setOrigAddressIds([]); setError('') }
+  function closeModal() {
+    setModal(null); setForm(BASE_FORM); setAddresses([]); setOrigAddressIds([]); setError('')
+    setCredOpen(false); setUsernameInput(''); setPwInput(''); setShowPw(false); setEditingPw(false); setNewPassword(''); setCredError(''); setResetting(false)
+  }
+
+  /* Enter "set new password" mode with a freshly generated password (visible).
+     Warns first, since saving will replace the customer's current password. */
+  function startPasswordReset() {
+    if (!usernameInput.trim()) { setCredError('This customer is not registered yet (no username).'); return }
+    if (!window.confirm(
+      '⚠ Reset this customer’s password?\n\n' +
+      'A new password will be generated (you can also type your own). When you save it, ' +
+      'the customer’s current password will stop working immediately — make sure to share the new one with them.'
+    )) return
+    setEditingPw(true); setPwInput(generatePassword(PW_MIN)); setShowPw(true); setNewPassword(''); setCredError('')
+  }
+  function cancelPasswordReset() {
+    setEditingPw(false); setPwInput(''); setShowPw(false); setCredError('')
+  }
+
+  /* Admin: reset the customer's password (>= 12) without revealing the old one.
+     The username is view-only here (set during customer setup); the RPC requires
+     the customer to already have one. */
+  async function resetCustomerPassword() {
+    if (!isAdmin || !modal || modal === 'add') return
+    const pwd = pwInput
+    if (!usernameInput.trim()) { setCredError('This customer does not have a username yet.'); return }
+    if (pwd.length < PW_MIN) { setCredError(`Password must be at least ${PW_MIN} characters.`); return }
+    setResetting(true); setCredError(''); setNewPassword('')
+    try {
+      const { data, error: e } = await supabase.rpc('admin_reset_customer_password', {
+        p_contact_id:   modal.id,
+        p_new_password: pwd,
+      })
+      if (e) throw e
+      const username = data?.[0]?.username
+      setNewPassword(pwd)            // confirm what was set (copyable, shown once)
+      setPwInput(''); setShowPw(false); setEditingPw(false)
+      if (username) { setUsernameInput(username); setForm(f => ({ ...f, username })) }
+    } catch (e) {
+      const msg = e?.message || String(e)
+      setCredError(/USERNAME_REQUIRED/i.test(msg) ? 'This customer does not have a username yet.' : msg)
+    } finally {
+      setResetting(false)
+    }
+  }
 
   async function handleSave() {
     const isCompany = form.entity_type === 'company'
@@ -178,12 +307,15 @@ export default function ContactsPage({ type }) {
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       // type-specific
       ...(type === 'supplier' ? {
-        supplier_code: form.supplier_code?.trim() || null,
-        payment_terms: Number(form.payment_terms) || null,
-        shop_type:     form.shop_type?.trim() || null,
+        supplier_code:    form.supplier_code?.trim() || null,
+        payment_terms:    Number(form.payment_terms) || null,
+        shop_type:        form.shop_type?.trim() || null,
+        contact_category: form.contact_category?.trim() || null,
       } : {}),
       ...(type === 'partner' ? {
         partner_percentage: Number(form.partner_percentage) || null,
+        shop_type:          form.shop_type?.trim() || null,
+        contact_category:   form.contact_category?.trim() || null,
       } : {}),
       // audit / branch — account_number is generated client-side for customers & suppliers
       ...(modal === 'add'
@@ -214,8 +346,9 @@ export default function ContactsPage({ type }) {
     })
     if (addrErr) { setError(addrErr); setSaving(false); return }
 
-    await fetchContacts(); closeModal()
-    setSaving(false)
+    // Saved successfully → close immediately, then refresh the list in the background.
+    setSaving(false); closeModal()
+    fetchContacts()
   }
 
   async function toggleActive(c) {
@@ -367,10 +500,114 @@ export default function ContactsPage({ type }) {
               form={form}
               setField={fld}
               mode={modal === 'add' ? 'add' : 'edit'}
-              extraFields={cfg.extraFields}
+              extraFields={formExtraFields}
             />
 
             <ContactAddresses addresses={addresses} setAddresses={setAddresses} />
+
+            {/* Customer user account & security — collapsible, admin only */}
+            {type === 'customer' && modal !== 'add' && isAdmin && (
+              <div className="border border-surface-border rounded-lg overflow-hidden">
+                <button type="button" onClick={() => setCredOpen(o => !o)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
+                  <ChevronRight className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform duration-200 ${credOpen ? 'rotate-90' : ''}`} />
+                  <KeyRound className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span className="text-[11px] text-slate-300 uppercase tracking-wider font-semibold">User Account &amp; Security</span>
+                </button>
+                {credOpen && (
+                  <div className="p-3 space-y-3">
+                    <div>
+                      <label className="label">Username</label>
+                      <input className="input font-mono opacity-80 cursor-not-allowed" value={usernameInput || 'No username set'} readOnly autoComplete="off" />
+                      <p className="text-[10px] text-slate-600 mt-0.5">
+                        Admins can view the username, but only the customer setup flow can create or change it.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="label">Password</label>
+                      {!editingPw ? (
+                        <>
+                          {/* Existing password is hidden and cannot be read — shown masked. */}
+                          <input type="password" readOnly autoComplete="off"
+                            value={usernameInput ? 'reset-placeholder' : ''}
+                            placeholder={usernameInput ? '' : 'Not registered yet'}
+                            className="input font-mono bg-surface-hover/50 text-slate-400 cursor-not-allowed" />
+                          <p className="text-[10px] text-slate-600 mt-0.5">
+                            The current password is hidden and can’t be read. Press “Reset Password” to set a new one.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-2 text-amber-300 text-[11px] bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-2">
+                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                            <span>Saving replaces the customer’s password immediately — the old one stops working. Copy and share the new password before closing.</span>
+                          </div>
+                          {/* New password — visible so the admin can read & share it. Editable. */}
+                          <div className="relative">
+                            <input type={showPw ? 'text' : 'password'} value={pwInput} autoFocus autoComplete="new-password"
+                              onChange={e => { setPwInput(e.target.value); setCredError('') }}
+                              placeholder={`At least ${PW_MIN} characters`}
+                              className="input font-mono pr-10" />
+                            <button type="button" onClick={() => setShowPw(s => !s)}
+                              title={showPw ? 'Hide' : 'Show'}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200">
+                              {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className={`text-[10px] ${pwInput && pwInput.length < PW_MIN ? 'text-red-400' : 'text-slate-600'}`}>
+                              New password — visible so you can share it. Type your own or regenerate. Minimum {PW_MIN} characters.
+                            </p>
+                            <button type="button"
+                              onClick={() => { setPwInput(generatePassword(PW_MIN)); setShowPw(true); setCredError('') }}
+                              className="text-[11px] text-brand-400 hover:text-brand-300">Regenerate</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {!editingPw ? (
+                        <button type="button" onClick={startPasswordReset} disabled={!usernameInput.trim()}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
+                          <KeyRound className="w-4 h-4" /> Reset Password
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" onClick={resetCustomerPassword}
+                            disabled={resetting || pwInput.length < PW_MIN}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <Check className="w-4 h-4" /> {resetting ? 'Saving…' : 'Save Password'}
+                          </button>
+                          <button type="button" onClick={cancelPasswordReset} disabled={resetting}
+                            className="btn-ghost text-slate-400">Cancel</button>
+                        </>
+                      )}
+                    </div>
+
+                    {newPassword && (
+                      <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 space-y-1">
+                        <p className="text-[11px] text-green-300 font-semibold">Password updated — copy it now and share it with the customer:</p>
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-sm text-slate-100 bg-surface-hover px-2 py-1 rounded select-all">{newPassword}</code>
+                          <button type="button" onClick={() => navigator.clipboard?.writeText(newPassword)}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100" title="Copy">
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {credError && (
+                      <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />{credError}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {error && (
               <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
