@@ -1,6 +1,6 @@
 {
   "name": "ideliver-iii",
-  "version": "3.00.010",
+  "version": "3.00.011",
   "description": "iDeliver III - Delivery & Logistics Management Desktop Application",
   "main": "electron/main.js",
   "scripts": {
