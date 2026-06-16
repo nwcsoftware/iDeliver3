@@ -11,22 +11,45 @@ export function AuthProvider({ children }) {
 
   // Rehydrate session from localStorage on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY)
-      if (raw) {
-        const session = JSON.parse(raw)
-        // Basic expiry check: 12-hour sessions
-        const age = Date.now() - new Date(session.logged_in_at).getTime()
-        if (age < 12 * 60 * 60 * 1000) {
-          setCurrentUser(session)
-        } else {
-          localStorage.removeItem(SESSION_KEY)
+    let cancelled = false
+
+    async function rehydrateSession() {
+      const isCustomerMobileRoute =
+        window.location.hash.startsWith('#/customer') ||
+        window.location.pathname === '/customer' ||
+        window.location.pathname.startsWith('/customer/')
+
+      if (!isCustomerMobileRoute) {
+        try {
+          await supabase.auth.signOut({ scope: 'local' })
+        } catch {
+          // Staff auth is handled by verify_login; Supabase Auth is only used by
+          // customer OAuth, so a failed local clear should not block staff login.
         }
       }
-    } catch {
-      localStorage.removeItem(SESSION_KEY)
+
+      if (cancelled) return
+
+      try {
+        const raw = localStorage.getItem(SESSION_KEY)
+        if (raw) {
+          const session = JSON.parse(raw)
+          // Basic expiry check: 12-hour sessions
+          const age = Date.now() - new Date(session.logged_in_at).getTime()
+          if (age < 12 * 60 * 60 * 1000) {
+            setCurrentUser(session)
+          } else {
+            localStorage.removeItem(SESSION_KEY)
+          }
+        }
+      } catch {
+        localStorage.removeItem(SESSION_KEY)
+      }
+      setLoading(false)
     }
-    setLoading(false)
+
+    rehydrateSession()
+    return () => { cancelled = true }
   }, [])
 
   const login = useCallback(async (identifier, password) => {

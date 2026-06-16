@@ -29,8 +29,13 @@ import logo             from './assets/Logo.png'
 function AppShell() {
   const { currentUser, loading } = useAuth()
 
-  // Customer mobile app runs as a separate experience under the #/customer hash route.
-  if (window.location.hash.startsWith('#/customer')) {
+  const isCustomerMobileRoute =
+    window.location.hash.startsWith('#/customer') ||
+    window.location.pathname === '/customer' ||
+    window.location.pathname.startsWith('/customer/')
+
+  // Customer mobile app runs as a separate experience under customer routes.
+  if (isCustomerMobileRoute) {
     return <CustomerMobileApp />
   }
 

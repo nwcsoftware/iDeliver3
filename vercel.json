@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/customer/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}
