@@ -151,8 +151,8 @@ export function AmountSummaryContent({ order }) {
                 <span className="text-right text-emerald-300/90">{fmtAmount(r.collected, r.cur)}</span>
                 <span className="text-slate-500">Balance</span>
                 <span className={`text-right ${r.balance > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.balance, r.cur)}</span>
-                <span className="text-sky-200/90 border-t border-surface-border/60 pt-1">{fromDriverLabel}</span>
-                <span className="text-right text-sky-300/90 border-t border-surface-border/60 pt-1">{fmtAmount(r.fromDriver, r.cur)}</span>
+                <span className="text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fromDriverLabel}</span>
+                <span className="text-right text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fmtAmount(r.fromDriver, r.cur)}</span>
                 <span className="text-slate-500">Order Pending</span>
                 <span className={`text-right ${r.pending > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.pending, r.cur)}</span>
               </div>
