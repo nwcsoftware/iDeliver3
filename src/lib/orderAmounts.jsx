@@ -43,26 +43,63 @@ export function fmtAmount(n, cur) {
   return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 }
 
-/* Per-currency amount breakdown for an order row: delivery fee, other amounts
-   (items/packages/services/invoices/vat − discount), the order total, the amount
-   collected so far and the pending balance. Returns one entry per currency that
-   has any non-zero figure, so single-currency orders stay compact. */
+/* Per-currency, per-category amount breakdown for an order. Each category keeps
+   its own currency (packages/services/items/invoices can differ), so amounts are
+   bucketed by currency. Returns one row per currency that has any figure.
+
+   Per row:
+     packages       delivery_packages (unpaid)
+     services       order_services
+     localRetail    order_items (your catalog products)
+     externalRetail retail_goods_invoices
+     fees           delivery_fee
+     discount       discount_amount (subtracted from total)
+     vat            vat_amount (added to total)
+     total          Total All = packages+services+localRetail+externalRetail+fees−discount+vat
+     collected      paid by the customer (to the driver) so far
+     balance        Total All − collected
+     fromDriver     to collect from the driver = fees + localRetail
+     pending        Order Pending = localRetail + fees                         */
 export function orderAmountBreakdown(o) {
-  const total = orderTotalsByCurrency(o)              // { USD, LBP, … } order totals
-  const feeCur = o.currency || 'USD'
-  const fee = Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0
-  // Collected is derived per-currency from the order's payments.
+  const feeCur      = o.currency || 'USD'
+  const discountCur = o.discount_currency || o.currency || 'USD'
+
+  const buckets = {}   // cur -> category sums
+  const bucket = cur => (buckets[cur] ||= {
+    packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0,
+  })
+
+  for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) bucket(it.currency || 'USD').localRetail += Number(it.line_total) || 0
+  for (const p of (o.delivery_packages ?? [])) if (!p.paid)         bucket(p.currency || o.currency || 'USD').packages += Number(p.package_price) || 0
+  for (const s of (o.order_services ?? []))                          bucket(s.service_fees_currency || 'USD').services += Number(s.service_fees) || 0
+  for (const r of (o.retail_goods_invoices ?? []))                   bucket(r.currency || 'USD').externalRetail += Number(r.invoice_value) || 0
+  if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
+  if (Number(o.discount_amount) > 0) bucket(discountCur).discount += Number(o.discount_amount)
+  if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
+
   const collected = orderCollectedByCurrency(o)
-  const currs = new Set([...Object.keys(total), ...Object.keys(collected), feeCur])
+  const currs = new Set([...Object.keys(buckets), ...Object.keys(collected)])
+
   const rows = []
   for (const cur of currs) {
-    const tot   = round2(total[cur] || 0)
-    const deliv = cur === feeCur ? round2(fee) : 0
-    const other = round2(tot - deliv)
-    const coll  = round2(collected[cur] || 0)
-    const pend  = round2(Math.max(0, tot - coll))
-    if (tot === 0 && deliv === 0 && coll === 0) continue
-    rows.push({ cur, delivery: deliv, other, total: tot, collected: coll, pending: pend })
+    const b = bucket(cur)
+    const packages       = round2(b.packages)
+    const services       = round2(b.services)
+    const localRetail    = round2(b.localRetail)
+    const externalRetail = round2(b.externalRetail)
+    const fees           = round2(b.fees)
+    const discount       = round2(b.discount)
+    const vat            = round2(b.vat)
+    const total          = round2(packages + services + localRetail + externalRetail + fees - discount + vat)
+    const coll           = round2(collected[cur] || 0)
+    if (total === 0 && coll === 0) continue
+    rows.push({
+      cur, packages, services, localRetail, externalRetail, fees, discount, vat,
+      total, collected: coll,
+      balance:    round2(total - coll),
+      fromDriver: round2(fees + localRetail),
+      pending:    round2(localRetail + fees),
+    })
   }
   return rows
 }
@@ -73,7 +110,8 @@ export function orderAmountBreakdown(o) {
 export function AmountSummaryContent({ order }) {
   const rows = orderAmountBreakdown(order)
   const driverName = `${order.driver?.first_name ?? ''} ${order.driver?.last_name ?? ''}`.trim()
-  const collectedLabel = driverName ? `Collected by ${driverName}` : 'Collected'
+  const collectedLabel = driverName ? `Collected from customer by ${driverName}` : 'Collected from customer'
+  const fromDriverLabel = driverName ? `To collect from ${driverName}` : 'To collect from driver'
   return (
     <div className="text-xs">
       <div className="px-3 py-2 border-b border-surface-border flex items-center gap-2">
@@ -88,16 +126,34 @@ export function AmountSummaryContent({ order }) {
           {rows.map(r => (
             <div key={r.cur} className="font-normal text-slate-300">
               {rows.length > 1 && <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1">{r.cur}</div>}
-              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 tabular-nums">
-                <span className="text-slate-500">Delivery fee</span>
-                <span className="text-right">{fmtAmount(r.delivery, r.cur)}</span>
-                <span className="text-slate-500">Other amounts</span>
-                <span className="text-right">{fmtAmount(r.other, r.cur)}</span>
-                <span className="text-slate-300 border-t border-surface-border/60 pt-1">Total order</span>
-                <span className="text-right text-slate-100 border-t border-surface-border/60 pt-1">{fmtAmount(r.total, r.cur)}</span>
+              <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 tabular-nums">
+                <span className="text-slate-500">Delivery Packages</span>
+                <span className="text-right">{fmtAmount(r.packages, r.cur)}</span>
+                <span className="text-slate-500">Order Services</span>
+                <span className="text-right">{fmtAmount(r.services, r.cur)}</span>
+                <span className="text-slate-500">Local retail items</span>
+                <span className="text-right">{fmtAmount(r.localRetail, r.cur)}</span>
+                <span className="text-slate-500">External retail invoices</span>
+                <span className="text-right">{fmtAmount(r.externalRetail, r.cur)}</span>
+                <span className="text-slate-500">Delivery fees</span>
+                <span className="text-right">{fmtAmount(r.fees, r.cur)}</span>
+                {r.discount > 0 && (<>
+                  <span className="text-slate-500">Discount</span>
+                  <span className="text-right text-rose-300/90">−{fmtAmount(r.discount, r.cur)}</span>
+                </>)}
+                {r.vat > 0 && (<>
+                  <span className="text-slate-500">VAT</span>
+                  <span className="text-right">{fmtAmount(r.vat, r.cur)}</span>
+                </>)}
+                <span className="text-slate-200 font-medium border-t border-surface-border/60 pt-1">Total All</span>
+                <span className="text-right text-slate-100 font-medium border-t border-surface-border/60 pt-1">{fmtAmount(r.total, r.cur)}</span>
                 <span className="text-slate-500">{collectedLabel}</span>
                 <span className="text-right text-emerald-300/90">{fmtAmount(r.collected, r.cur)}</span>
-                <span className="text-slate-500">Pending</span>
+                <span className="text-slate-500">Balance</span>
+                <span className={`text-right ${r.balance > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.balance, r.cur)}</span>
+                <span className="text-sky-200/90 border-t border-surface-border/60 pt-1">{fromDriverLabel}</span>
+                <span className="text-right text-sky-300/90 border-t border-surface-border/60 pt-1">{fmtAmount(r.fromDriver, r.cur)}</span>
+                <span className="text-slate-500">Order Pending</span>
                 <span className={`text-right ${r.pending > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.pending, r.cur)}</span>
               </div>
             </div>
@@ -114,8 +170,8 @@ export function AmountSummaryContent({ order }) {
 export function placeHoverPanel(el, x, y) {
   if (!el) return
   const pad = 16
-  const w = el.offsetWidth || 300
-  const h = el.offsetHeight || 220
+  const w = el.offsetWidth || 340
+  const h = el.offsetHeight || 280
   let left = x + pad
   let top  = y + pad
   if (left + w > window.innerWidth - 8) left = x - w - pad

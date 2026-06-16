@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, X, Check } from 'lucide-react'
+import {
+  Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, X, Check,
+  AlertCircle, ChevronRight, KeyRound, Copy, Eye, EyeOff,
+} from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -8,6 +11,17 @@ import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
+
+// A random 12-character password of letters and digits.
+function generatePassword(len = 12) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(len)
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < len; i++) bytes[i] = Math.floor(Math.random() * 256)
+  let out = ''
+  for (let i = 0; i < len; i++) out += chars[bytes[i] % chars.length]
+  return out
+}
 
 const emptyForm = {
   first_name:     '',
@@ -41,7 +55,8 @@ function fmtDutyDate(dateStr, timeStr) {
 
 export default function DriversPage() {
   const { drivers, orders, fetchDrivers, loading, COMPANY_ID } = useApp()
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
+  const isAdmin = hasRole('super_admin', 'admin')
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || 'You'
 
   // Derive how a driver's duty status should be displayed.
@@ -100,6 +115,17 @@ export default function DriversPage() {
   const [origAssignIds, setOrigAssignIds] = useState([])
   const [latestVehicle, setLatestVehicle] = useState({}) // driver_id -> "code | make | model | color"
   const [pettyTotals,   setPettyTotals]   = useState({}) // driver_id -> { USD, LBP, EUR }
+  // Driver "User Account & Security" collapsible section (admin only).
+  const [credOpen,     setCredOpen]     = useState(false)
+  const [resetting,    setResetting]    = useState(false)
+  const [usernameInput, setUsernameInput] = useState('') // admin-set driver username (editable)
+  const [pwInput,      setPwInput]      = useState('')   // admin-entered new password
+  const [showPw,       setShowPw]       = useState(false)
+  const [editingPw,    setEditingPw]    = useState(false) // true once "Set Password" is pressed (new pw is visible)
+  const [newPassword,  setNewPassword]  = useState('')   // confirmation shown after a save
+  const [credError,    setCredError]    = useState('')
+
+  const PW_MIN = 12
 
   // Vehicles available to assign to a driver.
   useEffect(() => {
@@ -158,15 +184,20 @@ export default function DriversPage() {
     return matchSearch && matchStatus
   })
 
+  function resetCred(username = '') {
+    setCredOpen(false); setUsernameInput(username); setPwInput(''); setShowPw(false)
+    setEditingPw(false); setNewPassword(''); setCredError(''); setResetting(false)
+  }
+
   function openAdd() {
-    setForm(emptyForm); setModal('add'); setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([])
+    setForm(emptyForm); setModal('add'); setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([]); resetCred()
     // Pre-generate the driver account number so it's visible before saving.
     generateAccountNumber('driver')
       .then(acct => setForm(f => ({ ...f, account_number: acct })))
       .catch(() => {})
   }
   async function openEdit(d) {
-    setForm({ ...emptyForm, ...d }); setModal(d)
+    setForm({ ...emptyForm, ...d }); setModal(d); resetCred(d.username || '')
     // Load this driver's petty-cash entries (creator username shown read-only).
     const { data } = await supabase
       .from('driver_petty_cash')
@@ -195,7 +226,56 @@ export default function DriversPage() {
   }
   function closeModal() {
     setModal(null); setForm(emptyForm)
-    setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([])
+    setPettyCash([]); setOrigPettyIds([]); setAssignments([]); setOrigAssignIds([]); resetCred()
+  }
+
+  /* ── driver credentials (admin sets username + password) ──────
+     Drivers have no self-registration flow, so the admin sets both. The old
+     password is never shown — only the new one the admin just entered. */
+  function startPasswordReset() {
+    if (!usernameInput.trim()) { setCredError('Enter a username for this driver first.'); return }
+    if (!window.confirm(
+      '⚠ Set a new password for this driver?\n\n' +
+      'A new password will be generated (you can also type your own). When you save it, ' +
+      'the driver’s current password will stop working immediately — make sure to share the new one with them.'
+    )) return
+    setEditingPw(true); setPwInput(generatePassword(PW_MIN)); setShowPw(true); setNewPassword(''); setCredError('')
+  }
+  function cancelPasswordReset() {
+    setEditingPw(false); setPwInput(''); setShowPw(false); setCredError('')
+  }
+
+  async function saveDriverCredentials() {
+    if (!isAdmin || !modal || modal === 'add') return
+    const uname = usernameInput.trim()
+    const pwd = pwInput
+    if (uname.length < 3)      { setCredError('Username must be at least 3 characters.'); return }
+    if (pwd.length < PW_MIN)   { setCredError(`Password must be at least ${PW_MIN} characters.`); return }
+    setResetting(true); setCredError(''); setNewPassword('')
+    try {
+      const { data, error: e } = await supabase.rpc('admin_set_driver_credentials', {
+        p_contact_id:   modal.id,
+        p_username:     uname,
+        p_new_password: pwd,
+      })
+      if (e) throw e
+      const username = data?.[0]?.username
+      setNewPassword(pwd)            // confirm what was set (copyable, shown once)
+      setPwInput(''); setShowPw(false); setEditingPw(false)
+      if (username) setUsernameInput(username)
+      await fetchDrivers()
+    } catch (e) {
+      const msg = e?.message || String(e)
+      if      (/USERNAME_TAKEN/.test(msg))      setCredError('That username is already used by another contact.')
+      else if (/USERNAME_TOO_SHORT/.test(msg))  setCredError('Username must be at least 3 characters.')
+      else if (/USERNAME_REQUIRED/.test(msg))   setCredError('Enter a username first.')
+      else if (/PASSWORD_TOO_SHORT/.test(msg))  setCredError(`Password must be at least ${PW_MIN} characters.`)
+      else if (/DRIVER_NOT_FOUND/.test(msg))    setCredError('This driver could not be found.')
+      else if (/admin_set_driver_credentials/.test(msg)) setCredError('Driver login is not configured in Supabase yet — run supabase-fix54.sql.')
+      else setCredError(msg)
+    } finally {
+      setResetting(false)
+    }
   }
 
   /* ── petty cash sub-form ─────────────────────────────────── */
@@ -681,6 +761,112 @@ export default function DriversPage() {
                   <p className="text-[11px] text-slate-500">No vehicles exist yet — add them in the Vehicles page first.</p>
                 )}
               </div>
+
+              {/* Driver user account & security — collapsible, admin only */}
+              {modal !== 'add' && isAdmin && (
+                <div className="border border-surface-border rounded-lg overflow-hidden">
+                  <button type="button" onClick={() => setCredOpen(o => !o)}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
+                    <ChevronRight className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform duration-200 ${credOpen ? 'rotate-90' : ''}`} />
+                    <KeyRound className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <span className="text-[11px] text-slate-300 uppercase tracking-wider font-semibold">User Account &amp; Security</span>
+                  </button>
+                  {credOpen && (
+                    <div className="p-3 space-y-3">
+                      <div>
+                        <label className="label">Username</label>
+                        <input className="input font-mono" value={usernameInput} autoComplete="off"
+                          onChange={e => { setUsernameInput(e.target.value); setCredError('') }}
+                          placeholder="e.g. driver username" />
+                        <p className="text-[10px] text-slate-600 mt-0.5">
+                          The username the driver uses to sign in. Letters/digits, at least 3 characters.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="label">Password</label>
+                        {!editingPw ? (
+                          <>
+                            {/* Existing password is hidden and cannot be read — shown masked. */}
+                            <input type="password" readOnly autoComplete="off"
+                              value={modal?.username ? 'reset-placeholder' : ''}
+                              placeholder={modal?.username ? '' : 'No password set yet'}
+                              className="input font-mono bg-surface-hover/50 text-slate-400 cursor-not-allowed" />
+                            <p className="text-[10px] text-slate-600 mt-0.5">
+                              The current password is hidden and can’t be read. Press “Set Password” to set a new one.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-start gap-2 text-amber-300 text-[11px] bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-2">
+                              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                              <span>Saving replaces the driver’s password immediately — the old one stops working. Copy and share the new password before closing.</span>
+                            </div>
+                            {/* New password — visible so the admin can read & share it. Editable. */}
+                            <div className="relative">
+                              <input type={showPw ? 'text' : 'password'} value={pwInput} autoFocus autoComplete="new-password"
+                                onChange={e => { setPwInput(e.target.value); setCredError('') }}
+                                placeholder={`At least ${PW_MIN} characters`}
+                                className="input font-mono pr-10" />
+                              <button type="button" onClick={() => setShowPw(s => !s)}
+                                title={showPw ? 'Hide' : 'Show'}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200">
+                                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between mt-1">
+                              <p className={`text-[10px] ${pwInput && pwInput.length < PW_MIN ? 'text-red-400' : 'text-slate-600'}`}>
+                                New password — visible so you can share it. Type your own or regenerate. Minimum {PW_MIN} characters.
+                              </p>
+                              <button type="button"
+                                onClick={() => { setPwInput(generatePassword(PW_MIN)); setShowPw(true); setCredError('') }}
+                                className="text-[11px] text-brand-400 hover:text-brand-300">Regenerate</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {!editingPw ? (
+                          <button type="button" onClick={startPasswordReset} disabled={!usernameInput.trim()}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <KeyRound className="w-4 h-4" /> Set Password
+                          </button>
+                        ) : (
+                          <>
+                            <button type="button" onClick={saveDriverCredentials}
+                              disabled={resetting || usernameInput.trim().length < 3 || pwInput.length < PW_MIN}
+                              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
+                              <Check className="w-4 h-4" /> {resetting ? 'Saving…' : 'Save Password'}
+                            </button>
+                            <button type="button" onClick={cancelPasswordReset} disabled={resetting}
+                              className="btn-ghost text-slate-400">Cancel</button>
+                          </>
+                        )}
+                      </div>
+
+                      {newPassword && (
+                        <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 space-y-1">
+                          <p className="text-[11px] text-green-300 font-semibold">Password updated — copy it now and share it with the driver:</p>
+                          <div className="flex items-center gap-2">
+                            <code className="font-mono text-sm text-slate-100 bg-surface-hover px-2 py-1 rounded select-all">{newPassword}</code>
+                            <button type="button" onClick={() => navigator.clipboard?.writeText(newPassword)}
+                              className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100" title="Copy">
+                              <Copy className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {credError && (
+                        <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />{credError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 justify-end pt-2">

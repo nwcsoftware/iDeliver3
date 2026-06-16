@@ -735,7 +735,7 @@ export default function DriverDuesPage() {
       {hoverSummary && (
         <div ref={hoverPanelRef}
           className="fixed z-[55] pointer-events-none card border border-surface-border rounded-lg shadow-xl overflow-hidden"
-          style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 300 }}>
+          style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 340 }}>
           <AmountSummaryContent order={hoverSummary.order} />
         </div>
       )}
