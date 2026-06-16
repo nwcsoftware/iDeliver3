@@ -36,6 +36,21 @@ export function orderCollectedByCurrency(o) {
   return c
 }
 
+/* Per-currency "amount to collect from the driver" = delivery fees + local retail
+   items (order_items). Mirrors the "To collect from driver" line in the popup, so
+   list totals can show just that figure. */
+export function orderDriverCollectByCurrency(o) {
+  const t = {}
+  const feeCur = o.currency || 'USD'
+  const fee = Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0
+  if (fee) t[feeCur] = (t[feeCur] || 0) + fee
+  for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) {
+    const cur = it.currency || 'USD'
+    t[cur] = (t[cur] || 0) + (Number(it.line_total) || 0)
+  }
+  return t
+}
+
 /* Grouped money format for the amounts summary: thousands separators, 2 decimals
    for USD/EUR, none for LBP — e.g. 24,301.00 (USD) / 1,500,000 (LBP). */
 export function fmtAmount(n, cur) {

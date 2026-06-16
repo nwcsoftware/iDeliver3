@@ -11,7 +11,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
-import { orderTotalsByCurrency, orderCollectedByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel } from '../lib/orderAmounts'
+import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import Badge from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
@@ -533,17 +533,19 @@ export default function DeliveriesPage({ closed = false }) {
 
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
   const pendingsSummary = (() => {
-    const cur = { USD: { order: 0, paid: 0 }, LBP: { order: 0, paid: 0 }, EUR: { order: 0, paid: 0 } }
+    const cur = { USD: { order: 0, paid: 0, driverCollect: 0 }, LBP: { order: 0, paid: 0, driverCollect: 0 }, EUR: { order: 0, paid: 0, driverCollect: 0 } }
     for (const o of filtered) {
       const tt = orderTotalsByCurrency(o)
       const cc = orderCollectedByCurrency(o)
+      const dc = orderDriverCollectByCurrency(o)   // delivery fees + local retail items
       for (const c of CURRENCIES) {
         cur[c].order += (tt[c] || 0)
         cur[c].paid  += (cc[c] || 0)
+        cur[c].driverCollect += (dc[c] || 0)
       }
     }
     const rows = CURRENCIES
-      .map(c => ({ cur: c, order: round2(cur[c].order), paid: round2(cur[c].paid) }))
+      .map(c => ({ cur: c, order: round2(cur[c].order), paid: round2(cur[c].paid), driverCollect: round2(cur[c].driverCollect) }))
       .filter(r => r.order !== 0 || r.paid !== 0)
       .map(r => ({ ...r, pending: round2(r.order - r.paid) }))
     return { count: filtered.length, rows }
@@ -1627,10 +1629,10 @@ export default function DeliveriesPage({ closed = false }) {
             {pendingsSummary.count === 1 ? 'order' : 'orders'}
           </span>
           <div className="flex items-center gap-3 flex-wrap ml-auto">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400">Total</span>
+            <span className="text-[11px] uppercase tracking-wider text-slate-400">Total <span className="text-slate-500 normal-case">(fees + local retail)</span></span>
             {CURRENCIES.map(c => {
               const row = pendingsSummary.rows.find(r => r.cur === c)
-              const total = row ? row.order : 0
+              const total = row ? row.driverCollect : 0   // delivery fees + local retail items
               if (total <= 0) return null            // only show currencies with an amount
               return (
                 <div key={c} className="text-sm whitespace-nowrap rounded-lg bg-white/5 border border-white/10 px-2.5 py-1">
@@ -1639,7 +1641,7 @@ export default function DeliveriesPage({ closed = false }) {
                 </div>
               )
             })}
-            {pendingsSummary.rows.every(r => r.order <= 0) && (
+            {pendingsSummary.rows.every(r => r.driverCollect <= 0) && (
               <span className="text-sm text-slate-500">—</span>
             )}
           </div>

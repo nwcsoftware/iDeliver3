@@ -3,7 +3,7 @@ import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertC
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { AmountSummaryContent, placeHoverPanel, orderCollectedByCurrency } from '../lib/orderAmounts'
+import { AmountSummaryContent, placeHoverPanel, orderCollectedByCurrency, orderDriverCollectByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -220,14 +220,18 @@ export default function DriverDuesPage() {
   /* ── totals (per currency) for the visible rows ──────────── */
 
   function sumRows(rows) {
-    const t = { collected: emptyCur(), retail: emptyCur(), net: emptyCur() }
-    for (const r of rows) for (const c of CURRENCIES) {
-      t.collected[c] += r.collected[c]
-      t.retail[c]    += r.retail[c]
-      t.net[c]       += r.net[c]
+    const t = { collected: emptyCur(), retail: emptyCur(), net: emptyCur(), driverCollect: emptyCur() }
+    for (const r of rows) {
+      const dc = orderDriverCollectByCurrency(r.order)   // delivery fees + local retail items
+      for (const c of CURRENCIES) {
+        t.collected[c] += r.collected[c]
+        t.retail[c]    += r.retail[c]
+        t.net[c]       += r.net[c]
+        t.driverCollect[c] += (dc[c] || 0)
+      }
     }
     for (const c of CURRENCIES) {
-      t.collected[c] = round2(t.collected[c]); t.retail[c] = round2(t.retail[c]); t.net[c] = round2(t.net[c])
+      t.collected[c] = round2(t.collected[c]); t.retail[c] = round2(t.retail[c]); t.net[c] = round2(t.net[c]); t.driverCollect[c] = round2(t.driverCollect[c])
     }
     return t
   }
@@ -610,7 +614,7 @@ export default function DriverDuesPage() {
           </div>
           <div className="flex items-center gap-5 flex-wrap">
             <div className="flex items-center gap-4 flex-wrap">
-              {CURRENCIES.filter(c => visibleTotals.collected[c] || visibleTotals.retail[c]).map(c => (
+              {CURRENCIES.filter(c => visibleTotals.collected[c] || visibleTotals.retail[c] || visibleTotals.driverCollect[c]).map(c => (
                 <div key={c} className="text-xs text-slate-300">
                   <span className="text-slate-500 uppercase tracking-wider font-semibold mr-1.5">{c}</span>
                   <span className="text-green-400">Collected {fmtMoney(visibleTotals.collected[c], c)}</span>
@@ -618,9 +622,11 @@ export default function DriverDuesPage() {
                   <span className="text-amber-400">Petty {fmtMoney(visibleTotals.retail[c], c)}</span>
                   <span className="text-slate-600 mx-1">·</span>
                   <span className="font-semibold text-slate-100">Net {fmtMoney(visibleTotals.net[c], c)}</span>
+                  <span className="text-slate-600 mx-1">·</span>
+                  <span className="font-semibold text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.75)]">To collect {fmtMoney(visibleTotals.driverCollect[c], c)}</span>
                 </div>
               ))}
-              {!CURRENCIES.some(c => visibleTotals.collected[c] || visibleTotals.retail[c]) && (
+              {!CURRENCIES.some(c => visibleTotals.collected[c] || visibleTotals.retail[c] || visibleTotals.driverCollect[c]) && (
                 <span className="text-sm text-slate-500">No totals</span>
               )}
             </div>
