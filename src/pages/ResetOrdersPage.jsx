@@ -10,7 +10,7 @@ const CONFIRM_WORD = 'RESET'
 /* Tables emptied / unlinked by reset_all_orders() — shown so the user knows
    exactly what will be wiped before they confirm. */
 const WIPED = [
-  'delivery_orders', 'order_items', 'order_external_items', 'order_services',
+  'delivery_orders', 'order_items', 'order_services',
   'retail_goods_invoices', 'delivery_packages', 'order_tracking',
   'payment_collections', 'sales_invoices', 'driver_daily_settlements',
   'order-linked account_transactions',

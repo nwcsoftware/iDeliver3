@@ -61,9 +61,9 @@ export function AppProvider({ children }) {
         customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, company_name, credit_debit_allowed),
         zone:delivery_zones(id, name),
         order_items(currency, line_total, is_deleted),
-        delivery_packages(package_price, paid, currency),
-        order_services(service_fees, service_fees_currency),
-        retail_goods_invoices(invoice_value, currency),
+        delivery_packages(package_price, paid, currency, provider:contacts!provider_id(company_name, first_name, last_name)),
+        order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
+        retail_goods_invoices(invoice_value, currency, paid, shop_name),
         payment_collections(amount, currency)
       `)
       .order('created_at', { ascending: false })

@@ -37,6 +37,15 @@ function driverName(d) {
   return `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim() || (d.name ?? '—')
 }
 
+/* Order status "completed" — the status enum stores delivered/returned, which the
+   app treats as completed (same mapping as the Deliveries list). */
+function isCompleted(o) { return ['completed', 'delivered', 'returned'].includes(o?.status) }
+/* Driver collected all the money = the order is fully paid to the office. */
+function isFullyCollected(o) { return o?.payment_status === 'paid_to_office' }
+/* An order shows up for driver settlement once it's closed, OR once it's both
+   completed and fully collected (the driver is holding all the cash). */
+function isSettlementEligible(o) { return o?.isclosed === true || (isCompleted(o) && isFullyCollected(o)) }
+
 /* The closing date of an order (else its scheduled date) — what the call-center
    user filters the day's collections by. */
 function orderDate(o) {
@@ -77,9 +86,10 @@ export default function DriverDuesPage() {
   const [hoverSummary, setHoverSummary] = useState(null)   // { order, x, y }
   const hoverPanelRef = useRef(null)
 
-  /* Closed orders are the only ones eligible for driver-cash reconciliation. */
+  /* Orders eligible for driver-cash reconciliation: closed orders, plus orders
+     that are completed and fully collected (driver holds all the money). */
   const closedOrders = useMemo(
-    () => orders.filter(o => o.isclosed === true),
+    () => orders.filter(isSettlementEligible),
     [orders],
   )
 

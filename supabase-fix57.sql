@@ -1,25 +1,18 @@
 -- ============================================================================
--- fix54 - Admin set/reset of a driver's login credentials
+-- fix57 — admin_set_driver_credentials(): fix ambiguous "username" reference
 -- ----------------------------------------------------------------------------
--- Drivers live on the contacts row (contact_type = 'driver') and, like
--- customers, store credentials inline (username + password_hash). Unlike
--- customers, drivers have no self-registration flow, so an admin sets BOTH the
--- username and the password from the driver form.
+-- fix54 declared RETURNS TABLE (contact_id UUID, username TEXT). Those output
+-- columns are in-scope variables inside the function body, so the bare
+-- `username` in the uniqueness check (lower(coalesce(username, ''))) was
+-- ambiguous with the contacts.username column — Postgres raised:
+--   column reference "username" is ambiguous
+-- and the password save failed.
 --
--- Mirrors admin_reset_customer_password (fix40) but:
---   * targets contact_type = 'driver'
---   * also sets the username (normalised to lowercase, must be unique)
--- The old password is never returned; only the new password the admin
--- typed/generated in the app is shown before it is hashed here.
+-- This recreates the function with that reference qualified as
+-- contacts.username. Behaviour is otherwise identical to fix54.
+-- Safe to run multiple times.
 -- ============================================================================
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-ALTER TABLE public.contacts
-  ADD COLUMN IF NOT EXISTS username VARCHAR(100),
-  ADD COLUMN IF NOT EXISTS password_hash TEXT;
-
--- Replace earlier signatures if they were already created.
 DROP FUNCTION IF EXISTS public.admin_set_driver_credentials(UUID, TEXT, TEXT);
 
 CREATE FUNCTION public.admin_set_driver_credentials(

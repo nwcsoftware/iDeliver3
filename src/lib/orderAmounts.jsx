@@ -6,6 +6,15 @@ import { Receipt } from 'lucide-react'
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
+/* Display name for a joined provider/supplier contact: company name first, else
+   person name, else empty (caller decides the fallback). */
+function contactName(c) {
+  if (!c) return ''
+  return (c.company_name?.trim())
+    || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
+    || ''
+}
+
 /* Per-currency total of a saved order, from its line items + fee/discount/vat. */
 export function orderTotalsByCurrency(o) {
   const t = {}
@@ -16,7 +25,8 @@ export function orderTotalsByCurrency(o) {
   // Packages already paid directly to the provider don't count toward the order total.
   for (const p of (o.delivery_packages ?? []))     if (!p.paid) add(p.currency || o.currency || 'USD', Number(p.package_price) || 0)
   for (const s of (o.order_services ?? []))         add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
-  for (const r of (o.retail_goods_invoices ?? []))  add(r.currency || 'USD', Number(r.invoice_value) || 0)
+  // A retail invoice already paid directly to the shop is excluded from the order total.
+  for (const r of (o.retail_goods_invoices ?? []))  if (!r.paid) add(r.currency || 'USD', Number(r.invoice_value) || 0)
   const discountCur = o.discount_currency || o.currency
   add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
   add(discountCur, Number(o.discount_amount) > 0 ? -Number(o.discount_amount) : 0)
@@ -37,8 +47,9 @@ export function orderCollectedByCurrency(o) {
 }
 
 /* Per-currency "amount to collect from the driver" = delivery fees + local retail
-   items (order_items). Mirrors the "To collect from driver" line in the popup, so
-   list totals can show just that figure. */
+   items (order_items) + unpaid delivery packages. A package already paid directly
+   to its provider isn't collected from the driver. Mirrors the "To collect from
+   driver" line in the popup, so list totals can show just that figure. */
 export function orderDriverCollectByCurrency(o) {
   const t = {}
   const feeCur = o.currency || 'USD'
@@ -47,6 +58,10 @@ export function orderDriverCollectByCurrency(o) {
   for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) {
     const cur = it.currency || 'USD'
     t[cur] = (t[cur] || 0) + (Number(it.line_total) || 0)
+  }
+  for (const p of (o.delivery_packages ?? [])) if (!p.paid) {
+    const cur = p.currency || o.currency || 'USD'
+    t[cur] = (t[cur] || 0) + (Number(p.package_price) || 0)
   }
   return t
 }
@@ -73,7 +88,7 @@ export function fmtAmount(n, cur) {
      total          Total All = packages+services+localRetail+externalRetail+fees−discount+vat
      collected      paid by the customer (to the driver) so far
      balance        Total All − collected
-     fromDriver     to collect from the driver = fees + localRetail
+     fromDriver     to collect from the driver = fees + localRetail + unpaid packages
      pending        Order Pending = localRetail + fees                         */
 export function orderAmountBreakdown(o) {
   const feeCur      = o.currency || 'USD'
@@ -82,12 +97,32 @@ export function orderAmountBreakdown(o) {
   const buckets = {}   // cur -> category sums
   const bucket = cur => (buckets[cur] ||= {
     packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0,
+    // Per-line detail (source name + amount) so the popup can itemise each
+    // package / service / external invoice when there's more than one.
+    packageLines: [], serviceLines: [], externalLines: [],
   })
 
+  // Paid packages / invoices are still listed (so they're visible) but flagged
+  // paid — the popup crosses them out and they don't add to the category sum.
   for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) bucket(it.currency || 'USD').localRetail += Number(it.line_total) || 0
-  for (const p of (o.delivery_packages ?? [])) if (!p.paid)         bucket(p.currency || o.currency || 'USD').packages += Number(p.package_price) || 0
-  for (const s of (o.order_services ?? []))                          bucket(s.service_fees_currency || 'USD').services += Number(s.service_fees) || 0
-  for (const r of (o.retail_goods_invoices ?? []))                   bucket(r.currency || 'USD').externalRetail += Number(r.invoice_value) || 0
+  for (const p of (o.delivery_packages ?? [])) {
+    const amt = Number(p.package_price) || 0
+    const b = bucket(p.currency || o.currency || 'USD')
+    if (!p.paid) b.packages += amt
+    b.packageLines.push({ name: contactName(p.provider), amount: amt, paid: !!p.paid })
+  }
+  for (const s of (o.order_services ?? [])) {
+    const amt = Number(s.service_fees) || 0
+    const b = bucket(s.service_fees_currency || 'USD')
+    b.services += amt
+    b.serviceLines.push({ name: contactName(s.provider), amount: amt, paid: false })
+  }
+  for (const r of (o.retail_goods_invoices ?? [])) {
+    const amt = Number(r.invoice_value) || 0
+    const b = bucket(r.currency || 'USD')
+    if (!r.paid) b.externalRetail += amt
+    b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.paid })
+  }
   if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
   if (Number(o.discount_amount) > 0) bucket(discountCur).discount += Number(o.discount_amount)
   if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
@@ -107,16 +142,48 @@ export function orderAmountBreakdown(o) {
     const vat            = round2(b.vat)
     const total          = round2(packages + services + localRetail + externalRetail + fees - discount + vat)
     const coll           = round2(collected[cur] || 0)
-    if (total === 0 && coll === 0) continue
+    const hasLines       = b.packageLines.length || b.serviceLines.length || b.externalLines.length
+    if (total === 0 && coll === 0 && !hasLines) continue
     rows.push({
       cur, packages, services, localRetail, externalRetail, fees, discount, vat,
+      packageLines: b.packageLines, serviceLines: b.serviceLines, externalLines: b.externalLines,
       total, collected: coll,
       balance:    round2(total - coll),
-      fromDriver: round2(fees + localRetail),
+      fromDriver: round2(fees + localRetail + packages),
       pending:    round2(localRetail + fees),
     })
   }
   return rows
+}
+
+/* One amount category in the summary grid. With more than one line item it lists
+   each separately, naming its source (package provider / service supplier / retail
+   shop); with one it shows a single labelled line, still naming the source; with
+   none it shows the plain category total. Paid lines are crossed out in gray
+   ("switched off") and don't count toward the total. Emits bare grid cells. */
+function CategoryRows({ groupLabel, itemLabel, lines, sum, cur }) {
+  if (lines.length === 0) {
+    return (
+      <>
+        <span className="text-slate-500">{groupLabel}</span>
+        <span className="text-right">{fmtAmount(sum, cur)}</span>
+      </>
+    )
+  }
+  const multi = lines.length > 1
+  return lines.map((ln, i) => {
+    const label = multi ? itemLabel : groupLabel
+    const labelCls  = ln.paid ? 'text-slate-600 line-through' : 'text-slate-500'
+    const amountCls = ln.paid ? 'text-slate-600 line-through' : ''
+    return (
+      <React.Fragment key={i}>
+        <span className={`truncate ${labelCls}`}>
+          {label}{ln.name ? <span className={ln.paid ? '' : 'text-slate-400'}> · {ln.name}</span> : ''}
+        </span>
+        <span className={`text-right ${amountCls}`}>{fmtAmount(ln.amount, cur)}</span>
+      </React.Fragment>
+    )
+  })
 }
 
 /* Order amounts summary card body (header + per-currency breakdown). Shared by
@@ -142,14 +209,14 @@ export function AmountSummaryContent({ order }) {
             <div key={r.cur} className="font-normal text-slate-300">
               {rows.length > 1 && <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1">{r.cur}</div>}
               <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 tabular-nums">
-                <span className="text-slate-500">Delivery Packages</span>
-                <span className="text-right">{fmtAmount(r.packages, r.cur)}</span>
-                <span className="text-slate-500">Order Services</span>
-                <span className="text-right">{fmtAmount(r.services, r.cur)}</span>
+                <CategoryRows groupLabel="Delivery Packages" itemLabel="Delivery Package"
+                  lines={r.packageLines} sum={r.packages} cur={r.cur} />
+                <CategoryRows groupLabel="Order Services" itemLabel="Order Service"
+                  lines={r.serviceLines} sum={r.services} cur={r.cur} />
                 <span className="text-slate-500">Local retail items</span>
                 <span className="text-right">{fmtAmount(r.localRetail, r.cur)}</span>
-                <span className="text-slate-500">External retail invoices</span>
-                <span className="text-right">{fmtAmount(r.externalRetail, r.cur)}</span>
+                <CategoryRows groupLabel="External retail invoices" itemLabel="External retail invoice"
+                  lines={r.externalLines} sum={r.externalRetail} cur={r.cur} />
                 <span className="text-slate-500">Delivery fees</span>
                 <span className="text-right">{fmtAmount(r.fees, r.cur)}</span>
                 {r.discount > 0 && (<>

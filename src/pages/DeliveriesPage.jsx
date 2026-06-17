@@ -3,7 +3,7 @@ import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
-  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2,
+  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -21,6 +21,8 @@ import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages
 import { saveOrderPackages } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
+import TagLocationField from '../components/orders/TagLocationField'
+import { getSavedLocations, addSavedLocation } from '../lib/savedLocations'
 
 /* ── constants ───────────────────────────────────────────── */
 
@@ -147,7 +149,26 @@ function adjustTime(t, deltaMinutes) {
 
 const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
 
-const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD' }
+const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD', paid: true, payment_type: '' }
+
+/* Pickup / delivery addresses are stored as a single text column but edited as
+   multiple location tags — serialised with " | " so existing single-address rows
+   keep working (they just read back as one tag). */
+const LOC_SEP   = ' | '
+const splitLocs = s => (s || '').split('|').map(x => x.trim()).filter(Boolean)
+const joinLocs  = arr => arr.join(LOC_SEP)
+/* Add `value` to the serialized location string `s`, de-duped case-insensitively. */
+function mergeLoc(s, value) {
+  const v = (value || '').trim()
+  if (!v) return s
+  const cur = splitLocs(s)
+  return cur.some(x => x.toLowerCase() === v.toLowerCase()) ? s : joinLocs([...cur, v])
+}
+/* Remove `value` from the serialized location string `s`, case-insensitively. */
+function dropLoc(s, value) {
+  const v = (value || '').trim().toLowerCase()
+  return joinLocs(splitLocs(s).filter(x => x.toLowerCase() !== v))
+}
 
 const EMPTY_CUSTOMER = {
   entity_type: 'individual',
@@ -336,6 +357,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [origPackageIds, setOrigPackageIds] = useState([])
   const [services,       setServices]       = useState([])
   const [origServiceIds, setOrigServiceIds] = useState([])
+  const [savedPickup,   setSavedPickup]   = useState(() => getSavedLocations('pickup'))
+  const [savedDelivery, setSavedDelivery] = useState(() => getSavedLocations('delivery'))
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [copied,    setCopied]    = useState(null)
@@ -365,9 +388,10 @@ export default function DeliveriesPage({ closed = false }) {
   const [dateFrom,             setDateFrom]             = useState('')
   const [dateTo,               setDateTo]               = useState('')
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
-  const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status', order, x, y }
+  const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
   const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
   const hoverPanelRef = useRef(null)
+  const [feeDraft,             setFeeDraft]             = useState({ amount: '', currency: 'USD' })   // quick delivery-fee edit
   const [driverQuickSearch,    setDriverQuickSearch]    = useState('')
   const [quickBusy,            setQuickBusy]            = useState(false)
   const [sectionsOpen,         setSectionsOpen]         = useState(allSectionsClosed)
@@ -555,6 +579,29 @@ export default function DeliveriesPage({ closed = false }) {
 
   function fld(k, v) { setForm(f => ({ ...f, [k]: v })); setError('') }
 
+  /* Remember a location in the reusable library (localStorage) so it's offered
+     as a quick-pick tag on future orders. */
+  function rememberPickup(v)   { setSavedPickup(addSavedLocation('pickup', v)) }
+  function rememberDelivery(v) { setSavedDelivery(addSavedLocation('delivery', v)) }
+
+  /* Add a warehouse/shop to the pickup-location tags (used when a shop is picked
+     in the External retail invoices section), de-duped, and remember it. */
+  function addPickupTag(name) {
+    const v = (name || '').trim()
+    if (!v) return
+    setForm(f => ({ ...f, pickup_address: mergeLoc(f.pickup_address, v) }))
+    rememberPickup(v)
+  }
+
+  /* Remove a shop from the pickup-location tags — but only if no other retail
+     invoice still references it (so a shared shop tag stays). */
+  function dropPickupTagIfUnused(name, invoices) {
+    const v = (name || '').trim()
+    if (!v) return
+    if (invoices.some(r => r.shop_name?.toLowerCase() === v.toLowerCase())) return
+    setForm(f => ({ ...f, pickup_address: dropLoc(f.pickup_address, v) }))
+  }
+
   /* Fill the order's customer-related fields from a customer record.
      When the contact is a company (entity_type 'company', or a partner placing
      the order on its behalf), the company name goes in the customer box and the
@@ -570,8 +617,11 @@ export default function DeliveriesPage({ closed = false }) {
       recipient_name:     isCompany ? '' : (customerName(c) || f.recipient_name),
       recipient_mobile:   isCompany ? '' : (c.mobile ?? f.recipient_mobile),
       recipient_whatsapp: isCompany ? '' : (c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp),
-      delivery_address:   c.address ?? f.delivery_address,
+      // Merge the customer's address into the delivery-location tags (de-duped)
+      // rather than overwriting any tags already added.
+      delivery_address:   mergeLoc(f.delivery_address, c.address),
     }))
+    if (c.address?.trim()) rememberDelivery(c.address.trim())
     setCustomerInput(displayName)
     setCustomerDropdownOpen(false)
     setError('')
@@ -736,6 +786,8 @@ export default function DeliveriesPage({ closed = false }) {
       invoice_date:      ri.invoice_date ? ri.invoice_date.slice(0, 10) : '',
       invoice_value:     ri.invoice_value ?? '',
       currency:          ri.currency ?? 'USD',
+      paid:              !!ri.paid,
+      payment_type:      ri.payment_type ?? '',
     })))
     const { data: payData } = await supabase
       .from('payment_collections')
@@ -938,7 +990,12 @@ export default function DeliveriesPage({ closed = false }) {
   function addRetailInvoice() {
     setRetailInvoices(p => [...p, { ...EMPTY_RETAIL_INVOICE, invoice_date: new Date().toISOString().slice(0, 10), _key: Date.now() }])
   }
-  function removeRetailInvoice(i) { setRetailInvoices(p => p.filter((_, idx) => idx !== i)) }
+  function removeRetailInvoice(i) {
+    const removed = retailInvoices[i]
+    const next    = retailInvoices.filter((_, idx) => idx !== i)
+    setRetailInvoices(next)
+    dropPickupTagIfUnused(removed?.shop_name, next)
+  }
   function setRetailInvoice(i, k, v) {
     setRetailInvoices(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next })
   }
@@ -1079,6 +1136,8 @@ export default function DeliveriesPage({ closed = false }) {
         invoice_date:      r.invoice_date || new Date().toISOString().slice(0, 10),
         invoice_value:     Number(r.invoice_value) || 0,
         currency:          r.currency || 'USD',
+        paid:              !!r.paid,
+        payment_type:      r.payment_type || null,
         created_by:        currentUser?.user_id || null,
         ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       }))
@@ -1130,101 +1189,8 @@ export default function DeliveriesPage({ closed = false }) {
     })
     if (svcErr) { setError(svcErr); setSaving(false); return }
 
-    // ── On "Mark Closed": post each line of the order to account_transactions ──
-    //    The main order number is carried onto every row. Amounts go to
-    //    credit_amount in each line's own currency.
-    if (close) {
-      const orderNumber = (modal && modal !== 'add') ? modal.order_number : null
-      // The customer's account number, carried onto every posted row.
-      const customerAccount = selCustomer?.account_number || form.main_account || null
-      const txnDate = new Date().toISOString().slice(0, 10)   // close date
-      const base = {
-        order_id:           orderId,
-        order_number:       orderNumber,
-        transaction_number: orderNumber,        // order number on every row
-        customer_id:        form.customer_id,
-        account_number:     customerAccount,    // customer account number on every row
-        company_id:         COMPANY_ID || null,
-        branch_id:          currentUser?.branch_id || null,
-        created_by:         currentUser?.user_id || null,
-        debit_amount:       0,
-        exchange_rate:      1,
-      }
-      const txns = []
-
-      // Delivery packages → PACKAGE (no own currency → order currency)
-      // Packages paid directly to the provider are not posted to the ledger.
-      for (const p of packages) {
-        if (p.paid) continue
-        txns.push({
-          ...base,
-          transaction_date:        txnDate,
-          transaction_reference:   p.tracking_number || null,
-          quantity:                Number(p.quantity) || 1,
-          credit_amount:           Number(p.package_price) || 0,
-          currency_code:           p.currency || form.currency,
-          transaction_type:        'PACKAGE',
-        })
-      }
-      // Order services → SERVICES
-      for (const s of services) {
-        txns.push({
-          ...base,
-          transaction_date:        s.service_date || txnDate,
-          transaction_reference:   s.service_reference || null,
-          transaction_description: s.service_description || null,
-          quantity:                Number(s.quantity) || 1,
-          credit_amount:           Number(s.service_fees) || 0,
-          currency_code:           s.service_fees_currency || 'USD',
-          transaction_type:        'SERVICES',
-        })
-      }
-      // Local retail items → INVENTORY ITEM
-      for (const it of items) {
-        const prod = products.find(pr => pr.id === it.product_id)
-        txns.push({
-          ...base,
-          transaction_date:        txnDate,
-          transaction_reference:   prod?.code || null,
-          transaction_description: prod?.name || null,
-          quantity:                Number(it.quantity) || 1,
-          credit_amount:           lineTotal(it),
-          currency_code:           it.currency || 'USD',
-          transaction_type:        'INVENTORY ITEM',
-        })
-      }
-      // External retail invoice references → MARKET INVOICE
-      for (const r of retailInvoices.filter(x => x.shop_name?.trim())) {
-        txns.push({
-          ...base,
-          transaction_date:        r.invoice_date || txnDate,
-          transaction_reference:   r.invoice_reference || null,
-          transaction_description: r.shop_name.trim(),
-          quantity:                1,
-          credit_amount:           Number(r.invoice_value) || 0,
-          currency_code:           r.currency || 'USD',
-          transaction_type:        'MARKET INVOICE',
-        })
-      }
-      // Delivery fee → DELIVERY FEES
-      if (Number(form.delivery_fee) > 0) {
-        txns.push({
-          ...base,
-          transaction_date:        txnDate,
-          transaction_reference:   orderNumber,
-          transaction_description: '3asari3 KOUSBA - MAIN branch',
-          quantity:                1,
-          credit_amount:           Number(form.delivery_fee) || 0,
-          currency_code:           form.currency,
-          transaction_type:        'DELIVERY FEES',
-        })
-      }
-
-      if (txns.length > 0) {
-        const { error: te } = await supabase.from('account_transactions').insert(txns)
-        if (te) { setError(`Order closed, but posting account transactions failed: ${te.message}`); setSaving(false); return }
-      }
-    }
+    // On "Mark Closed" the order is simply locked via the isclosed flag (set in
+    // the update payload above). No account_transactions are posted.
 
     // ── Credit customer: on close with an unpaid balance, record a sales
     //    invoice so the customer shows up in v_credit_customer_balances. ───────
@@ -1264,8 +1230,9 @@ export default function DeliveriesPage({ closed = false }) {
   function openPopover(type, order, e) {
     if (isRowLocked(order)) return
     const rect = e.currentTarget.getBoundingClientRect()
-    const width = type === 'driver' ? 240 : 176
+    const width = type === 'driver' ? 240 : type === 'fee' ? 220 : 176
     setDriverQuickSearch('')
+    if (type === 'fee') setFeeDraft({ amount: order.delivery_fee ?? '', currency: order.currency || 'USD' })
     setPopover({
       type,
       order,
@@ -1284,6 +1251,22 @@ export default function DeliveriesPage({ closed = false }) {
   async function quickSetStatus(order, uiStatus) {
     setQuickBusy(true)
     await supabase.from('delivery_orders').update({ status: toDbStatus(uiStatus) }).eq('id', order.id)
+    await fetchOrders()
+    setQuickBusy(false); setPopover(null)
+  }
+
+  // Quick delivery-fee edit from the list. Updates delivery_fee + currency and
+  // recomputes total_amount (in the order's primary currency) so list totals and
+  // the Amount(s) sort stay in sync.
+  async function quickSaveFee(order, amount, currency) {
+    setQuickBusy(true)
+    const fee = Math.max(0, Number(amount) || 0)
+    const totals = orderTotalsByCurrency({ ...order, delivery_fee: fee, currency })
+    await supabase.from('delivery_orders').update({
+      delivery_fee: fee,
+      currency,
+      total_amount: Math.max(0, totals[currency] || 0),
+    }).eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
   }
@@ -1334,6 +1317,15 @@ export default function DeliveriesPage({ closed = false }) {
     if (name) supplierByName[name] = c
   })
   const supplierOptions   = Object.keys(supplierByName)
+
+  // Quick-pick suggestions for the pickup / delivery tag fields: the user's saved
+  // locations, plus values already used on other orders (and supplier shops for
+  // pickup), de-duped case-sensitively for display.
+  const uniq = arr => [...new Set(arr.filter(Boolean))]
+  const pickupSuggestions   = uniq([...savedPickup, ...supplierOptions,
+    ...(orders ?? []).flatMap(o => splitLocs(o.pickup_address))])
+  const deliverySuggestions = uniq([...savedDelivery,
+    ...(orders ?? []).flatMap(o => splitLocs(o.delivery_address))])
 
   // Counts shown in the section titles.
   const packagesQty = packages.reduce((s, p) => s + (Number(p.quantity) || 0), 0)
@@ -1476,7 +1468,7 @@ export default function DeliveriesPage({ closed = false }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #','Recipient','Customer','Driver','Address','Status','Payment',''].map(h => {
+              {['Order #','Recipient','Customer','Driver','Delivery Fee','Address','Status','Payment',''].map(h => {
                 const sortable = !!SORT_GETTERS[h]
                 const active   = sort.col === h
                 return (
@@ -1498,9 +1490,9 @@ export default function DeliveriesPage({ closed = false }) {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : sorted.map(o => (
               <tr key={o.id}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
@@ -1572,6 +1564,18 @@ export default function DeliveriesPage({ closed = false }) {
                     </button>
                     {o.driver ? `${o.driver.first_name} ${o.driver.last_name}` : <span className="text-slate-600">Unassigned</span>}
                   </div>
+                </td>
+                <td className="px-4 py-3">
+                  <button type="button" disabled={isRowLocked(o)}
+                    onClick={(e) => openPopover('fee', o, e)}
+                    title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Edit delivery fee'}
+                    className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
+                      Number(o.delivery_fee) > 0
+                        ? 'border-green-500/30 bg-green-500/10 text-green-300'
+                        : 'border-surface-border bg-surface-hover text-slate-400'}`}>
+                    <Wallet className="w-3.5 h-3.5" />
+                    {fmtMoney(o.delivery_fee, o.currency)} {o.currency || 'USD'}
+                  </button>
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs max-w-[130px] truncate">{o.delivery_address}</td>
                 <td className="px-4 py-3">
@@ -1821,16 +1825,20 @@ export default function DeliveriesPage({ closed = false }) {
               {/* ── Route ─────────────────────────────────────── */}
               <CollapsibleSection title="Route" open={sectionsOpen.route} onToggle={v => toggleSection('route', v)}>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="label">Pickup / Origin</label>
-                    <input className="input" value={form.pickup_address}
-                      onChange={e => fld('pickup_address', e.target.value)} placeholder="Warehouse address" />
-                  </div>
-                  <div>
-                    <label className="label text-fuchsia-300">Delivery Address *</label>
-                    <input className="input" value={form.delivery_address}
-                      onChange={e => fld('delivery_address', e.target.value)} placeholder="Auto-filled from customer or enter manually" />
-                  </div>
+                  <TagLocationField
+                    label="Pickup / Origin"
+                    tags={splitLocs(form.pickup_address)}
+                    setTags={arr => fld('pickup_address', joinLocs(arr))}
+                    suggestions={pickupSuggestions}
+                    onAddNew={rememberPickup}
+                    placeholder="Add warehouse / pickup…" />
+                  <TagLocationField
+                    label="Delivery Address" required
+                    tags={splitLocs(form.delivery_address)}
+                    setTags={arr => fld('delivery_address', joinLocs(arr))}
+                    suggestions={deliverySuggestions}
+                    onAddNew={rememberDelivery}
+                    placeholder="Add delivery address…" />
                 </div>
                 <div className="flex items-end gap-5">
                   <div className="w-36 flex-shrink-0">
@@ -2007,40 +2015,44 @@ export default function DeliveriesPage({ closed = false }) {
                   </button>
                 }>
 
-                <div className="border border-surface-border rounded-xl overflow-hidden">
-                  <table className="w-full text-xs">
+                <div className="border border-surface-border rounded-xl overflow-x-auto">
+                  <table className="w-full text-xs min-w-[860px]">
                     <thead>
                       <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
-                        <th className="text-left px-3 py-2 w-[30%]">Warehouse / Shop</th>
-                        <th className="text-left px-3 py-2 w-[22%]">Invoice Ref</th>
-                        <th className="text-left px-3 py-2 w-[20%]">Date</th>
-                        <th className="text-left px-3 py-2 w-[14%]">Amount</th>
-                        <th className="text-left px-3 py-2 w-[10%]">Currency</th>
+                        <th className="text-left px-3 py-2 w-[22%]">Warehouse / Shop</th>
+                        <th className="text-left px-3 py-2 w-[14%]">Invoice Ref</th>
+                        <th className="text-left px-3 py-2 w-[12%]">Date</th>
+                        <th className="text-left px-3 py-2 w-[11%]">Amount</th>
+                        <th className="text-left px-3 py-2 w-[9%]">Currency</th>
+                        <th className="text-left px-3 py-2 w-[13%]">Paid</th>
+                        <th className="text-left px-3 py-2 w-[15%]">Payment Type</th>
                         <th className="w-[4%]"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {retailInvoices.length === 0 ? (
-                        <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
+                        <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
                       ) : retailInvoices.map((ri, idx) => (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             <select className="input py-1.5 text-xs" value={ri.shop_name}
                               onChange={e => {
                                 const name = e.target.value
+                                const prevName = retailInvoices[idx]?.shop_name || ''
                                 // Auto-fill business type + the contact link/code from the selected supplier.
                                 const sup = supplierByName[name]
-                                setRetailInvoices(p => {
-                                  const next = [...p]
-                                  next[idx] = {
-                                    ...next[idx],
-                                    shop_name:    name,
-                                    shop_type:    sup?.shop_type || '',
-                                    contact_id:   sup?.id || '',
-                                    contact_code: sup?.code || '',
-                                  }
-                                  return next
-                                })
+                                const next = retailInvoices.map((r, j) => j === idx ? {
+                                  ...r,
+                                  shop_name:    name,
+                                  shop_type:    sup?.shop_type || '',
+                                  contact_id:   sup?.id || '',
+                                  contact_code: sup?.code || '',
+                                } : r)
+                                setRetailInvoices(next)
+                                // Keep pickup tags in sync: drop the old shop (if unused
+                                // elsewhere) and add the newly selected one.
+                                if (prevName.toLowerCase() !== name.toLowerCase()) dropPickupTagIfUnused(prevName, next)
+                                addPickupTag(name)
                               }}>
                               <option value="">— Select —</option>
                               {ri.shop_name && !supplierOptions.includes(ri.shop_name) && (
@@ -2055,25 +2067,45 @@ export default function DeliveriesPage({ closed = false }) {
                               </p>
                             )}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             <input className="input py-1.5 text-xs" value={ri.invoice_reference}
                               onChange={e => setRetailInvoice(idx, 'invoice_reference', e.target.value)} placeholder="Ref / #" />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             <input type="date" className="input py-1.5 text-xs" value={ri.invoice_date}
                               onChange={e => setRetailInvoice(idx, 'invoice_date', e.target.value)} />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={ri.invoice_value}
                               onChange={e => setRetailInvoice(idx, 'invoice_value', e.target.value)} placeholder="0.00" />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             <select className="input py-1.5 text-xs" value={ri.currency}
                               onChange={e => setRetailInvoice(idx, 'currency', e.target.value)}>
                               {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
+                            <button type="button" onClick={() => setRetailInvoice(idx, 'paid', !ri.paid)}
+                              aria-pressed={!!ri.paid}
+                              title={ri.paid ? 'Paid directly to shop — excluded from order total' : 'Not paid — counted in order total'}
+                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none
+                                ${ri.paid
+                                  ? 'bg-green-500/15 border-green-500/40 text-green-300'
+                                  : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
+                              {ri.paid ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
+                              {ri.paid ? 'Paid' : 'Not paid'}
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            <select className="input py-1.5 text-xs" value={ri.payment_type}
+                              disabled={!ri.paid}
+                              onChange={e => setRetailInvoice(idx, 'payment_type', e.target.value)}>
+                              <option value="">—</option>
+                              {PAYMENT_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2 align-top">
                             <button onClick={() => removeRetailInvoice(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -2086,7 +2118,7 @@ export default function DeliveriesPage({ closed = false }) {
               </CollapsibleSection>
 
               {/* ── Delivery Fees & Totals ─────────────────────── */}
-              <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={sectionsOpen.totals} onToggle={v => toggleSection('totals', v)}>
+              <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={true} onToggle={() => {}}>
 
                 <div className="grid grid-cols-4 gap-3">
                   <div>
@@ -2617,7 +2649,7 @@ export default function DeliveriesPage({ closed = false }) {
         <div className="fixed inset-0 z-[60]" onClick={() => !quickBusy && setPopover(null)}>
           <div
             className="absolute card border border-surface-border rounded-lg shadow-xl overflow-hidden"
-            style={{ top: popover.y, left: popover.x, width: popover.type === 'driver' ? 240 : 176 }}
+            style={{ top: popover.y, left: popover.x, width: popover.type === 'driver' ? 240 : popover.type === 'fee' ? 220 : 176 }}
             onClick={e => e.stopPropagation()}>
 
             {popover.type === 'driver' ? (
@@ -2677,6 +2709,32 @@ export default function DeliveriesPage({ closed = false }) {
                     </button>
                   )
                 })}
+              </div>
+            ) : popover.type === 'fee' ? (
+              <div className="p-3 space-y-2.5">
+                <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Delivery Fee</p>
+                <div className="flex items-center gap-1.5">
+                  <input type="number" min="0" step="0.01" autoFocus
+                    className="input flex-1 min-w-0 py-1.5 text-xs"
+                    value={feeDraft.amount}
+                    onChange={e => setFeeDraft(f => ({ ...f, amount: e.target.value }))}
+                    placeholder="0.00" />
+                  <select className="input w-[68px] py-1.5 text-xs"
+                    value={feeDraft.currency}
+                    onChange={e => setFeeDraft(f => ({ ...f, currency: e.target.value }))}>
+                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <button type="button" disabled={quickBusy}
+                  onClick={() => setFeeDraft(f => ({ ...f, amount: '0' }))}
+                  className="w-full text-[11px] px-2 py-1.5 rounded border border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover transition-colors disabled:opacity-50">
+                  Clear
+                </button>
+                <button type="button" disabled={quickBusy}
+                  onClick={() => quickSaveFee(popover.order, feeDraft.amount, feeDraft.currency)}
+                  className="w-full text-xs px-2 py-1.5 rounded bg-brand-600 text-white hover:bg-brand-500 transition-colors disabled:opacity-50">
+                  {quickBusy ? 'Saving…' : 'Save'}
+                </button>
               </div>
             ) : (
               <div className="p-1">

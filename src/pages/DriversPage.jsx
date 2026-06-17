@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, X, Check,
+  Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, Power, X, Check,
   AlertCircle, ChevronRight, KeyRound, Copy, Eye, EyeOff,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -106,7 +106,7 @@ export default function DriversPage() {
   const [modal,    setModal]    = useState(null)   // null | 'add' | contact row
   const [form,     setForm]     = useState(emptyForm)
   const [saving,   setSaving]   = useState(false)
-  const [deleting, setDeleting] = useState(null)
+  const [toggling, setToggling] = useState(null)
   const [codeNotice, setCodeNotice] = useState(null)   // { code, account_number, name } after a new driver is created
   const [pettyCash,    setPettyCash]    = useState([]) // driver_petty_cash rows in the sub-form
   const [origPettyIds, setOrigPettyIds] = useState([]) // ids loaded on edit, to detect removals
@@ -419,11 +419,13 @@ export default function DriversPage() {
     }
   }
 
-  async function handleDelete(id) {
-    setDeleting(id)
-    await supabase.from('contacts').delete().eq('id', id)
+  // Activate / deactivate a driver — mirrors the customers list (toggles the
+  // shared contacts.is_active flag) instead of hard-deleting the record.
+  async function toggleActive(driver) {
+    setToggling(driver.id)
+    await supabase.from('contacts').update({ is_active: !driver.is_active }).eq('id', driver.id)
     await fetchDrivers()
-    setDeleting(null)
+    setToggling(null)
   }
 
   function field(key, value) {
@@ -474,7 +476,7 @@ export default function DriversPage() {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={8} className="px-5 py-10 text-center text-slate-500">No drivers found</td></tr>
             ) : filtered.map(driver => (
-              <tr key={driver.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors">
+              <tr key={driver.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${!driver.is_active ? 'opacity-50' : ''}`}>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-brand-600/30 flex items-center justify-center text-brand-300 text-xs font-bold flex-shrink-0">
@@ -505,7 +507,9 @@ export default function DriversPage() {
                 </td>
                 <td className="px-5 py-3 text-slate-400 text-xs">{driver.city || '—'}</td>
                 <td className="px-5 py-3">
-                  {(() => {
+                  {!driver.is_active ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border bg-slate-500/10 text-slate-500 border-slate-500/20">Inactive</span>
+                  ) : (() => {
                     const s = dutyStatus(driver)
                     return (
                       <div>
@@ -536,11 +540,12 @@ export default function DriversPage() {
                   <div className="flex items-center gap-2 justify-end">
                     <button onClick={() => openEdit(driver)} className="btn-ghost p-1.5 text-slate-500"><Edit2 className="w-4 h-4" /></button>
                     <button
-                      onClick={() => handleDelete(driver.id)}
-                      disabled={deleting === driver.id}
-                      className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10"
+                      onClick={() => toggleActive(driver)}
+                      disabled={toggling === driver.id}
+                      title={driver.is_active ? 'Deactivate' : 'Activate'}
+                      className={`btn-ghost p-1.5 ${driver.is_active ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-500 hover:text-green-400 hover:bg-green-500/10'}`}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Power className="w-4 h-4" />
                     </button>
                   </div>
                 </td>
