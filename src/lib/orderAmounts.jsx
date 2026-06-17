@@ -29,7 +29,7 @@ export function orderTotalsByCurrency(o) {
   for (const r of (o.retail_goods_invoices ?? []))  if (!r.paid) add(r.currency || 'USD', Number(r.invoice_value) || 0)
   const discountCur = o.discount_currency || o.currency
   add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
-  add(discountCur, Number(o.discount_amount) > 0 ? -Number(o.discount_amount) : 0)
+  add(discountCur, -Math.abs(Number(o.discount_amount) || 0))
   add(o.currency, Number(o.vat_amount) > 0 ? Number(o.vat_amount) : 0)
   return t
 }
@@ -88,7 +88,7 @@ export function fmtAmount(n, cur) {
      total          Total All = packages+services+localRetail+externalRetail+fees−discount+vat
      collected      paid by the customer (to the driver) so far
      balance        Total All − collected
-     fromDriver     to collect from the driver = fees + localRetail + unpaid packages
+     fromDriver     to collect from the driver = total (after discount) − collected
      pending        Order Pending = localRetail + fees                         */
 export function orderAmountBreakdown(o) {
   const feeCur      = o.currency || 'USD'
@@ -124,7 +124,7 @@ export function orderAmountBreakdown(o) {
     b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.paid })
   }
   if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
-  if (Number(o.discount_amount) > 0) bucket(discountCur).discount += Number(o.discount_amount)
+  if (Number(o.discount_amount)) bucket(discountCur).discount += Math.abs(Number(o.discount_amount))
   if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
 
   const collected = orderCollectedByCurrency(o)
@@ -149,7 +149,9 @@ export function orderAmountBreakdown(o) {
       packageLines: b.packageLines, serviceLines: b.serviceLines, externalLines: b.externalLines,
       total, collected: coll,
       balance:    round2(total - coll),
-      fromDriver: round2(fees + localRetail + packages),
+      // "To collect from the driver" = the order total (after discount) minus what
+      // the customer has already paid.
+      fromDriver: round2(total - coll),
       pending:    round2(localRetail + fees),
     })
   }

@@ -287,7 +287,8 @@ function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurr
   for (const s of services) add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
   for (const r of retailInvoices) add(r.currency || 'USD', Number(r.invoice_value) || 0)
   add(feeCurrency, Number(deliveryFee) || 0)
-  add(discountCurrency, -(Number(discount) || 0))
+  // Discount always reduces the total, in its own currency (never adds).
+  add(discountCurrency, -Math.abs(Number(discount) || 0))
   add(feeCurrency, Number(vat) || 0)
   return t
 }
@@ -502,12 +503,18 @@ export default function DeliveriesPage({ closed = false }) {
   const filtered = orders.filter(o => {
     // Closed orders live on their own page; the daily Orders page excludes them.
     const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
-    const matchSearch = (
-      o.order_number?.toLowerCase().includes(search.toLowerCase()) ||
-      o.recipient_name?.toLowerCase().includes(search.toLowerCase()) ||
-      o.recipient_mobile?.includes(search) ||
-      o.delivery_address?.toLowerCase().includes(search.toLowerCase())
-    )
+    const q = search.toLowerCase()
+    const matchSearch = !search || [
+      o.order_number,
+      o.recipient_name,
+      o.recipient_mobile,
+      o.recipient_whatsapp,
+      o.delivery_address,
+      o.pickup_address,
+      o.main_account,
+      o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
+      o.customer?.account_number,
+    ].some(v => String(v ?? '').toLowerCase().includes(q))
     return matchClosed && matchSearch
       && (filter === 'all' || normalizeStatus(o.status) === filter)
       && (!driverFilter   || o.driver_id   === driverFilter)
@@ -1060,7 +1067,7 @@ export default function DeliveriesPage({ closed = false }) {
       delivery_fee:         Number(form.delivery_fee)    || 0,
       currency:             form.currency,
       items_total:          itemsInPrimary,
-      discount_amount:      Number(form.discount_amount) || 0,
+      discount_amount:      Math.abs(Number(form.discount_amount) || 0),
       discount_currency:    form.discount_currency || form.currency,
       vat_amount:           Number(form.vat_amount)      || 0,
       total_amount:         Math.max(0, totals[form.currency] || 0),
@@ -1299,6 +1306,15 @@ export default function DeliveriesPage({ closed = false }) {
     setCopied(num); setTimeout(() => setCopied(null), 1500)
   }
 
+  // driver_id → latest assigned vehicle label (asset_code · make · model), shown
+  // under the driver name in the daily list. Sourced from the drivers in context,
+  // which already carry their most-recent vehicle assignment.
+  const driverVehicle = {}
+  for (const d of drivers) {
+    const v = d.assigned_vehicle
+    if (v) driverVehicle[d.id] = [v.asset_code, v.make, v.model].filter(Boolean).join(' · ')
+  }
+
   /* ── totals (live) ───────────────────────────────────────── */
 
   const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
@@ -1468,7 +1484,7 @@ export default function DeliveriesPage({ closed = false }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #','Recipient','Customer','Driver','Delivery Fee','Address','Status','Payment',''].map(h => {
+              {['Order #','Recipient','Customer','Driver','Delivery Fee','Status','Payment',''].map(h => {
                 const sortable = !!SORT_GETTERS[h]
                 const active   = sort.col === h
                 return (
@@ -1490,9 +1506,9 @@ export default function DeliveriesPage({ closed = false }) {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : sorted.map(o => (
               <tr key={o.id}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
@@ -1503,6 +1519,9 @@ export default function DeliveriesPage({ closed = false }) {
                 :                  'hover:bg-surface-hover/40'} ${
                 isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
                 <td className="px-4 py-3">
+                  {o.scheduled_date && (
+                    <p className="text-slate-500 text-[11px] font-mono tracking-wider">{String(o.scheduled_date).slice(0, 10)}</p>
+                  )}
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => copyNum(o.order_number)}
                       className="font-mono text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
@@ -1536,6 +1555,12 @@ export default function DeliveriesPage({ closed = false }) {
                 <td className="px-4 py-3">
                   <p className="text-slate-100 text-sm">{o.recipient_name}</p>
                   <p className="text-slate-500 text-xs">{formatMobile(o.recipient_mobile)}</p>
+                  {o.pickup_address && (
+                    <p className="text-slate-500 text-[11px] font-mono tracking-wider">From : {o.pickup_address}</p>
+                  )}
+                  {o.delivery_address && (
+                    <p className="text-slate-500 text-[11px] font-mono tracking-wider">To : {o.delivery_address}</p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   {o.customer ? (
@@ -1562,7 +1587,12 @@ export default function DeliveriesPage({ closed = false }) {
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Truck className="w-3.5 h-3.5" />
                     </button>
-                    {o.driver ? `${o.driver.first_name} ${o.driver.last_name}` : <span className="text-slate-600">Unassigned</span>}
+                    <div>
+                      {o.driver ? `${o.driver.first_name} ${o.driver.last_name}` : <span className="text-slate-600">Unassigned</span>}
+                      {!closed && o.driver && driverVehicle[o.driver_id] && (
+                        <p className="text-slate-500 text-[11px] font-mono tracking-wider">{driverVehicle[o.driver_id]}</p>
+                      )}
+                    </div>
                   </div>
                 </td>
                 <td className="px-4 py-3">
@@ -1576,8 +1606,12 @@ export default function DeliveriesPage({ closed = false }) {
                     <Wallet className="w-3.5 h-3.5" />
                     {fmtMoney(o.delivery_fee, o.currency)} {o.currency || 'USD'}
                   </button>
+                  {Number(o.discount_amount) !== 0 && (
+                    <p className="text-slate-500 text-[11px] font-mono tracking-wider mt-1">
+                      Discount : {fmtMoney(Math.abs(Number(o.discount_amount)), o.discount_currency || o.currency)} {o.discount_currency || o.currency || 'USD'}
+                    </p>
+                  )}
                 </td>
-                <td className="px-4 py-3 text-slate-400 text-xs max-w-[130px] truncate">{o.delivery_address}</td>
                 <td className="px-4 py-3">
                   <button type="button" disabled={isRowLocked(o)}
                     onClick={(e) => openPopover('status', o, e)}

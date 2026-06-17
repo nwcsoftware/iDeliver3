@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown } from 'lucide-react'
+import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -37,14 +37,21 @@ function driverName(d) {
   return `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim() || (d.name ?? '—')
 }
 
-/* Order status "completed" — the status enum stores delivered/returned, which the
-   app treats as completed (same mapping as the Deliveries list). */
+/* Order status reads "completed" — the order_status enum stores delivered/returned,
+   which the app surfaces as "completed" (same mapping as the Deliveries list). */
 function isCompleted(o) { return ['completed', 'delivered', 'returned'].includes(o?.status) }
-/* Driver collected all the money = the order is fully paid to the office. */
+/* Delivery completed — the driver has handed the goods to the customer. */
+function isDelivered(o) { return o?.delivery_status === 'Delivered' }
+/* Customer paid the driver in full ("Money Fully collected" / paid to office). */
 function isFullyCollected(o) { return o?.payment_status === 'paid_to_office' }
-/* An order shows up for driver settlement once it's closed, OR once it's both
-   completed and fully collected (the driver is holding all the cash). */
-function isSettlementEligible(o) { return o?.isclosed === true || (isCompleted(o) && isFullyCollected(o)) }
+/* An order shows up for driver settlement once it's closed, when its order status
+   is completed AND it's delivered, or when it's delivered and fully collected from
+   the customer (the driver holds the cash either way). */
+function isSettlementEligible(o) {
+  return o?.isclosed === true
+    || (isCompleted(o) && isDelivered(o))
+    || (isDelivered(o) && isFullyCollected(o))
+}
 
 /* The closing date of an order (else its scheduled date) — what the call-center
    user filters the day's collections by. */
@@ -56,7 +63,7 @@ function orderDate(o) {
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DriverDuesPage() {
-  const { orders, drivers, loading } = useApp()
+  const { orders, drivers, loading, fetchOrders } = useApp()
   const { currentUser } = useAuth()
 
   const [tab,     setTab]     = useState('collect')   // 'collect' (dues to collect) | 'history'
@@ -163,8 +170,10 @@ export default function DriverDuesPage() {
       const cur = CURRENCIES.includes(r.currency) ? r.currency : 'USD'
       retail[cur] += round2(r.invoice_value)
     }
+    // Petty cash (retail) is no longer deducted — the total dues equal the
+    // collected cash, so net mirrors collected per currency.
     const net = emptyCur()
-    for (const c of CURRENCIES) net[c] = round2(collected[c] - retail[c])
+    for (const c of CURRENCIES) net[c] = round2(collected[c])
     return {
       order:     o,
       driver:    o.driver,
@@ -357,6 +366,22 @@ export default function DriverDuesPage() {
     setCollectRows([]); setPosting(false)
   }
 
+  /* ── mark an order as closed ─────────────────────────────────
+     Only allowed once the cash has been collected from the driver (a settlement
+     line exists) and nothing is pending — i.e. the order balance is zero. Locks
+     the order via the same isclosed flag the Deliveries list uses. */
+  const [closingId, setClosingId] = useState(null)
+
+  async function markClosed(orderId) {
+    setClosingId(orderId)
+    const { error } = await supabase
+      .from('delivery_orders')
+      .update({ isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null })
+      .eq('id', orderId)
+    setClosingId(null)
+    if (!error) await fetchOrders()
+  }
+
   /* ── filter summary (toolbar + PDF) ──────────────────────── */
 
   const selectedDriverName = filters.driver_id
@@ -390,30 +415,29 @@ export default function DriverDuesPage() {
     autoTable(doc, {
       startY: 32,
       head: [['Date', 'Order #', 'Driver', 'Customer',
-        'Collected USD', 'Collected LBP', 'Retail USD', 'Retail LBP', 'Net USD', 'Net LBP', 'Settled']],
+        'Collected USD', 'Collected LBP', 'Total dues USD', 'Total dues LBP', 'Settled']],
       body: visible.map(r => [
         orderDate(r.order) || '—',
         r.order.order_number ?? '—',
         driverName(r.driver),
         r.order.recipient_name ?? '—',
         r.collected.USD.toFixed(2), r.collected.LBP.toFixed(0),
-        r.retail.USD.toFixed(2),    r.retail.LBP.toFixed(0),
         r.net.USD.toFixed(2),       r.net.LBP.toFixed(0),
         r.settled ? 'Yes' : 'No',
       ]),
       styles: { fontSize: 7, cellPadding: 1.2 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 247, 250] },
-      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' } },
+      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
     })
 
     let y = (doc.lastAutoTable?.finalY ?? 32) + 8
     doc.setFontSize(10); doc.setTextColor(20)
     doc.text(`Orders: ${visible.length}`, marginX, y); y += 6
     for (const c of CURRENCIES) {
-      if (!visibleTotals.collected[c] && !visibleTotals.retail[c]) continue
+      if (!visibleTotals.collected[c]) continue
       doc.text(
-        `${c} — Collected ${fmtMoney(visibleTotals.collected[c], c)}   Petty cash ${fmtMoney(visibleTotals.retail[c], c)}   Net due from driver ${fmtMoney(visibleTotals.net[c], c)}`,
+        `${c} — Collected ${fmtMoney(visibleTotals.collected[c], c)}   Total dues from driver ${fmtMoney(visibleTotals.net[c], c)}`,
         marginX, y)
       y += 5
     }
@@ -546,7 +570,7 @@ export default function DriverDuesPage() {
                     onChange={toggleAll} />
                 )}
               </th>
-              {['Date', 'Order #', 'Driver', 'Customer', 'Collected', 'Petty cash (retail)', 'Net due', 'Status'].map(h => (
+              {['Date', 'Order #', 'Driver', 'Customer', 'Collected', 'Total dues', 'Status'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
               ))}
               <th className="px-4 py-3" />
@@ -554,9 +578,9 @@ export default function DriverDuesPage() {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {busy ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
             ) : visible.map(r => {
               const o = r.order
               const selectable = !r.settled && !!filters.driver_id
@@ -580,12 +604,6 @@ export default function DriverDuesPage() {
                     ))}
                     {r.collected.USD === 0 && r.collected.LBP === 0 && <span className="text-slate-600">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                    {CURRENCIES.filter(c => r.retail[c] > 0).map(c => (
-                      <div key={c} className="text-amber-400">{fmtMoney(r.retail[c], c)}</div>
-                    ))}
-                    {r.retail.USD === 0 && r.retail.LBP === 0 && <span className="text-slate-600">—</span>}
-                  </td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap font-medium">
                     {CURRENCIES.filter(c => r.net[c] !== 0).map(c => (
                       <div key={c} className="text-slate-100">{fmtMoney(r.net[c], c)}</div>
@@ -593,15 +611,28 @@ export default function DriverDuesPage() {
                     {r.net.USD === 0 && r.net.LBP === 0 && <span className="text-slate-600">—</span>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {r.settled
+                    {o.isclosed
+                      ? <span className="px-2 py-0.5 rounded text-xs font-medium border bg-slate-600/15 text-slate-300 border-slate-600/30 inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Closed</span>
+                      : r.settled
                       ? <span className="px-2 py-0.5 rounded text-xs font-medium border bg-green-600/10 text-green-300 border-green-600/20 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Collected</span>
                       : <span className="px-2 py-0.5 rounded text-xs font-medium border bg-amber-600/10 text-amber-300 border-amber-600/20">Outstanding</span>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {!r.settled && (
+                      {!r.settled && !o.isclosed && (
                         <button className="btn-primary py-1 px-2.5 text-xs" onClick={() => openCollect([r])}>
                           <Banknote className="w-3.5 h-3.5" /> Collect
+                        </button>
+                      )}
+                      {!o.isclosed && (
+                        <button
+                          onClick={() => markClosed(o.id)}
+                          disabled={!r.settled || closingId === o.id}
+                          title={r.settled
+                            ? 'Mark as closed'
+                            : 'Collect the cash from the driver first — balance must be zero'}
+                          className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Lock className="w-4 h-4" />
                         </button>
                       )}
                     </div>
@@ -624,19 +655,15 @@ export default function DriverDuesPage() {
           </div>
           <div className="flex items-center gap-5 flex-wrap">
             <div className="flex items-center gap-4 flex-wrap">
-              {CURRENCIES.filter(c => visibleTotals.collected[c] || visibleTotals.retail[c] || visibleTotals.driverCollect[c]).map(c => (
+              {CURRENCIES.filter(c => visibleTotals.collected[c]).map(c => (
                 <div key={c} className="text-xs text-slate-300">
                   <span className="text-slate-500 uppercase tracking-wider font-semibold mr-1.5">{c}</span>
                   <span className="text-green-400">Collected {fmtMoney(visibleTotals.collected[c], c)}</span>
                   <span className="text-slate-600 mx-1">·</span>
-                  <span className="text-amber-400">Petty {fmtMoney(visibleTotals.retail[c], c)}</span>
-                  <span className="text-slate-600 mx-1">·</span>
-                  <span className="font-semibold text-slate-100">Net {fmtMoney(visibleTotals.net[c], c)}</span>
-                  <span className="text-slate-600 mx-1">·</span>
-                  <span className="font-semibold text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.75)]">To collect {fmtMoney(visibleTotals.driverCollect[c], c)}</span>
+                  <span className="font-semibold text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.75)]">Total dues {fmtMoney(visibleTotals.net[c], c)}</span>
                 </div>
               ))}
-              {!CURRENCIES.some(c => visibleTotals.collected[c] || visibleTotals.retail[c] || visibleTotals.driverCollect[c]) && (
+              {!CURRENCIES.some(c => visibleTotals.collected[c]) && (
                 <span className="text-sm text-slate-500">No totals</span>
               )}
             </div>
@@ -777,14 +804,13 @@ export default function DriverDuesPage() {
             </p>
 
             <div className="rounded-lg border border-surface-border divide-y divide-surface-border/60">
-              {CURRENCIES.filter(c => collectTotals.collected[c] || collectTotals.retail[c]).map(c => (
+              {CURRENCIES.filter(c => collectTotals.collected[c]).map(c => (
                 <div key={c} className="px-3 py-2.5 space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-slate-500 uppercase tracking-wider text-xs font-semibold">{c}</span>
                     <div className="flex items-center gap-4">
                       <span className="text-green-400 text-xs">Collected {fmtMoney(collectTotals.collected[c], c)}</span>
-                      <span className="text-amber-400 text-xs">Petty {fmtMoney(collectTotals.retail[c], c)}</span>
-                      <span className="text-slate-100 font-semibold">Net {fmtMoney(collectTotals.net[c], c)}</span>
+                      <span className="text-slate-100 font-semibold">Total dues {fmtMoney(collectTotals.net[c], c)}</span>
                     </div>
                   </div>
                   {collectDrivers.length === 1 ? (
