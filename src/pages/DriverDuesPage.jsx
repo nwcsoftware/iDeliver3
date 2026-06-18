@@ -236,6 +236,14 @@ export default function DriverDuesPage() {
 
   const selectedRows = outstandingVisible.filter(r => selected.has(r.order.id))
 
+  // Why the "Collect & Close" button is inactive, so the UI can explain it
+  // instead of silently ignoring the click.
+  const collectDisabledReason =
+    !filters.driver_id            ? 'Pick a driver first'
+    : outstandingVisible.length === 0 ? 'No outstanding orders to collect for this driver'
+    : selectedRows.length === 0   ? 'Select at least one order'
+    : ''
+
   /* ── totals (per currency) for the visible rows ──────────── */
 
   function sumRows(rows) {
@@ -361,7 +369,26 @@ export default function DriverDuesPage() {
       }
     }
 
+    // Collecting the cash from the driver closes the orders in the same click —
+    // money is now in the call center, so each order is locked via isclosed and
+    // can no longer be edited (same flag the Deliveries list uses). The cash has
+    // moved from the driver to the office, so payment_status becomes paid_to_office.
+    const closedIds = collectRows.map(r => r.order.id)
+    if (closedIds.length > 0) {
+      const { error: ue } = await supabase
+        .from('delivery_orders')
+        .update({
+          isclosed:       true,
+          closed_at:      new Date().toISOString(),
+          closed_by:      currentUser?.user_id || null,
+          payment_status: 'paid_to_office',
+        })
+        .in('id', closedIds)
+      if (ue) { setPostError(ue.message); setPosting(false); return }
+    }
+
     await fetchSupplementary()   // refresh settled state → rows drop off "outstanding"
+    await fetchOrders()          // closed flag reflects in the list immediately
     await fetchHistory()         // new settlement appears in the History tab
     setCollectRows([]); setPosting(false)
   }
@@ -670,10 +697,18 @@ export default function DriverDuesPage() {
             <button className="btn-ghost text-slate-300" onClick={exportPDF} disabled={visible.length === 0}>
               <FileDown className="w-4 h-4" /> PDF
             </button>
-            <button className="btn-primary" onClick={() => openCollect(selectedRows)}
-              disabled={!canCollect || selectedRows.length === 0}>
-              <Banknote className="w-4 h-4" /> Record Collection
-            </button>
+            <div className="flex items-center gap-2">
+              {collectDisabledReason && (
+                <span className="text-xs text-amber-400/90 flex items-center gap-1 whitespace-nowrap">
+                  <AlertCircle className="w-3.5 h-3.5" /> {collectDisabledReason}
+                </span>
+              )}
+              <button className="btn-primary" onClick={() => openCollect(selectedRows)}
+                disabled={!!collectDisabledReason}
+                title={collectDisabledReason || 'Record cash collection and close the selected orders'}>
+                <Banknote className="w-4 h-4" /> Collect &amp; Close
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -687,7 +722,7 @@ export default function DriverDuesPage() {
             <thead>
               <tr className="border-b border-surface-border">
                 <th className="px-3 py-3 w-8" />
-                {['Date', 'Driver', 'Orders', 'Collected', 'Paid', 'Difference', 'Recorded'].map(h => (
+                {['Date', 'Driver', 'Orders', 'Total collected from customers', 'Total received from driver', 'Difference', 'Recorded'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -799,7 +834,8 @@ export default function DriverDuesPage() {
             <p className="text-sm text-slate-400">
               Collect cash from <span className="text-slate-100 font-medium">{collectDriverLabel}</span> for{' '}
               <span className="text-slate-100 font-medium">{collectRows.length}</span> order{collectRows.length === 1 ? '' : 's'}.
-              This records a driver settlement (with one line per order). Enter the actual
+              This records a driver settlement (one line per order) and <span className="text-slate-200 font-medium">closes those
+              orders</span> — once collected they're locked and can no longer be edited. Enter the actual
               amount the driver hands over — any shortfall or overage is saved as the difference.
             </p>
 
@@ -842,6 +878,14 @@ export default function DriverDuesPage() {
               ))}
             </div>
 
+            <div className="flex items-center gap-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-xs text-amber-300">
+              <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                <span className="font-semibold">{collectRows.length}</span> order{collectRows.length === 1 ? '' : 's'} will be
+                closed and locked — this can't be undone from here.
+              </span>
+            </div>
+
             {postError && (
               <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> {postError}</p>
             )}
@@ -849,7 +893,7 @@ export default function DriverDuesPage() {
             <div className="flex items-center justify-end gap-2 pt-1">
               <button className="btn-ghost" onClick={closeCollect} disabled={posting}>Cancel</button>
               <button className="btn-primary" onClick={recordCollection} disabled={posting}>
-                {posting ? 'Posting…' : 'Confirm collection'}
+                {posting ? 'Posting…' : `Collect & close ${collectRows.length} order${collectRows.length === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>

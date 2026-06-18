@@ -88,7 +88,7 @@ export function fmtAmount(n, cur) {
      total          Total All = packages+services+localRetail+externalRetail+fees−discount+vat
      collected      paid by the customer (to the driver) so far
      balance        Total All − collected
-     fromDriver     to collect from the driver = total (after discount) − collected
+     fromDriver     to collect from the driver = what the driver collected (= collected)
      pending        Order Pending = localRetail + fees                         */
 export function orderAmountBreakdown(o) {
   const feeCur      = o.currency || 'USD'
@@ -149,9 +149,10 @@ export function orderAmountBreakdown(o) {
       packageLines: b.packageLines, serviceLines: b.serviceLines, externalLines: b.externalLines,
       total, collected: coll,
       balance:    round2(total - coll),
-      // "To collect from the driver" = the order total (after discount) minus what
-      // the customer has already paid.
-      fromDriver: round2(total - coll),
+      // "To collect from the driver" = exactly what the driver collected from the
+      // customer. Whatever cash the customer handed the driver must be paid back to
+      // the call center, so this mirrors the "Collected from customer by" figure.
+      fromDriver: round2(coll),
       pending:    round2(localRetail + fees),
     })
   }

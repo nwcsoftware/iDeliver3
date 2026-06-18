@@ -3,7 +3,7 @@ import {
   Plus, Search, Filter, X, Check, Trash2,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
-  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle,
+  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -11,7 +11,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
-import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel } from '../lib/orderAmounts'
+import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import Badge from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
@@ -76,6 +76,14 @@ function isFullyPaid(o)   { return o?.payment_status === 'paid_to_office' }
 // Order confirmation flag (delivery_orders.order_confirmed). Not-confirmed rows
 // are highlighted in light fuchsia in the list.
 function isConfirmed(o) { return o?.order_confirmed === true }
+
+// Quick "Mark Closed" from the list is allowed only once the money is fully
+// collected AND the materials are Delivered (and the row isn't already closed or
+// deactivated). The edit modal keeps the fuller close flow (status Completed,
+// credit handling); this is the one-click shortcut for the common case.
+function canQuickClose(o) {
+  return !isRowLocked(o) && isFullyPaid(o) && o?.delivery_status === 'Delivered'
+}
 
 // The scheduled deadline = scheduled_date at scheduled_time_to (else _from, else
 // end of day). Used to flag overdue orders in the list.
@@ -202,6 +210,25 @@ const PAYMENT_CURRENCIES = CURRENCIES
 const EMPTY_PAYMENT = { method: 'cash', amount: '', currency: 'USD', paid_at: '', notes: '' }
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
+
+// Category rows for the expandable totals panel on the floating bar — mirrors the
+// per-order amounts popup (orderAmountBreakdown), but summed across the filtered
+// orders. `tone` picks a colour; `strong` adds a divider/emphasis; `neg` shows a
+// leading minus (discount is subtracted from the total).
+const TOTALS_BREAKDOWN_ROWS = [
+  { key: 'packages',       label: 'Delivery Packages' },
+  { key: 'services',       label: 'Order Services' },
+  { key: 'localRetail',    label: 'Local retail items' },
+  { key: 'externalRetail', label: 'External retail invoices' },
+  { key: 'fees',           label: 'Delivery fees' },
+  { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true },
+  { key: 'vat',            label: 'VAT' },
+  { key: 'total',          label: 'Total All',                tone: 'strong',  strong: true },
+  { key: 'collected',      label: 'Collected from customers', tone: 'emerald' },
+  { key: 'balance',        label: 'Balance',                  tone: 'amber' },
+  { key: 'fromDriver',     label: 'To collect from driver',   tone: 'teal',    strong: true },
+  { key: 'pending',        label: 'Order Pending',            tone: 'amber' },
+]
 
 /* Sum payments grouped by currency → { USD, LBP, EUR }. */
 function paidByCurrency(payments) {
@@ -389,6 +416,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [dateFrom,             setDateFrom]             = useState('')
   const [dateTo,               setDateTo]               = useState('')
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
+  const [totalsExpanded,       setTotalsExpanded]       = useState(false)  // floating-bar breakdown panel
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
   const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
   const hoverPanelRef = useRef(null)
@@ -580,6 +608,26 @@ export default function DeliveriesPage({ closed = false }) {
       .filter(r => r.order !== 0 || r.paid !== 0)
       .map(r => ({ ...r, pending: round2(r.order - r.paid) }))
     return { count: filtered.length, rows }
+  })()
+
+  /* Sum the per-order amount breakdown (packages, services, local/external retail,
+     fees, discount, vat, total, collected, balance, to-collect, pending) across
+     the filtered orders, per currency — feeds the expandable totals panel on the
+     floating bar. Same categories as the per-order amounts popup. */
+  const totalsBreakdown = (() => {
+    const acc = {}   // cur -> category sums
+    for (const o of filtered) {
+      for (const r of orderAmountBreakdown(o)) {
+        const b = (acc[r.cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, total: 0, collected: 0, balance: 0, fromDriver: 0, pending: 0 })
+        for (const row of TOTALS_BREAKDOWN_ROWS) b[row.key] += (r[row.key] || 0)
+      }
+    }
+    const order = [...CURRENCIES, ...Object.keys(acc).filter(c => !CURRENCIES.includes(c))]
+    return order.filter(c => acc[c]).map(c => {
+      const out = { cur: c }
+      for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key])
+      return out
+    })
   })()
 
   /* ── modal handlers ──────────────────────────────────────── */
@@ -1301,6 +1349,21 @@ export default function DeliveriesPage({ closed = false }) {
     setToggling(null)
   }
 
+  // One-click close from the list. Guarded by canQuickClose (fully collected +
+  // Delivered), then locks the order via the isclosed flag — same columns the
+  // edit modal's "Mark Closed" sets.
+  async function markClosed(o) {
+    if (!canQuickClose(o)) return
+    setToggling(o.id)
+    await supabase.from('delivery_orders').update({
+      isclosed:  true,
+      closed_at: new Date().toISOString(),
+      closed_by: currentUser?.user_id || null,
+    }).eq('id', o.id)
+    await fetchOrders()
+    setToggling(null)
+  }
+
   async function copyNum(num) {
     await navigator.clipboard.writeText(num).catch(() => {})
     setCopied(num); setTimeout(() => setCopied(null), 1500)
@@ -1643,6 +1706,13 @@ export default function DeliveriesPage({ closed = false }) {
                       title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
                       <Edit2 className="w-4 h-4" />
                     </button>
+                    {!closed && !o.isclosed && !isDeactivated(o) && (
+                      <button onClick={() => markClosed(o)} disabled={toggling === o.id || !canQuickClose(o)}
+                        title={canQuickClose(o) ? 'Mark as closed' : 'Can close only when fully collected and delivery status is Delivered'}
+                        className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Lock className="w-4 h-4" />
+                      </button>
+                    )}
                     <button onClick={() => toggleCancel(o)} disabled={toggling === o.id || o.isclosed}
                       title={o.isclosed ? 'Closed — locked' : (['cancelled','failed'].includes(o.status) ? 'Reactivate' : 'Cancel')}
                       className={`btn-ghost p-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${['cancelled','failed'].includes(o.status)
@@ -1660,7 +1730,62 @@ export default function DeliveriesPage({ closed = false }) {
 
       {/* ── Floating summary bar (filtered orders + per-currency totals) ── */}
       <div className="sticky bottom-0 z-10 pt-2 pb-1">
+        {/* Expandable totals breakdown — grows up from the bar's toggle button. */}
+        <div className={`overflow-hidden transition-all duration-300 ease-out ${totalsExpanded ? 'max-h-[60vh] opacity-100 mb-2' : 'max-h-0 opacity-0'}`}>
+          <div className="rounded-xl border border-blue-400/20 bg-slate-900/95 backdrop-blur-md shadow-lg shadow-black/50 overflow-hidden">
+            <div className="flex items-center gap-2 px-5 py-2.5 border-b border-surface-border">
+              <Receipt className="w-4 h-4 text-blue-300" />
+              <span className="text-sm font-semibold text-slate-100">Totals breakdown</span>
+              <span className="text-xs text-slate-500">· {pendingsSummary.count} filtered order{pendingsSummary.count === 1 ? '' : 's'}</span>
+            </div>
+            {totalsBreakdown.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-slate-500 text-center">No amounts for the current filter.</p>
+            ) : (
+              <div className="max-h-[50vh] overflow-y-auto px-5 py-3">
+                <table className="w-full text-xs tabular-nums">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
+                      <th className="text-left py-1.5 pr-4 font-medium">Category</th>
+                      {totalsBreakdown.map(r => (
+                        <th key={r.cur} className="text-right py-1.5 pl-4 font-medium text-purple-400">{r.cur}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TOTALS_BREAKDOWN_ROWS.map(row => (
+                      <tr key={row.key} className={row.strong ? 'border-t border-surface-border/60' : ''}>
+                        <td className={`py-1 pr-4 ${row.strong ? 'text-slate-200 font-medium pt-1.5' : 'text-slate-500'}`}>{row.label}</td>
+                        {totalsBreakdown.map(r => {
+                          const v = r[row.key]
+                          const cls =
+                            row.tone === 'strong'  ? 'text-slate-100 font-medium' :
+                            row.tone === 'emerald' ? 'text-emerald-300/90' :
+                            row.tone === 'rose'    ? 'text-rose-300/90' :
+                            row.tone === 'teal'    ? 'text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.6)]' :
+                            row.tone === 'amber'   ? (v > 0 ? 'text-amber-300' : 'text-slate-500') :
+                                                     'text-slate-300'
+                          return (
+                            <td key={r.cur} className={`text-right py-1 pl-4 ${row.strong ? 'pt-1.5' : ''} ${cls}`}>
+                              {row.neg && v ? '−' : ''}{fmtAmount(Math.abs(v), r.cur)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
         <div className="rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-5 py-3 flex items-center gap-4 flex-wrap">
+          <button
+            onClick={() => setTotalsExpanded(v => !v)}
+            title={totalsExpanded ? 'Hide totals breakdown' : 'Show totals breakdown'}
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors ${totalsExpanded ? 'border-blue-400/40 bg-blue-500/15 text-blue-200' : 'border-white/10 bg-white/5 text-slate-300 hover:text-blue-200 hover:border-blue-400/30'}`}>
+            <Receipt className="w-4 h-4" />
+            {totalsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
           <span className="flex items-center gap-2 text-sm text-slate-300">
             <Package className="w-4 h-4 text-blue-300" />
             <span className="font-semibold text-slate-100">{pendingsSummary.count}</span>
@@ -1680,6 +1805,21 @@ export default function DeliveriesPage({ closed = false }) {
               )
             })}
             {pendingsSummary.rows.every(r => r.driverCollect <= 0) && (
+              <span className="text-sm text-slate-500">—</span>
+            )}
+            <span className="text-[11px] uppercase tracking-wider text-slate-400 ml-2">Payments <span className="text-slate-500 normal-case">(collected)</span></span>
+            {CURRENCIES.map(c => {
+              const row = pendingsSummary.rows.find(r => r.cur === c)
+              const paid = row ? row.paid : 0   // total collected from customers
+              if (paid <= 0) return null         // only show currencies with an amount
+              return (
+                <div key={c} className="text-sm whitespace-nowrap rounded-lg bg-white/5 border border-white/10 px-2.5 py-1">
+                  <span className="text-slate-400 text-[11px] mr-1">{c}</span>
+                  <span className="font-semibold text-emerald-300">{paid.toFixed(c === 'LBP' ? 0 : 2)}</span>
+                </div>
+              )
+            })}
+            {pendingsSummary.rows.every(r => r.paid <= 0) && (
               <span className="text-sm text-slate-500">—</span>
             )}
           </div>
