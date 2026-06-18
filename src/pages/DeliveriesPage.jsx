@@ -1305,7 +1305,11 @@ export default function DeliveriesPage({ closed = false }) {
 
   async function quickSetStatus(order, uiStatus) {
     setQuickBusy(true)
-    await supabase.from('delivery_orders').update({ status: toDbStatus(uiStatus) }).eq('id', order.id)
+    const patch = { status: toDbStatus(uiStatus) }
+    // Selecting "Completed" implies the materials reached the customer — move the
+    // delivery status straight to Delivered so both stay in sync from the list.
+    if (uiStatus === 'completed') patch.delivery_status = 'Delivered'
+    await supabase.from('delivery_orders').update(patch).eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
   }
