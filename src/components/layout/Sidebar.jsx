@@ -38,8 +38,12 @@ const contactsSubItems = [
   { to: '/contacts/partners',  icon: Handshake,  label: 'Partners'  },
 ]
 
+// Settings entries available to any admin (super_admin + admin).
 const settingsSubItems = [
   { to: '/settings/users', icon: UserCog, label: 'User Accounts' },
+]
+// Settings entries restricted to super_admin only.
+const superAdminSettingsItems = [
   { to: '/settings/reset', icon: Trash2,  label: 'Reset Data' },
 ]
 
@@ -69,7 +73,8 @@ export default function Sidebar() {
   const { stats } = useApp()
   const { hasRole } = useAuth()
 
-  const isAdmin = hasRole('super_admin', 'admin')
+  const isAdmin      = hasRole('super_admin', 'admin')
+  const isSuperAdmin = hasRole('super_admin')
 
   const [collapsed,     setCollapsed]     = useState(true)
   const [secondaryOpen, setSecondaryOpen] = useState(false)   // hamburger fly-out menu
@@ -191,7 +196,8 @@ export default function Sidebar() {
               ...secondaryNav,
               { _section: 'Contacts' },
               ...contactsSubItems,
-              ...(isAdmin ? [{ _section: 'Settings' }, ...settingsSubItems] : []),
+              ...(isAdmin ? [{ _section: 'Settings' }, ...settingsSubItems,
+                              ...(isSuperAdmin ? superAdminSettingsItems : [])] : []),
             ].map((item, idx) => {
               if (item._section) {
                 return (

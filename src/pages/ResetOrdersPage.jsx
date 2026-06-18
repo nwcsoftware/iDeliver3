@@ -24,7 +24,8 @@ const KEPT = [
 export default function ResetOrdersPage() {
   const { fetchOrders } = useApp()
   const { hasRole } = useAuth()
-  const isAdmin = hasRole('super_admin', 'admin')
+  // Reset Data is destructive and restricted to super_admin only.
+  const isSuperAdmin = hasRole('super_admin')
 
   const [confirmText, setConfirmText] = useState('')
   const [busy,    setBusy]    = useState(false)
@@ -42,7 +43,7 @@ export default function ResetOrdersPage() {
     setConfirmText(''); setDone(true); setBusy(false)
   }
 
-  if (!isAdmin) {
+  if (!isSuperAdmin) {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
         You don't have permission to access this page.
