@@ -19,10 +19,12 @@ import PriceListPage          from './pages/PriceListPage'
 import ReturnableItemsPage     from './pages/ReturnableItemsPage'
 import AccountTransactionsPage from './pages/AccountTransactionsPage'
 import DriverDuesPage           from './pages/DriverDuesPage'
+import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
 import ResetOrdersPage        from './pages/ResetOrdersPage'
+import DeleteOrderPage         from './pages/DeleteOrderPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import logo             from './assets/Logo.png'
 
@@ -85,11 +87,13 @@ function AppShell() {
                 <Route path="/returnable-items"     element={<ReturnableItemsPage />} />
                 <Route path="/account-transactions" element={<AccountTransactionsPage />} />
                 <Route path="/driver-dues"          element={<DriverDuesPage />} />
+                <Route path="/cashier-box"          element={<CashierBoxPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
+                <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/reset"      element={<ResetOrdersPage />} />
               </Routes>
             </main>

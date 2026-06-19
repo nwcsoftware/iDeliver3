@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Plus, Search, Filter, X, Check, Trash2,
+  Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt,
@@ -13,7 +13,7 @@ import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accou
 import { formatMobile } from '../lib/phone'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
-import Badge from '../components/ui/Badge'
+import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
@@ -48,7 +48,14 @@ const COLLECTION_FULL    = 'Money Fully collected'
 const COLLECTION_PARTIAL = 'Money partially collected'
 const COLLECTION_DUE     = 'Money is due'
 
-const STATUS_FILTERS   = ['all','scheduled','confirmed','in_progress','completed','cancelled']
+const STATUS_FILTERS   = ['all','scheduled','in_progress','completed','cancelled']
+// Filter chips reuse the order-status Badge styling (same shape + colours). The
+// "all" pseudo-status has no Badge variant, so it gets a neutral brand chip.
+const FILTER_VARIANTS  = { all: 'bg-brand-500/15 text-brand-400 border-brand-500/30' }
+const FILTER_LABELS    = { all: 'All' }
+// Payment-status filter chips — reuse the payment Badge styling/labels/colours.
+// '' is the "All" pseudo-value (no payment filter applied).
+const PAYMENT_FILTERS  = ['','unpaid','partially_paid','collected_by_driver','paid_to_office']
 const CURRENCIES       = ['USD', 'LBP', 'EUR']
 
 // Map legacy/enum order statuses onto the four-step lifecycle for display & filtering.
@@ -365,6 +372,8 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 export default function DeliveriesPage({ closed = false }) {
   const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID } = useApp()
   const { currentUser } = useAuth()
+  // Full name of the signed-in user, stamped on payments they record (collector).
+  const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
   // Remembers the id of an order created during this modal session, so if a
   // later step (items, packages, services…) fails the retry UPDATEs that order
@@ -391,6 +400,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [error,     setError]     = useState('')
   const [copied,    setCopied]    = useState(null)
   const [toggling,  setToggling]  = useState(null)
+  // Deactivate-order confirmation: { order, reason, counts, loading, busy }
+  const [cancelModal, setCancelModal] = useState(null)
   const [customers,          setCustomers]          = useState([])
   const [products,           setProducts]           = useState([])
   const [providers,          setProviders]          = useState([])   // "Online" contacts → package providers
@@ -410,6 +421,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [payments,             setPayments]             = useState([])
   const [origPaymentIds,       setOrigPaymentIds]       = useState([])
   const [driverFilter,         setDriverFilter]         = useState('')
+  const [payFilter,            setPayFilter]            = useState('')   // payment_status chip (toggle)
   const [customerFilter,       setCustomerFilter]       = useState('')
   const [categoryFilter,       setCategoryFilter]       = useState('')   // credit|regular|partner|supplier
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
@@ -545,6 +557,7 @@ export default function DeliveriesPage({ closed = false }) {
     ].some(v => String(v ?? '').toLowerCase().includes(q))
     return matchClosed && matchSearch
       && (filter === 'all' || normalizeStatus(o.status) === filter)
+      && (!payFilter      || o.payment_status === payFilter)
       && (!driverFilter   || o.driver_id   === driverFilter)
       && (!customerFilter || o.customer_id === customerFilter)
       && matchCategory(o)
@@ -1000,14 +1013,18 @@ export default function DeliveriesPage({ closed = false }) {
       return
     }
 
-    // 2. Insert the payment (single amount + currency).
+    // 2. Insert the payment (single amount + currency). Stamp the signed-in user
+    //    as the collector — a payment recorded here is paid to the office directly,
+    //    so it's attributed to the user, not the driver.
     const { error: pe } = await supabase.from('payment_collections').insert([{
-      order_id:        o.id,
-      collection_type: payForm.method || 'cash',
-      amount:          amt,
-      currency:        cur,
-      collected_at:    payForm.paid_at || new Date().toISOString(),
-      notes:           payForm.notes?.trim() || null,
+      order_id:          o.id,
+      collection_type:   payForm.method || 'cash',
+      amount:            amt,
+      currency:          cur,
+      collected_at:      payForm.paid_at || new Date().toISOString(),
+      notes:             payForm.notes?.trim() || null,
+      collected_by:      currentUser?.user_id || null,
+      collected_by_name: currentUserName,
     }])
     if (pe) { setPayError(pe.message); setPaySaving(false); return }
 
@@ -1220,9 +1237,16 @@ export default function DeliveriesPage({ closed = false }) {
         collected_at:    p.paid_at || new Date().toISOString(),
         notes:           p.notes?.trim() || null,
       }
+      // New payments are stamped with the signed-in user as the collector (paid to
+      // office); edits keep whatever collector the row already had.
       const { error: pe } = p._id
         ? await supabase.from('payment_collections').update(row).eq('id', p._id)
-        : await supabase.from('payment_collections').insert([{ order_id: orderId, ...row }])
+        : await supabase.from('payment_collections').insert([{
+            order_id:          orderId,
+            ...row,
+            collected_by:      currentUser?.user_id || null,
+            collected_by_name: currentUserName,
+          }])
       if (pe) { setError(pe.message); setSaving(false); return }
     }
 
@@ -1344,13 +1368,69 @@ export default function DeliveriesPage({ closed = false }) {
     setQuickBusy(false); setPopover(null)
   }
 
+  // Power button. Reactivating a cancelled/failed order is immediate; deactivating
+  // an active one opens a confirmation modal that warns about — and then deletes —
+  // every transaction on the order (see confirmCancel).
   async function toggleCancel(o) {
     if (o.isclosed) return                            // closed orders are locked
+    if (['cancelled', 'failed'].includes(o.status)) {
+      setToggling(o.id)
+      await supabase.from('delivery_orders').update({ status: 'pending' }).eq('id', o.id)
+      await fetchOrders()
+      setToggling(null)
+      return
+    }
+    // Open the deactivation confirmation, then load the transaction counts so the
+    // warning can spell out exactly what will be deleted.
+    setCancelModal({ order: o, reason: '', counts: null, loading: true, busy: false })
+    const counts = await fetchOrderTxnCounts(o.id, o.delivery_fee)
+    setCancelModal(m => (m && m.order.id === o.id ? { ...m, counts, loading: false } : m))
+  }
+
+  // Counts of each transaction kind attached to an order, used to warn the user
+  // before a deactivation wipes them. Mirrors the tables confirmCancel clears.
+  async function fetchOrderTxnCounts(orderId, deliveryFee) {
+    const queries = [
+      ['Packages',          supabase.from('delivery_packages').select('id', { count: 'exact', head: true }).eq('order_id', orderId)],
+      ['Services',          supabase.from('order_services').select('id', { count: 'exact', head: true }).eq('order_id', orderId)],
+      ['Local Items',       supabase.from('order_items').select('id', { count: 'exact', head: true }).eq('order_id', orderId).eq('is_deleted', false)],
+      ['External Retails',  supabase.from('retail_goods_invoices').select('id', { count: 'exact', head: true }).eq('order_id', orderId)],
+      ['Payments',          supabase.from('payment_collections').select('id', { count: 'exact', head: true }).eq('order_id', orderId)],
+    ]
+    const out = {}
+    for (const [label, q] of queries) {
+      const { count } = await q
+      out[label] = count || 0
+    }
+    out['Delivery Fee'] = Number(deliveryFee) > 0 ? 1 : 0
+    return out
+  }
+
+  // Confirm deactivation: delete every transaction on the order, zero the delivery
+  // fee, set the status to cancelled and stamp who/why/when on the cancellation.
+  async function confirmCancel() {
+    const o = cancelModal?.order
+    if (!o) return
+    setCancelModal(m => ({ ...m, busy: true }))
     setToggling(o.id)
-    const next = ['cancelled', 'failed'].includes(o.status) ? 'pending' : 'cancelled'
-    await supabase.from('delivery_orders').update({ status: next }).eq('id', o.id)
+    // Packages, services, retail invoices and payments are hard-deleted; order
+    // items follow the app's soft-delete convention (is_deleted flag).
+    await supabase.from('delivery_packages').delete().eq('order_id', o.id)
+    await supabase.from('order_services').delete().eq('order_id', o.id)
+    await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', o.id).eq('is_deleted', false)
+    await supabase.from('retail_goods_invoices').delete().eq('order_id', o.id)
+    await supabase.from('payment_collections').delete().eq('order_id', o.id)
+    await supabase.from('delivery_orders').update({
+      status:                    'cancelled',
+      delivery_fee:              0,
+      payment_status:            'unpaid',          // every payment record was just removed
+      cancellation_reason:       cancelModal.reason.trim() || null,
+      cancellation_requested_by: currentUser?.user_id || null,
+      cancellation_requested_at: new Date().toISOString(),
+    }).eq('id', o.id)
     await fetchOrders()
     setToggling(null)
+    setCancelModal(null)
   }
 
   // One-click close from the list. Guarded by canQuickClose (fully collected +
@@ -1469,14 +1549,36 @@ export default function DeliveriesPage({ closed = false }) {
           {!closed && (
             <div className="flex items-center gap-1 flex-wrap">
               <Filter className="w-4 h-4 text-slate-500" />
-              {STATUS_FILTERS.map(s => (
-                <button key={s} onClick={() => setFilter(s)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
-                    filter === s ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
-                  }`}>
-                  {s === 'in_progress' ? 'In Progress' : s}
-                </button>
-              ))}
+              {STATUS_FILTERS.map(s => {
+                const active = filter === s
+                const cls = FILTER_VARIANTS[s] || STATUS_VARIANTS[s] || 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                return (
+                  <button key={s} onClick={() => setFilter(s)}
+                    className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border transition-all ${
+                      active ? cls : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'
+                    }`}>
+                    {FILTER_LABELS[s] || STATUS_LABELS[s] || s}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {!closed && (
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="w-px h-5 bg-surface-border mx-1" />
+              <Wallet className="w-4 h-4 text-slate-500" />
+              {PAYMENT_FILTERS.map(s => {
+                const active = payFilter === s
+                const cls = s === '' ? FILTER_VARIANTS.all : (STATUS_VARIANTS[s] || 'bg-slate-500/15 text-slate-400 border-slate-500/30')
+                return (
+                  <button key={s || 'all'} onClick={() => setPayFilter(s)}
+                    className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border transition-all ${
+                      active ? cls : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'
+                    }`}>
+                    {s === '' ? 'All' : (STATUS_LABELS[s] || s)}
+                  </button>
+                )
+              })}
             </div>
           )}
           {!closed && (
@@ -2766,7 +2868,7 @@ export default function DeliveriesPage({ closed = false }) {
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <p className="text-xs text-slate-500">
                 Based on <span className="text-slate-200 font-semibold">{pendingsSummary.count}</span> filtered order{pendingsSummary.count === 1 ? '' : 's'}
-                {hasAdvancedFilters || filter !== 'all' || search ? ' (current filters applied)' : ''}.
+                {hasAdvancedFilters || filter !== 'all' || payFilter || search ? ' (current filters applied)' : ''}.
               </p>
 
               {pendingsSummary.rows.length === 0 ? (
@@ -2928,6 +3030,71 @@ export default function DeliveriesPage({ closed = false }) {
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Deactivate-order confirmation ───────────────────────── */}
+      {cancelModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !cancelModal.busy && setCancelModal(null)}>
+          <div className="card border border-red-500/30 rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 p-4 border-b border-surface-border bg-red-500/10">
+              <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-slate-100 font-semibold">Deactivate order {cancelModal.order.order_number}?</h3>
+                <p className="text-slate-400 text-xs mt-1">
+                  This will permanently delete every transaction on the order, set the delivery fee to 0 and mark the order Cancelled. This cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-3">
+              {cancelModal.loading ? (
+                <p className="text-slate-500 text-xs">Checking transactions…</p>
+              ) : (() => {
+                const present = Object.entries(cancelModal.counts || {}).filter(([, n]) => n > 0)
+                return present.length > 0 ? (
+                  <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                    <p className="text-[11px] text-red-300 uppercase tracking-wider font-semibold flex items-center gap-1.5 mb-2">
+                      <Trash2 className="w-3.5 h-3.5" /> Will be removed
+                    </p>
+                    <ul className="space-y-1">
+                      {present.map(([label, n]) => (
+                        <li key={label} className="flex items-center justify-between text-xs text-slate-300">
+                          <span>{label}</span>
+                          <span className="font-mono text-red-300">{label === 'Delivery Fee' ? 'set to 0' : `${n} ✕`}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-xs">No transactions on this order — it will simply be marked Cancelled.</p>
+                )
+              })()}
+
+              <div>
+                <label className="label">Reason for cancellation <span className="text-slate-600">(optional)</span></label>
+                <textarea rows={3} className="input resize-none" placeholder="Why is this order being cancelled?"
+                  value={cancelModal.reason}
+                  onChange={e => setCancelModal(m => ({ ...m, reason: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-surface-border">
+              <button type="button" disabled={cancelModal.busy}
+                onClick={() => setCancelModal(null)}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-surface-hover transition-colors disabled:opacity-50">
+                Keep order
+              </button>
+              <button type="button" disabled={cancelModal.busy || cancelModal.loading}
+                onClick={confirmCancel}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50">
+                <Power className="w-3.5 h-3.5" />
+                {cancelModal.busy ? 'Deactivating…' : 'Deactivate & delete'}
+              </button>
+            </div>
           </div>
         </div>
       )}

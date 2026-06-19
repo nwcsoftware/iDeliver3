@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -15,6 +15,7 @@ const mainNav = [
   { to: '/deliveries',         icon: Package,         label: 'Orders'        },
   { to: '/closed-orders',      icon: PackageCheck,    label: 'Closed Orders' },
   { to: '/driver-dues',        icon: HandCoins,       label: 'Driver Settlements' },
+  { to: '/cashier-box',        icon: Wallet,          label: 'Cashier Box' },
   { to: '/tracking',           icon: MapPin,          label: 'Tracking'  },
 ]
 
@@ -40,7 +41,8 @@ const contactsSubItems = [
 
 // Settings entries available to any admin (super_admin + admin).
 const settingsSubItems = [
-  { to: '/settings/users', icon: UserCog, label: 'User Accounts' },
+  { to: '/settings/users',        icon: UserCog,   label: 'User Accounts' },
+  { to: '/settings/delete-order', icon: PackageX,  label: 'Delete Order' },
 ]
 // Settings entries restricted to super_admin only.
 const superAdminSettingsItems = [

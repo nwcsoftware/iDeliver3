@@ -64,7 +64,7 @@ export function AppProvider({ children }) {
         delivery_packages(package_price, paid, currency, provider:contacts!provider_id(company_name, first_name, last_name)),
         order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
         retail_goods_invoices(invoice_value, currency, paid, shop_name),
-        payment_collections(amount, currency)
+        payment_collections(amount, currency, collected_by_name)
       `)
       .order('created_at', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)

@@ -3,7 +3,7 @@ import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertC
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { AmountSummaryContent, placeHoverPanel, orderCollectedByCurrency, orderDriverCollectByCurrency } from '../lib/orderAmounts'
+import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -37,19 +37,15 @@ function driverName(d) {
   return `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim() || (d.name ?? '—')
 }
 
-/* Order status reads "completed" — the order_status enum stores delivered/returned,
-   which the app surfaces as "completed" (same mapping as the Deliveries list). */
-function isCompleted(o) { return ['completed', 'delivered', 'returned'].includes(o?.status) }
 /* Delivery completed — the driver has handed the goods to the customer. */
 function isDelivered(o) { return o?.delivery_status === 'Delivered' }
 /* Customer paid the driver in full ("Money Fully collected" / paid to office). */
 function isFullyCollected(o) { return o?.payment_status === 'paid_to_office' }
-/* An order shows up for driver settlement once it's closed, when its order status
-   is completed AND it's delivered, or when it's delivered and fully collected from
-   the customer (the driver holds the cash either way). */
+/* An order shows up for driver settlement only once it's fully paid: either it's
+   already closed (historical), or it's delivered AND fully collected from the
+   customer. A partially-paid order has nothing to encash yet, so it's excluded. */
 function isSettlementEligible(o) {
   return o?.isclosed === true
-    || (isCompleted(o) && isDelivered(o))
     || (isDelivered(o) && isFullyCollected(o))
 }
 
@@ -86,8 +82,15 @@ export default function DriverDuesPage() {
   const [postError,   setPostError]   = useState('')
 
   const confirm = collectRows.length > 0   // settlement confirm modal open
+  const [duesInfo, setDuesInfo] = useState(null)   // "no dues to collect" info modal (order)
   function openCollect(rows) { setPostError(''); setCollectRows(rows) }
   function closeCollect() { if (!posting) setCollectRows([]) }
+  // Guarded collect: an order (or selection) with zero driver dues has nothing to
+  // encash, so explain that instead of opening the cash-collection modal.
+  function tryOpenCollect(rows) {
+    if (rows.length > 0 && !rows.some(r => r.hasDues)) { setDuesInfo(rows[0].order); return }
+    openCollect(rows)
+  }
 
   // Amounts summary hover preview — follows the cursor over each row (read-only).
   const [hoverSummary, setHoverSummary] = useState(null)   // { order, x, y }
@@ -160,8 +163,10 @@ export default function DriverDuesPage() {
   // Collected cash, external retail (petty cash), and the net due from the
   // driver, per order and per currency.
   const allRows = useMemo(() => closedOrders.map(o => {
-    // Collected is derived from the order's payments (amount + currency).
-    const byCur     = orderCollectedByCurrency(o)
+    // Driver dues are the cash the driver collected from the customer. Payments
+    // taken directly by an office user (paid to office) are excluded — the driver
+    // never handled that money, so it isn't part of their settlement.
+    const byCur     = orderDriverCollectedByCurrency(o)
     const collected = emptyCur()
     for (const c of CURRENCIES) collected[c] = round2(byCur[c])
     const retail    = emptyCur()
@@ -174,12 +179,17 @@ export default function DriverDuesPage() {
     // collected cash, so net mirrors collected per currency.
     const net = emptyCur()
     for (const c of CURRENCIES) net[c] = round2(collected[c])
+    // Order total (full order value) — shown alongside collected so the user can
+    // confirm the order is fully paid (collected ≈ total).
+    const totalCur = orderTotalsByCurrency(o)
+    const total    = emptyCur()
+    for (const c of CURRENCIES) total[c] = round2(totalCur[c])
     return {
       order:     o,
       driver:    o.driver,
-      collected, retail, net, invoices,
+      collected, retail, net, total, invoices,
       settled:   settledIds.has(o.id),
-      hasCash:   CURRENCIES.some(c => collected[c] > 0 || retail[c] > 0),
+      hasDues:   CURRENCIES.some(c => Math.abs(net[c]) > 0),
     }
   }), [closedOrders, retailByOrder, settledIds])
 
@@ -191,9 +201,10 @@ export default function DriverDuesPage() {
   const hasActiveFilters = search.trim() !== '' ||
     Object.entries(filters).some(([k, v]) => v !== EMPTY_FILTERS[k])
 
-  const visible = useMemo(() => allRows.filter(({ order: o, driver, settled, hasCash }) => {
-    if (!hasCash) return false   // nothing to reconcile
-
+  const visible = useMemo(() => allRows.filter(({ order: o, driver, settled }) => {
+    // Every row here is already fully paid or closed (isSettlementEligible), so
+    // there's no "nothing to reconcile" gate — orders with zero driver dues still
+    // show (their Collect button explains why there's nothing to encash).
     const d = orderDate(o)
     const s = search.trim().toLowerCase()
     const matchSearch = !s || [
@@ -442,12 +453,13 @@ export default function DriverDuesPage() {
     autoTable(doc, {
       startY: 32,
       head: [['Date', 'Order #', 'Driver', 'Customer',
-        'Collected USD', 'Collected LBP', 'Total dues USD', 'Total dues LBP', 'Settled']],
+        'Total USD', 'Total LBP', 'Collected USD', 'Collected LBP', 'Total dues USD', 'Total dues LBP', 'Settled']],
       body: visible.map(r => [
         orderDate(r.order) || '—',
         r.order.order_number ?? '—',
         driverName(r.driver),
         r.order.recipient_name ?? '—',
+        r.total.USD.toFixed(2),     r.total.LBP.toFixed(0),
         r.collected.USD.toFixed(2), r.collected.LBP.toFixed(0),
         r.net.USD.toFixed(2),       r.net.LBP.toFixed(0),
         r.settled ? 'Yes' : 'No',
@@ -455,7 +467,7 @@ export default function DriverDuesPage() {
       styles: { fontSize: 7, cellPadding: 1.2 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 247, 250] },
-      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' } },
     })
 
     let y = (doc.lastAutoTable?.finalY ?? 32) + 8
@@ -505,7 +517,7 @@ export default function DriverDuesPage() {
             <h1 className="text-base font-semibold text-slate-100 leading-none">Driver Settlements</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               {tab === 'collect'
-                ? `${visible.length} of ${allRows.filter(r => r.hasCash).length} dues shown`
+                ? `${visible.length} of ${allRows.length} dues shown`
                 : `${visibleSettlements.length} settlement${visibleSettlements.length === 1 ? '' : 's'}`}
             </p>
           </div>
@@ -597,7 +609,7 @@ export default function DriverDuesPage() {
                     onChange={toggleAll} />
                 )}
               </th>
-              {['Date', 'Order #', 'Driver', 'Customer', 'Collected', 'Total dues', 'Status'].map(h => (
+              {['Date', 'Order #', 'Driver', 'Customer', 'Total', 'Collected', 'Total dues', 'Status'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
               ))}
               <th className="px-4 py-3" />
@@ -605,9 +617,9 @@ export default function DriverDuesPage() {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {busy ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
             ) : visible.map(r => {
               const o = r.order
               const selectable = !r.settled && !!filters.driver_id
@@ -625,6 +637,12 @@ export default function DriverDuesPage() {
                   <td className="px-4 py-3 whitespace-nowrap font-mono text-xs text-brand-400">{o.order_number ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(r.driver)}</td>
                   <td className="px-4 py-3 text-slate-300 text-xs">{o.recipient_name ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
+                    {CURRENCIES.filter(c => r.total[c] > 0).map(c => (
+                      <div key={c} className="text-slate-300">{fmtMoney(r.total[c], c)}</div>
+                    ))}
+                    {!CURRENCIES.some(c => r.total[c] > 0) && <span className="text-slate-600">—</span>}
+                  </td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
                     {CURRENCIES.filter(c => r.collected[c] > 0).map(c => (
                       <div key={c} className="text-green-400">{fmtMoney(r.collected[c], c)}</div>
@@ -647,7 +665,7 @@ export default function DriverDuesPage() {
                   <td className="px-4 py-3 whitespace-nowrap text-right">
                     <div className="flex items-center justify-end gap-1">
                       {!r.settled && !o.isclosed && (
-                        <button className="btn-primary py-1 px-2.5 text-xs" onClick={() => openCollect([r])}>
+                        <button className="btn-primary py-1 px-2.5 text-xs" onClick={() => tryOpenCollect([r])}>
                           <Banknote className="w-3.5 h-3.5" /> Collect
                         </button>
                       )}
@@ -703,7 +721,7 @@ export default function DriverDuesPage() {
                   <AlertCircle className="w-3.5 h-3.5" /> {collectDisabledReason}
                 </span>
               )}
-              <button className="btn-primary" onClick={() => openCollect(selectedRows)}
+              <button className="btn-primary" onClick={() => tryOpenCollect(selectedRows)}
                 disabled={!!collectDisabledReason}
                 title={collectDisabledReason || 'Record cash collection and close the selected orders'}>
                 <Banknote className="w-4 h-4" /> Collect &amp; Close
@@ -806,6 +824,44 @@ export default function DriverDuesPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* "No dues to collect" info — shown when Collect is clicked on an order whose
+          driver dues are zero (nothing was collected by the driver). */}
+      {duesInfo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setDuesInfo(null)}>
+          <div className="card w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 p-4 border-b border-surface-border bg-amber-500/10">
+              <AlertCircle className="w-6 h-6 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-slate-100 font-semibold">
+                  Nothing to encash on order {duesInfo.order_number}
+                </h3>
+                <p className="text-slate-400 text-xs mt-1">Total dues for this order are zero.</p>
+              </div>
+            </div>
+            <div className="p-4 space-y-3 text-sm text-slate-300">
+              <p>This order has no driver transaction yet. Either:</p>
+              <ul className="space-y-2 text-xs text-slate-400">
+                <li className="flex items-start gap-2">
+                  <span className="text-brand-400 mt-0.5">1.</span>
+                  <span>The <span className="text-slate-200">driver must confirm the collection from his application</span>, or</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-brand-400 mt-0.5">2.</span>
+                  <span>If the customer <span className="text-slate-200">paid the call center directly</span>, create a payment transaction from the <span className="text-slate-200">order form</span> or the <span className="text-slate-200">daily order list</span> ("Record payment").</span>
+                </li>
+              </ul>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-surface-border">
+              <button type="button" onClick={() => setDuesInfo(null)}
+                className="btn-primary py-1.5 px-4 text-sm">
+                Got it
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

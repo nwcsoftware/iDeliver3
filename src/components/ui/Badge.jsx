@@ -1,6 +1,6 @@
 import React from 'react'
 
-const variants = {
+export const variants = {
   // driver_status
   available:             'bg-green-500/15  text-green-400  border-green-500/30',
   on_duty:               'bg-brand-500/15  text-brand-400  border-brand-500/30',
@@ -31,7 +31,7 @@ const variants = {
   refunded:              'bg-purple-500/15 text-purple-400 border-purple-500/30',
 }
 
-const labels = {
+export const labels = {
   scheduled:           'Scheduled',
   in_progress:         'In Progress',
   completed:           'Completed',

@@ -46,6 +46,31 @@ export function orderCollectedByCurrency(o) {
   return c
 }
 
+/* Per-currency amount the DRIVER collected from the customer = payments NOT taken
+   by an office user. A payment stamped with collected_by_name was paid to the
+   office directly, so the driver never handled that cash and it's left out of the
+   driver settlement. Legacy payments (no collector name) count as driver-collected. */
+export function orderDriverCollectedByCurrency(o) {
+  const c = {}
+  for (const p of (o.payment_collections ?? [])) {
+    if (p.collected_by_name) continue   // collected by office user, not the driver
+    const cur = p.currency || 'USD'
+    c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
+  }
+  return c
+}
+
+/* Distinct names of office users who collected payments on an order (those with a
+   collected_by_name), for showing "Collected by <name>" in the amounts summary. */
+export function orderCollectorNames(o) {
+  const names = []
+  for (const p of (o.payment_collections ?? [])) {
+    const n = (p.collected_by_name || '').trim()
+    if (n && !names.includes(n)) names.push(n)
+  }
+  return names
+}
+
 /* Per-currency "amount to collect from the driver" = delivery fees + local retail
    items (order_items) + unpaid delivery packages. A package already paid directly
    to its provider isn't collected from the driver. Mirrors the "To collect from
@@ -127,7 +152,8 @@ export function orderAmountBreakdown(o) {
   if (Number(o.discount_amount)) bucket(discountCur).discount += Math.abs(Number(o.discount_amount))
   if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
 
-  const collected = orderCollectedByCurrency(o)
+  const collected       = orderCollectedByCurrency(o)
+  const driverCollected = orderDriverCollectedByCurrency(o)
   const currs = new Set([...Object.keys(buckets), ...Object.keys(collected)])
 
   const rows = []
@@ -149,10 +175,10 @@ export function orderAmountBreakdown(o) {
       packageLines: b.packageLines, serviceLines: b.serviceLines, externalLines: b.externalLines,
       total, collected: coll,
       balance:    round2(total - coll),
-      // "To collect from the driver" = exactly what the driver collected from the
-      // customer. Whatever cash the customer handed the driver must be paid back to
-      // the call center, so this mirrors the "Collected from customer by" figure.
-      fromDriver: round2(coll),
+      // "To collect from the driver" = what the driver collected from the customer.
+      // Payments taken directly by an office user (paid to office) are excluded —
+      // the driver never handled that cash, so it isn't owed back by the driver.
+      fromDriver: round2(driverCollected[cur] || 0),
       pending:    round2(localRetail + fees),
     })
   }
@@ -195,7 +221,12 @@ function CategoryRows({ groupLabel, itemLabel, lines, sum, cur }) {
 export function AmountSummaryContent({ order }) {
   const rows = orderAmountBreakdown(order)
   const driverName = `${order.driver?.first_name ?? ''} ${order.driver?.last_name ?? ''}`.trim()
-  const collectedLabel = driverName ? `Collected from customer by ${driverName}` : 'Collected from customer'
+  // Office users who took payment directly (paid to office). When present, the
+  // money was collected by them rather than the driver.
+  const collectorNames = orderCollectorNames(order)
+  const collectedLabel = collectorNames.length
+    ? `Collected by ${collectorNames.join(', ')}`
+    : driverName ? `Collected from customer by ${driverName}` : 'Collected from customer'
   const fromDriverLabel = driverName ? `To collect from ${driverName}` : 'To collect from driver'
   return (
     <div className="text-xs">
