@@ -1559,6 +1559,20 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
     setRequirements(items => items.filter((_, i) => i !== index))
   }
 
+  function resetRequestForm() {
+    const primaryAddress = addresses.find(address => address.is_primary) || addresses[0]
+    const primaryAddressText = addressText(primaryAddress)
+
+    setRequirements([...initialRequirements])
+    setPickupAddress(primaryAddressText || selectedCustomer?.default_pickup_address || selectedCustomer?.address || '')
+    setDeliveryAddress(primaryAddressText || selectedCustomer?.default_delivery_address || selectedCustomer?.address || '')
+    setPickupDate(todayDate())
+    setPickupTime('16:30')
+    setDeliveryDate(todayDate())
+    setDeliveryTime('18:00')
+    setNotes('')
+  }
+
   async function submitRequest() {
     setSaving(true)
     setError('')
@@ -1644,6 +1658,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       return
     }
 
+    resetRequestForm()
     setSavedOrder(order)
     setSaving(false)
     onSubmit?.(order)
@@ -1912,7 +1927,9 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
             .in('order_id', ids),
           supabase
             .from('payment_collections')
-            .select('id, order_id, collection_type, amount, currency, collected_at')
+            // Payment columns differ between deployed database versions. Select
+            // the live row shape so an older schema cannot block My Orders.
+            .select('*')
             .in('order_id', ids),
         ])
         if (cancelled) return
