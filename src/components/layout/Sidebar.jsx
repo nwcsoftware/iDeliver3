@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, Bell,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -60,7 +60,7 @@ function MessagesIndicator({ collapsed, unreadCount, onClick }) {
     return (
       <button onClick={onClick} title={unreadCount ? `${unreadCount} unread message${unreadCount > 1 ? 's' : ''}` : 'Messages'}
         className="relative p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-surface-hover transition-colors">
-        <Bell className={`w-[18px] h-[18px] ${unreadCount ? 'text-brand-400' : ''}`} />
+        <MessageSquare className={`w-[18px] h-[18px] ${unreadCount ? 'text-brand-400' : ''}`} />
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
             {badge}
@@ -73,7 +73,7 @@ function MessagesIndicator({ collapsed, unreadCount, onClick }) {
     <button onClick={onClick}
       className="w-full flex items-center justify-between mb-3 group">
       <span className="flex items-center gap-2 text-xs font-medium text-slate-300 group-hover:text-slate-100 transition-colors">
-        <Bell className={`w-4 h-4 ${unreadCount ? 'text-brand-400' : 'text-slate-400'}`} /> Messages
+        <MessageSquare className={`w-4 h-4 ${unreadCount ? 'text-brand-400' : 'text-slate-400'}`} /> Messages
       </span>
       {unreadCount > 0
         ? <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">{badge}</span>
