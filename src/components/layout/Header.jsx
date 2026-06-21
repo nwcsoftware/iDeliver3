@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Minus, Square, X, Bell, LogOut, ChevronDown } from 'lucide-react'
+import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 
@@ -33,7 +33,7 @@ export default function Header() {
   const location             = useLocation()
   const title                = pageTitles[location.pathname] || 'iDeliver III'
   const { currentUser, logout } = useAuth()
-  const { orders }           = useApp()
+  const { orders, showSummary, toggleShowSummary } = useApp()
   const electron             = window.electron
   const [userMenu, setUserMenu] = useState(false)
 
@@ -61,6 +61,21 @@ export default function Header() {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' }}
       >
+        {/* Amounts summary popup show/hide — per-user view preference */}
+        <button
+          onClick={toggleShowSummary}
+          className={`btn-ghost p-2 relative transition-colors ${
+            showSummary ? 'text-brand-300' : 'text-slate-500'}`}
+          title={showSummary
+            ? 'Amounts summary popup: shown — click to hide'
+            : 'Amounts summary popup: hidden — click to show'}
+        >
+          <Receipt className="w-4 h-4" />
+          {!showSummary && (
+            <EyeOff className="w-2.5 h-2.5 absolute -bottom-0.5 -right-0.5 text-slate-400" />
+          )}
+        </button>
+
         {/* Notification bell — new online orders awaiting confirmation */}
         <button
           className="btn-ghost p-2 relative"

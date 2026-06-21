@@ -23,6 +23,9 @@ import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
+import AppSettingsPage         from './pages/AppSettingsPage'
+import MessagesPage            from './pages/MessagesPage'
+import BroadcastPopup         from './components/messages/BroadcastPopup'
 import ResetOrdersPage        from './pages/ResetOrdersPage'
 import DeleteOrderPage         from './pages/DeleteOrderPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
@@ -68,6 +71,7 @@ function AppShell() {
     <AppProvider>
       <HashRouter>
         <div className="h-screen flex flex-col overflow-hidden">
+          <BroadcastPopup />
           <Header />
           <div className="flex flex-1 overflow-hidden">
             <Sidebar />
@@ -92,6 +96,8 @@ function AppShell() {
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />
+                <Route path="/settings/app"        element={<AppSettingsPage />} />
+                <Route path="/settings/messages"   element={<MessagesPage />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
                 <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/reset"      element={<ResetOrdersPage />} />

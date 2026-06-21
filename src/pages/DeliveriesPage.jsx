@@ -3,7 +3,7 @@ import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
-  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt,
+  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -56,6 +56,12 @@ const FILTER_LABELS    = { all: 'All' }
 // Payment-status filter chips — reuse the payment Badge styling/labels/colours.
 // '' is the "All" pseudo-value (no payment filter applied).
 const PAYMENT_FILTERS  = ['','unpaid','partially_paid','collected_by_driver','paid_to_office']
+// Flag filter — '' is the "All" pseudo-value (no flag filter applied).
+const FLAG_FILTERS     = [
+  { value: '',          label: 'All',       cls: 'bg-brand-500/15 text-brand-400 border-brand-500/30' },
+  { value: 'flagged',   label: 'Flagged',   cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+  { value: 'unflagged', label: 'Unflagged', cls: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
+]
 const CURRENCIES       = ['USD', 'LBP', 'EUR']
 
 // Map legacy/enum order statuses onto the four-step lifecycle for display & filtering.
@@ -83,6 +89,22 @@ function isFullyPaid(o)   { return o?.payment_status === 'paid_to_office' }
 // Order confirmation flag (delivery_orders.order_confirmed). Not-confirmed rows
 // are highlighted in light fuchsia in the list.
 function isConfirmed(o) { return o?.order_confirmed === true }
+
+// An active, not-yet-confirmed order that has been waiting (since it was created)
+// longer than the configured reminder time. Such rows blink so the user notices
+// an order has been placed but not confirmed. `reminderMins <= 0` disables it.
+function needsConfirmReminder(o, reminderMins, nowMs) {
+  if (!(reminderMins > 0)) return false
+  if (isConfirmed(o) || isRowLocked(o)) return false
+  if (!o?.created_at) return false
+  const created = new Date(o.created_at).getTime()
+  if (isNaN(created)) return false
+  return nowMs - created >= reminderMins * 60 * 1000
+}
+
+// User flag (delivery_orders.is_flagged) — a manual marker the user toggles to
+// pull selected orders into the Flagged filter. Independent of any status.
+function isFlagged(o) { return o?.is_flagged === true }
 
 // Quick "Mark Closed" from the list is allowed only once the money is fully
 // collected AND the materials are Delivered (and the row isn't already closed or
@@ -370,7 +392,15 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DeliveriesPage({ closed = false }) {
-  const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID } = useApp()
+  const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID, showSummary, appSettings } = useApp()
+  // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
+  const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
+  // Ticks the clock so blinking starts on time without needing a manual refresh.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [])
   const { currentUser } = useAuth()
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
@@ -422,6 +452,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [origPaymentIds,       setOrigPaymentIds]       = useState([])
   const [driverFilter,         setDriverFilter]         = useState('')
   const [payFilter,            setPayFilter]            = useState('')   // payment_status chip (toggle)
+  const [flagFilter,           setFlagFilter]           = useState('')   // ''|flagged|unflagged
   const [customerFilter,       setCustomerFilter]       = useState('')
   const [categoryFilter,       setCategoryFilter]       = useState('')   // credit|regular|partner|supplier
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
@@ -558,6 +589,7 @@ export default function DeliveriesPage({ closed = false }) {
     return matchClosed && matchSearch
       && (filter === 'all' || normalizeStatus(o.status) === filter)
       && (!payFilter      || o.payment_status === payFilter)
+      && (!flagFilter     || (flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
       && (!driverFilter   || o.driver_id   === driverFilter)
       && (!customerFilter || o.customer_id === customerFilter)
       && matchCategory(o)
@@ -1368,6 +1400,15 @@ export default function DeliveriesPage({ closed = false }) {
     setQuickBusy(false); setPopover(null)
   }
 
+  // Toggle the manual flag on an order (delivery_orders.is_flagged). A flag is a
+  // user marker independent of status, so it stays available even on locked rows.
+  async function toggleFlag(o) {
+    setToggling(o.id)
+    await supabase.from('delivery_orders').update({ is_flagged: !isFlagged(o) }).eq('id', o.id)
+    await fetchOrders()
+    setToggling(null)
+  }
+
   // Power button. Reactivating a cancelled/failed order is immediate; deactivating
   // an active one opens a confirmation modal that warns about — and then deletes —
   // every transaction on the order (see confirmCancel).
@@ -1582,6 +1623,23 @@ export default function DeliveriesPage({ closed = false }) {
             </div>
           )}
           {!closed && (
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="w-px h-5 bg-surface-border mx-1" />
+              <Flag className="w-4 h-4 text-slate-500" />
+              {FLAG_FILTERS.map(f => {
+                const active = flagFilter === f.value
+                return (
+                  <button key={f.value || 'all'} onClick={() => setFlagFilter(f.value)}
+                    className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border transition-all ${
+                      active ? f.cls : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'
+                    }`}>
+                    {f.label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {!closed && (
             <div className="ml-auto flex items-center gap-2">
               <button className="btn-primary" onClick={openAdd}>
                 <Plus className="w-4 h-4" /> New Multipurpose Order
@@ -1706,15 +1764,23 @@ export default function DeliveriesPage({ closed = false }) {
                       </button>
                     )}
                   </div>
-                  <button type="button" onClick={(e) => openPopover('online', o, e)} disabled={isRowLocked(o)}
-                    title="Click to change confirmation"
-                    className={`inline-flex items-center gap-1 text-[10px] mt-1 px-1.5 py-0.5 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
-                    isConfirmed(o)
-                      ? 'text-green-400 bg-green-500/10 border-green-500/20'
-                      : 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/30'}`}>
-                    {isConfirmed(o) ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-                    {isConfirmed(o) ? 'Confirmed' : 'Not confirmed'}
-                  </button>
+                  {(() => {
+                    const remind = needsConfirmReminder(o, reminderMins, now)
+                    return (
+                      <button type="button" onClick={(e) => openPopover('online', o, e)} disabled={isRowLocked(o)}
+                        title={remind ? 'This order has been placed but not confirmed — click to confirm' : 'Click to change confirmation'}
+                        className={`inline-flex items-center gap-1 text-[10px] mt-1 px-1.5 py-0.5 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
+                        isConfirmed(o)
+                          ? 'text-green-400 bg-green-500/10 border-green-500/20'
+                          : 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/30'} ${
+                        remind ? 'animate-blink ring-1 ring-fuchsia-400' : ''}`}>
+                        {isConfirmed(o)
+                          ? <Check className="w-3 h-3" />
+                          : remind ? <BellRing className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {isConfirmed(o) ? 'Confirmed' : 'Not confirmed'}
+                      </button>
+                    )
+                  })()}
                   {o.isclosed && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1 ml-1">
                       <Lock className="w-3 h-3" /> Closed
@@ -1796,6 +1862,14 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
+                    <button onClick={() => toggleFlag(o)} disabled={toggling === o.id}
+                      title={isFlagged(o) ? 'Unflag order' : 'Flag order'}
+                      className={`btn-ghost p-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        isFlagged(o)
+                          ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10'
+                          : 'text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'}`}>
+                      <Flag className={`w-4 h-4 ${isFlagged(o) ? 'fill-amber-400' : ''}`} />
+                    </button>
                     {isFullyPaid(o) ? (
                       <span title="Fully paid — nothing to collect"
                         className="p-1.5 inline-flex items-center text-green-400">
@@ -2916,7 +2990,7 @@ export default function DeliveriesPage({ closed = false }) {
       )}
 
       {/* ── Amounts hover preview (follows the cursor; read-only) ── */}
-      {hoverSummary && !popover && (
+      {showSummary && hoverSummary && !popover && (
         <div ref={hoverPanelRef}
           className="fixed z-[55] pointer-events-none card border border-surface-border rounded-lg shadow-xl overflow-hidden"
           style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 340 }}>
