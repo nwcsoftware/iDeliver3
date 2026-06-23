@@ -1,5 +1,6 @@
 import React from 'react'
 import { Plus, Trash2, Package, Check, Circle } from 'lucide-react'
+import ContactCombobox from './ContactCombobox'
 
 const CATEGORIES = [
   { value: 'food',                label: 'Food' },
@@ -56,7 +57,7 @@ function providerName(c) {
  *   onAdd       - optional parent-owned "Add Package" handler (used when the
  *                 Add button lives in the collapsible section header)
  */
-export default function OrderPackages({ packages, setPackages, providers = [], customerName = '', embedded = false, onAdd }) {
+export default function OrderPackages({ packages, setPackages, providers = [], onAddProvider, customerName = '', embedded = false, onAdd }) {
   const trackingRefs = React.useRef({})        // rowKey -> tracking <input>
   const prevLen      = React.useRef(packages.length)
 
@@ -109,11 +110,14 @@ export default function OrderPackages({ packages, setPackages, providers = [], c
         <div key={p._id ?? p._key ?? i} data-package-row className="border border-surface-border rounded-lg p-3 space-y-2 bg-surface-hover/30">
           <div>
             <label className="label text-fuchsia-300">Package provider *</label>
-            <select required className="input py-1.5 text-xs" value={p.provider_id || ''}
-              onChange={e => update(i, 'provider_id', e.target.value)}>
-              <option value="">— Select provider —</option>
-              {providers.map(pr => <option key={pr.id} value={pr.id}>{providerName(pr)}</option>)}
-            </select>
+            <ContactCombobox
+              value={p.provider_id || ''}
+              options={providers}
+              onSelect={c => update(i, 'provider_id', c.id)}
+              onAddNew={onAddProvider}
+              addLabel="partner"
+              placeholder="Type a partner / provider…"
+              compact />
           </div>
 
           <div>

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { MapPin, Plus, X } from 'lucide-react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { MapPin, Plus, X, Pencil } from 'lucide-react'
 
 /**
  * Tag-style location field. Selected locations show as removable chips; clicking
@@ -7,31 +7,68 @@ import { MapPin, Plus, X } from 'lucide-react'
  * location, or type a brand-new one (Enter or "Add"). Built for speed: one click
  * to add, one click (×) to remove, Backspace removes the last chip.
  *
+ * The quick-pick popup is rendered with fixed positioning anchored to the field,
+ * so it floats above the (overflow-clipped) section frame and is always fully
+ * visible. Each suggestion can be edited (✎) or deleted (×) when the parent
+ * supplies onEditSuggestion / onDeleteSuggestion.
+ *
  * Props:
- *   label         field label
- *   required      show fuchsia required styling + asterisk
- *   tags          string[] selected locations
- *   setTags       (string[]) => void
- *   suggestions   string[] candidates to offer (saved + derived)
- *   onAddNew      (string) => void  called when a value not already a suggestion is committed
+ *   label              field label
+ *   required           show fuchsia required styling + asterisk
+ *   tags               string[] selected locations
+ *   setTags            (string[]) => void
+ *   suggestions        string[] candidates to offer (saved + derived)
+ *   onAddNew           (string) => void  called when a value not already a suggestion is committed
+ *   onEditSuggestion   (oldVal, newVal) => void  rename a saved/suggested location
+ *   onDeleteSuggestion (val) => void  remove a saved/suggested location from the list
  *   placeholder
  */
 export default function TagLocationField({
-  label, required = false, tags = [], setTags, suggestions = [], onAddNew, placeholder = 'Add location…',
+  label, required = false, tags = [], setTags, suggestions = [], onAddNew,
+  onEditSuggestion, onDeleteSuggestion, placeholder = 'Add location…',
 }) {
   const [open, setOpen]   = useState(false)
   const [query, setQuery] = useState('')
+  const [coords, setCoords] = useState(null)   // { left, top|bottom, width } in viewport px
   const wrapRef  = useRef(null)
+  const boxRef   = useRef(null)
   const inputRef = useRef(null)
 
-  // Close on outside click / Escape.
+  // Position the popup relative to the field box, flipping above when the space
+  // below is tight, so it's never clipped by the section's overflow-hidden frame.
+  function updateCoords() {
+    const el = boxRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom
+    const openUp = spaceBelow < 280 && r.top > spaceBelow
+    setCoords(openUp
+      ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + 4 }
+      : { left: r.left, width: r.width, top: r.bottom + 4 })
+  }
+
+  useLayoutEffect(() => { if (open) updateCoords() }, [open, tags.length, query])
+
+  // Close on outside click / Escape; reposition while open (the modal scrolls).
   useEffect(() => {
     if (!open) return
-    const onDocDown = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false) }
-    const onKey     = e => { if (e.key === 'Escape') setOpen(false) }
+    const onDocDown = e => {
+      if (wrapRef.current && wrapRef.current.contains(e.target)) return
+      if (e.target.closest?.('[data-tag-popup]')) return
+      setOpen(false)
+    }
+    const onKey  = e => { if (e.key === 'Escape') setOpen(false) }
+    const onMove = () => updateCoords()
     document.addEventListener('mousedown', onDocDown)
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDocDown); document.removeEventListener('keydown', onKey) }
+    window.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
+    }
   }, [open])
 
   const has = v => tags.some(t => t.toLowerCase() === v.toLowerCase())
@@ -54,6 +91,19 @@ export default function TagLocationField({
     addTag(val)
   }
 
+  function editSuggestion(s) {
+    const next = (window.prompt('Edit location', s) || '').trim()
+    if (!next || next.toLowerCase() === s.toLowerCase()) return
+    onEditSuggestion?.(s, next)
+    // Keep the field's own selected chips in sync if this value was selected.
+    if (has(s)) setTags(tags.map(t => (t.toLowerCase() === s.toLowerCase() ? next : t)))
+    inputRef.current?.focus()
+  }
+  function deleteSuggestion(s) {
+    onDeleteSuggestion?.(s)
+    inputRef.current?.focus()
+  }
+
   const q = query.trim().toLowerCase()
   const picks = suggestions
     .filter(s => !has(s))
@@ -66,7 +116,7 @@ export default function TagLocationField({
       <label className={`label ${required ? 'text-fuchsia-300' : ''}`}>{label}{required ? ' *' : ''}</label>
 
       {/* Field box — chips + inline input */}
-      <div
+      <div ref={boxRef}
         className="input min-h-[38px] flex flex-wrap items-center gap-1.5 cursor-text py-1.5"
         onClick={() => { setOpen(true); inputRef.current?.focus() }}>
         {tags.map(t => (
@@ -89,10 +139,12 @@ export default function TagLocationField({
           }} />
       </div>
 
-      {/* Quick-pick popup */}
-      {open && (
-        <div className="absolute z-[55] left-0 right-0 mt-1 card border border-surface-border rounded-lg shadow-xl overflow-hidden">
-          <div className="max-h-60 overflow-y-auto p-2 space-y-1">
+      {/* Quick-pick popup — fixed so it floats above the section frame */}
+      {open && coords && (
+        <div data-tag-popup
+          className="fixed z-[70] card border border-surface-border rounded-lg shadow-xl overflow-hidden"
+          style={{ left: coords.left, width: coords.width, top: coords.top, bottom: coords.bottom }}>
+          <div className="max-h-72 overflow-y-auto p-2 space-y-1">
             {canCreate && (
               <button type="button" onMouseDown={e => { e.preventDefault(); commitTyped() }}
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs text-emerald-300 hover:bg-surface-hover">
@@ -104,14 +156,26 @@ export default function TagLocationField({
                 {suggestions.length ? 'No matches' : 'Type a location and press Enter'}
               </p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="space-y-1">
                 {picks.map(s => (
-                  <button type="button" key={s}
-                    onMouseDown={e => { e.preventDefault(); addTag(s) }}
-                    className="inline-flex items-center gap-1 bg-surface-hover border border-surface-border rounded-md px-2 py-1 text-xs text-slate-300 hover:border-brand-600/50 hover:text-slate-100 transition-colors">
-                    <MapPin className="w-3 h-3 flex-shrink-0 opacity-60" />
-                    <span className="truncate max-w-[200px]">{s}</span>
-                  </button>
+                  <div key={s}
+                    className="group flex items-center gap-1 bg-surface-hover border border-surface-border rounded-md pl-2 pr-1 py-1 hover:border-brand-600/50 transition-colors">
+                    <button type="button" onMouseDown={e => { e.preventDefault(); addTag(s) }}
+                      className="flex-1 min-w-0 inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-slate-100 text-left">
+                      <MapPin className="w-3 h-3 flex-shrink-0 opacity-60" />
+                      <span className="truncate">{s}</span>
+                    </button>
+                    {onEditSuggestion && (
+                      <button type="button" title="Edit this location"
+                        onMouseDown={e => { e.preventDefault(); editSuggestion(s) }}
+                        className="flex-shrink-0 p-1 text-slate-500 hover:text-brand-300"><Pencil className="w-3 h-3" /></button>
+                    )}
+                    {onDeleteSuggestion && (
+                      <button type="button" title="Delete this location"
+                        onMouseDown={e => { e.preventDefault(); deleteSuggestion(s) }}
+                        className="flex-shrink-0 p-1 text-slate-500 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react'
+import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw, Trash2, Eraser } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -47,15 +47,18 @@ function orderDate(o) {
 
 export default function CreditCustomersPage() {
   const { orders, loading, fetchOrders, COMPANY_ID } = useApp()
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
+  const isAdmin = hasRole('super_admin', 'admin')   // settlement-erasing tools are admin-only
 
   const [payments,     setPayments]     = useState([])      // credit_customer_payments rows
   const [clears,       setClears]       = useState([])      // credit_customer_clears rows
+  const [excluded,     setExcluded]     = useState([])      // credit_excluded_orders rows
   const [payLoading,   setPayLoading]    = useState(true)
   const [selectedId,   setSelectedId]   = useState(null)    // selected customer_id
   const [showAll,      setShowAll]      = useState(false)   // expand statement past the clear checkpoint
   const [clearing,     setClearing]     = useState(false)
+  const [erasing,      setErasing]      = useState(false)
 
   const [search,       setSearch]       = useState('')
   const [dateFrom,     setDateFrom]     = useState('')
@@ -89,7 +92,17 @@ export default function CreditCustomersPage() {
     if (!error && data) setClears(data)
   }, [COMPANY_ID])
 
-  useEffect(() => { fetchPayments(); fetchClears() }, [fetchPayments, fetchClears])
+  /* ── fetch orders excluded from credit statements (admin) ── */
+  const fetchExclusions = useCallback(async () => {
+    let q = supabase.from('credit_excluded_orders').select('*')
+    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+    const { data, error } = await q
+    if (!error && data) setExcluded(data)
+  }, [COMPANY_ID])
+
+  useEffect(() => { fetchPayments(); fetchClears(); fetchExclusions() }, [fetchPayments, fetchClears, fetchExclusions])
+
+  const excludedIds = useMemo(() => new Set(excluded.map(e => e.order_id)), [excluded])
 
   // customer_id → latest cleared_through date ('YYYY-MM-DD'), the active checkpoint.
   const cutoffByCustomer = useMemo(() => {
@@ -103,10 +116,11 @@ export default function CreditCustomersPage() {
 
   /* ── closed orders belonging to credit customers ─────────── */
   // Every CLOSED order whose customer is credit-allowed is a charge on that
-  // customer's account, regardless of how the order was closed.
+  // customer's account, regardless of how the order was closed. Orders an admin
+  // has excluded from the credit statement are left out.
   const creditOrders = useMemo(
-    () => orders.filter(o => o.isclosed === true && o.customer?.credit_debit_allowed === true),
-    [orders],
+    () => orders.filter(o => o.isclosed === true && o.customer?.credit_debit_allowed === true && !excludedIds.has(o.id)),
+    [orders, excludedIds],
   )
 
   // Group payments by customer for quick lookup.
@@ -201,13 +215,13 @@ export default function CreditCustomersPage() {
     for (const o of selected.orders) {
       all.push({
         kind: 'order', date: orderDate(o), ref: o.order_number || String(o.id).slice(0, 8),
-        label: o.recipient_name || o.order_type || 'Order', debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at,
+        label: o.recipient_name || o.order_type || 'Order', debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at, order: o,
       })
     }
     for (const p of selected.payments) {
       all.push({
         kind: 'payment', date: (p.paid_at || p.created_at || '').slice(0, 10), ref: p.method || 'payment',
-        label: p.notes || 'Account payment', debit: null, credit: { [p.currency || 'USD']: round2(Number(p.amount) || 0) }, _t: p.paid_at || p.created_at,
+        label: p.notes || 'Account payment', debit: null, credit: { [p.currency || 'USD']: round2(Number(p.amount) || 0) }, _t: p.paid_at || p.created_at, payId: p.id,
       })
     }
     all.sort((a, b) => String(a._t || a.date).localeCompare(String(b._t || b.date)))
@@ -327,6 +341,45 @@ export default function CreditCustomersPage() {
     if (window.confirm(`Clear ${customerName(selected.customer)}'s statement as of ${ymd}?\n\nEntries on or before that date will be summarised as a single brought-forward balance. Nothing is deleted — "Show all" still shows the full history.`)) {
       clearStatement(ymd)
     }
+  }
+
+  /* ── admin: erase settlement records ─────────────────────────
+     Deletes only the account-level settlement data (payments + clear
+     checkpoints, or one payment) — never touches the real delivery orders.
+     Excluding an order removes it from the credit account but keeps the order. */
+  async function eraseAllForCustomer() {
+    if (!selected || !isAdmin) return
+    if (!window.confirm(`Erase ALL settlement records for ${customerName(selected.customer)}?\n\nThis deletes every account payment and clear-checkpoint for this customer. Their orders are NOT deleted (still in Closed Orders); the balance reverts to the full unpaid total. This cannot be undone.`)) return
+    setErasing(true)
+    const id = selected.customer.id
+    const e1 = (await supabase.from('credit_customer_payments').delete().eq('customer_id', id)).error
+    const e2 = (await supabase.from('credit_customer_clears').delete().eq('customer_id', id)).error
+    setErasing(false)
+    if (e1 || e2) { window.alert(`Could not erase settlements: ${(e1 || e2).message}`); return }
+    setShowAll(false)
+    await Promise.all([fetchPayments(), fetchClears()])
+  }
+
+  async function deletePayment(payId) {
+    if (!isAdmin || !payId) return
+    if (!window.confirm('Delete this payment? This cannot be undone.')) return
+    const { error } = await supabase.from('credit_customer_payments').delete().eq('id', payId)
+    if (error) { window.alert(`Could not delete the payment: ${error.message}`); return }
+    await fetchPayments()
+  }
+
+  async function excludeOrder(order) {
+    if (!isAdmin || !order) return
+    if (!window.confirm(`Remove order #${order.order_number || ''} from this customer's credit statement?\n\nThe order itself is kept (still visible in Closed Orders and reports) — it's only removed from the credit account/balance.`)) return
+    const { error } = await supabase.from('credit_excluded_orders').insert([{
+      order_id:         order.id,
+      customer_id:      order.customer_id || selected?.customer?.id || null,
+      excluded_by:      currentUser?.user_id || null,
+      excluded_by_name: currentUserName,
+      ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+    }])
+    if (error) { window.alert(`Could not remove the order: ${error.message}`); return }
+    await fetchExclusions()
   }
 
   /* ── PDF — the selected customer's statement ─────────────── */
@@ -478,6 +531,12 @@ export default function CreditCustomersPage() {
                       className="btn-ghost text-xs text-slate-300 hover:text-slate-100 disabled:opacity-50">
                       <Scissors className="w-4 h-4" /> Clear as of yesterday
                     </button>
+                    {isAdmin && (
+                      <button onClick={eraseAllForCustomer} disabled={erasing} title="Admin: delete all account payments & checkpoints for this customer (orders are kept)"
+                        className="btn-ghost text-xs text-red-400 hover:text-red-300 disabled:opacity-50">
+                        <Eraser className="w-4 h-4" /> Erase settlements
+                      </button>
+                    )}
                     <button onClick={exportPDF} className="btn-ghost text-xs text-slate-300 hover:text-slate-100">
                       <FileDown className="w-4 h-4" /> Statement PDF
                     </button>
@@ -534,11 +593,12 @@ export default function CreditCustomersPage() {
                       <th className="px-4 py-2 font-medium">Description</th>
                       <th className="px-4 py-2 font-medium text-right">Charge</th>
                       <th className="px-4 py-2 font-medium text-right">Payment</th>
+                      {isAdmin && <th className="px-4 py-2 font-medium text-right w-12"></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {statement.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No entries for the selected dates.</td></tr>
+                      <tr><td colSpan={isAdmin ? 6 : 5} className="px-4 py-8 text-center text-slate-500">No entries for the selected dates.</td></tr>
                     ) : statement.map((r, i) => (
                       <tr key={i} className={`border-b border-surface-border/50 ${r.kind === 'opening' ? 'bg-amber-500/5' : 'hover:bg-surface-hover/40'}`}>
                         <td className="px-4 py-2.5 text-slate-400 font-mono text-xs whitespace-nowrap">{r.date || '—'}</td>
@@ -554,6 +614,18 @@ export default function CreditCustomersPage() {
                         <td className={`px-4 py-2.5 truncate max-w-[280px] ${r.kind === 'opening' ? 'text-amber-300 font-medium italic' : 'text-slate-300'}`}>{r.label}</td>
                         <td className="px-4 py-2.5 text-right text-slate-300 whitespace-nowrap">{r.debit ? fmtCurMap(r.debit) : ''}</td>
                         <td className="px-4 py-2.5 text-right text-green-400 whitespace-nowrap">{r.credit ? fmtCurMap(r.credit) : ''}</td>
+                        {isAdmin && (
+                          <td className="px-4 py-2.5 text-right">
+                            {r.kind === 'payment' && (
+                              <button onClick={() => deletePayment(r.payId)} title="Delete this payment"
+                                className="btn-ghost p-1 text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                            )}
+                            {r.kind === 'order' && (
+                              <button onClick={() => excludeOrder(r.order)} title="Remove this order from the credit statement (keeps the order)"
+                                className="btn-ghost p-1 text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -563,6 +635,7 @@ export default function CreditCustomersPage() {
                         <td className="px-4 py-2.5" colSpan={3}>Totals shown{(dateFrom || dateTo) ? ' (filtered)' : ''}</td>
                         <td className="px-4 py-2.5 text-right">{fmtCurMap(statementTotals.charged)}</td>
                         <td className="px-4 py-2.5 text-right text-green-400">{fmtCurMap(statementTotals.paid)}</td>
+                        {isAdmin && <td className="px-4 py-2.5"></td>}
                       </tr>
                     </tfoot>
                   )}

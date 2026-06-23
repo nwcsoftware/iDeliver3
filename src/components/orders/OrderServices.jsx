@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { Plus, Trash2, Check, AlertCircle } from 'lucide-react'
+import ContactCombobox from './ContactCombobox'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 
@@ -29,7 +30,7 @@ function supplierName(c) {
  *   suppliers    - supplier contacts for the "Service provider" dropdown
  *   onAdd        - optional parent-owned "Add Service" handler
  */
-export default function OrderServices({ services, setServices, suppliers = [], embedded = false, onAdd }) {
+export default function OrderServices({ services, setServices, suppliers = [], onAddProvider, embedded = false, onAdd }) {
   const referenceRefs = useRef({})
   const prevLen = useRef(services.length)
 
@@ -88,11 +89,14 @@ export default function OrderServices({ services, setServices, suppliers = [], e
                       onChange={e => update(i, 'service_date', e.target.value)} max={today} />
                   </td>
                   <td className="px-3 py-2">
-                    <select className="input text-xs" value={s.provider_id || ''}
-                      onChange={e => update(i, 'provider_id', e.target.value)}>
-                      <option value="">— Select supplier —</option>
-                      {suppliers.map(sup => <option key={sup.id} value={sup.id}>{supplierName(sup)}</option>)}
-                    </select>
+                    <ContactCombobox
+                      value={s.provider_id || ''}
+                      options={suppliers}
+                      onSelect={c => update(i, 'provider_id', c.id)}
+                      onAddNew={onAddProvider}
+                      addLabel="supplier"
+                      placeholder="Type a supplier…"
+                      compact />
                   </td>
                   <td className="px-3 py-2">
                     <input className="input text-xs font-mono" placeholder="REF-001"

@@ -3,13 +3,13 @@ import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
-  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing,
+  ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateCustomerAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
@@ -22,7 +22,8 @@ import { saveOrderPackages } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
 import TagLocationField from '../components/orders/TagLocationField'
-import { getSavedLocations, addSavedLocation } from '../lib/savedLocations'
+import ContactCombobox from '../components/orders/ContactCombobox'
+import { getSavedLocations, addSavedLocation, renameSavedLocation, removeSavedLocation, getHiddenLocations, hideLocation } from '../lib/savedLocations'
 
 /* ── constants ───────────────────────────────────────────── */
 
@@ -431,6 +432,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [origServiceIds, setOrigServiceIds] = useState([])
   const [savedPickup,   setSavedPickup]   = useState(() => getSavedLocations('pickup'))
   const [savedDelivery, setSavedDelivery] = useState(() => getSavedLocations('delivery'))
+  const [hiddenPickup,  setHiddenPickup]  = useState(() => getHiddenLocations('pickup'))
+  const [hiddenDelivery,setHiddenDelivery]= useState(() => getHiddenLocations('delivery'))
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [copied,    setCopied]    = useState(null)
@@ -450,6 +453,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false)
   const [newCustomerOpen,      setNewCustomerOpen]      = useState(false)
   const [newCustomer,          setNewCustomer]          = useState(EMPTY_CUSTOMER)
+  const [newContactType,       setNewContactType]       = useState('customer')   // customer | partner | supplier
+  const newContactCreatedRef = useRef(null)   // (createdContact) => void — selects it back into the field
   const [custAddresses,        setCustAddresses]        = useState([])
   const [savingCustomer,       setSavingCustomer]       = useState(false)
   const [customerError,        setCustomerError]        = useState('')
@@ -461,6 +466,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [customerFilter,       setCustomerFilter]       = useState('')
   const [categoryFilter,       setCategoryFilter]       = useState('')   // credit|regular|partner|supplier
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
+  const [orderTypeFilter,      setOrderTypeFilter]      = useState('')   // order_type (string)
   const [dateFrom,             setDateFrom]             = useState('')
   const [dateTo,               setDateTo]               = useState('')
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
@@ -596,15 +602,33 @@ export default function DeliveriesPage({ closed = false }) {
       && (!flagFilter     || (flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
       && (!driverFilter   || o.driver_id   === driverFilter)
       && (!customerFilter || o.customer_id === customerFilter)
+      && (!orderTypeFilter || o.order_type === orderTypeFilter)
       && matchCategory(o)
       && matchSource(o)
       && matchScheduledDate(o)
   })
 
-  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter || sourceFilter || dateFrom || dateTo
+  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
-    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter(''); setSourceFilter(''); setDateFrom(''); setDateTo('')
+    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter(''); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
   }
+
+  // Order-type filter options as { value, label }. `value` is exactly what's
+  // stored on the order (built-in value like 'restaurant', or a custom name);
+  // `label` is a friendly display. Sourced from built-in + custom (DB) types +
+  // any value present on existing orders, de-duped case-insensitively.
+  const orderTypeOptions = (() => {
+    const builtinLabel = Object.fromEntries(ORDER_TYPES.map(t => [t.value, t.label]))
+    const seen = new Map()
+    const add = v => {
+      const s = String(v ?? '').trim()
+      if (s && !seen.has(s.toLowerCase())) seen.set(s.toLowerCase(), { value: s, label: builtinLabel[s] || s })
+    }
+    ORDER_TYPES.forEach(t => add(t.value))
+    orderTypes.forEach(t => add(t.name))
+    ;(orders ?? []).forEach(o => add(o.order_type))
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+  })()
 
   // Sortable column header → value extractor. Headers not listed here aren't sortable.
   const SORT_GETTERS = {
@@ -688,6 +712,13 @@ export default function DeliveriesPage({ closed = false }) {
   function rememberPickup(v)   { setSavedPickup(addSavedLocation('pickup', v)) }
   function rememberDelivery(v) { setSavedDelivery(addSavedLocation('delivery', v)) }
 
+  // Edit / delete a saved or order-derived location suggestion. Deleting also
+  // hides the value so suggestions sourced from order history stop appearing.
+  function editPickupSuggestion(oldV, newV)   { setSavedPickup(renameSavedLocation('pickup', oldV, newV)); setHiddenPickup(hideLocation('pickup', oldV)) }
+  function editDeliverySuggestion(oldV, newV) { setSavedDelivery(renameSavedLocation('delivery', oldV, newV)); setHiddenDelivery(hideLocation('delivery', oldV)) }
+  function deletePickupSuggestion(v)   { setSavedPickup(removeSavedLocation('pickup', v)); setHiddenPickup(hideLocation('pickup', v)) }
+  function deleteDeliverySuggestion(v) { setSavedDelivery(removeSavedLocation('delivery', v)); setHiddenDelivery(hideLocation('delivery', v)) }
+
   /* Add a warehouse/shop to the pickup-location tags (used when a shop is picked
      in the External retail invoices section), de-duped, and remember it. */
   function addPickupTag(name) {
@@ -736,33 +767,38 @@ export default function DeliveriesPage({ closed = false }) {
     if (c) applyCustomer(c)
   }
 
-  /* The default "walk-in" customer applied to every new order. Matched by name
-     (case-insensitive) against either the company name or the person's name. */
-  function findGeneralCustomer() {
-    return customers.find(c =>
-      (c.company_name || customerName(c) || '').trim().toLowerCase() === 'general customer'
-    )
-  }
-
-  /* Open the quick "new customer" modal, pre-filling from what's typed so far. */
-  function openNewCustomer(seedName = customerInput) {
+  /* Open the quick "new contact" modal for any type (customer / partner /
+     supplier), pre-filling the typed name. `onCreated(contact)` selects the new
+     contact back into whatever field opened the modal. */
+  function openNewContact(seedName = '', contactType = 'customer', onCreated = null) {
     const parts = (seedName ?? '').trim().split(/\s+/).filter(Boolean)
+    setNewContactType(contactType)
+    newContactCreatedRef.current = onCreated
     setNewCustomer({
       ...EMPTY_CUSTOMER,
-      first_name:      parts[0] ?? '',
-      last_name:       parts.slice(1).join(' '),
-      mobile:          form.recipient_mobile   || '',
-      whatsapp_number: form.recipient_whatsapp || '',
-      address:         form.delivery_address   || '',
+      first_name: parts[0] ?? '',
+      last_name:  parts.slice(1).join(' '),
+      // For a new customer, carry over the recipient details already typed.
+      ...(contactType === 'customer' ? {
+        mobile:          form.recipient_mobile   || '',
+        whatsapp_number: form.recipient_whatsapp || '',
+        address:         form.delivery_address   || '',
+      } : {}),
     })
     setCustAddresses([])
     setCustomerError('')
     setCustomerDropdownOpen(false)
     setNewCustomerOpen(true)
-    // Generate the account number and fill the field
-    generateCustomerAccountNumber()
+    // Generate the account number (prefixed per contact type) and fill the field.
+    generateAccountNumber(contactType)
       .then(acct => setNewCustomer(c => ({ ...c, account_number: acct })))
       .catch(() => {})
+  }
+
+  /* The customer box's "save new" — opens the contact modal as a customer and
+     selects it as the order's customer when created. */
+  function openNewCustomer(seedName = customerInput) {
+    openNewContact(seedName, 'customer', applyCustomer)
   }
 
   function setNewCust(k, v) { setNewCustomer(c => ({ ...c, [k]: v })); setCustomerError('') }
@@ -779,11 +815,11 @@ export default function DeliveriesPage({ closed = false }) {
     // Ensure an account number is generated before saving.
     let accountNumber = newCustomer.account_number
     if (!accountNumber) {
-      try { accountNumber = await generateCustomerAccountNumber() } catch { /* leave blank */ }
+      try { accountNumber = await generateAccountNumber(newContactType) } catch { /* leave blank */ }
     }
 
     const payload = {
-      contact_type:    'customer',
+      contact_type:    newContactType,
       // Company-only columns are sent only for companies, so individuals don't
       // depend on the entity_type/company_name/commercial_registration columns.
       ...(isCompany ? {
@@ -819,7 +855,10 @@ export default function DeliveriesPage({ closed = false }) {
     if (addrErr) { setCustomerError(addrErr); setSavingCustomer(false); return }
 
     setCustomers(prev => [...prev, data])
-    applyCustomer(data)
+    // Select the new contact back into whichever field opened the modal.
+    const onCreated = newContactCreatedRef.current
+    if (onCreated) onCreated(data); else applyCustomer(data)
+    newContactCreatedRef.current = null
     setNewCustomerOpen(false)
     setSavingCustomer(false)
   }
@@ -831,9 +870,7 @@ export default function DeliveriesPage({ closed = false }) {
     setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
     setCustomerInput(''); setError(''); setModal('add')
-    // Default to the "GENERAL CUSTOMER" contact; the user can still type/select another.
-    const general = findGeneralCustomer()
-    if (general) applyCustomer(general)
+    // No default customer — the user picks one (was previously auto-set to "GENERAL CUSTOMER").
   }
 
   async function openEdit(o) {
@@ -1482,7 +1519,25 @@ export default function DeliveriesPage({ closed = false }) {
   }
 
   async function copyNum(num) {
-    await navigator.clipboard.writeText(num).catch(() => {})
+    const text = String(num ?? '')
+    if (!text) return
+    let ok = false
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true }
+    } catch { /* clipboard API blocked/unavailable — fall back below */ }
+    if (!ok) {
+      // Legacy fallback (works when the async Clipboard API is unavailable, e.g.
+      // an unfocused window or non-secure context): copy via a temp textarea.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.focus(); ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch { /* ignore — nothing more we can do */ }
+    }
     setCopied(num); setTimeout(() => setCopied(null), 1500)
   }
 
@@ -1506,8 +1561,10 @@ export default function DeliveriesPage({ closed = false }) {
   // Shops/warehouses for the retail invoices dropdown = supplier contacts.
   // supplierByName maps a shop's display name → its contact, so selecting a
   // shop can auto-fill the invoice's business type (shop_type).
+  const supplierContacts  = customers.filter(c => c.contact_type === 'supplier')
+  const partnerContacts   = customers.filter(c => c.contact_type === 'partner')
   const supplierByName    = {}
-  customers.filter(c => c.contact_type === 'supplier').forEach(c => {
+  supplierContacts.forEach(c => {
     const name = c.company_name || customerName(c)
     if (name) supplierByName[name] = c
   })
@@ -1515,12 +1572,13 @@ export default function DeliveriesPage({ closed = false }) {
 
   // Quick-pick suggestions for the pickup / delivery tag fields: the user's saved
   // locations, plus values already used on other orders (and supplier shops for
-  // pickup), de-duped case-sensitively for display.
+  // pickup), de-duped case-sensitively for display, with user-hidden values removed.
   const uniq = arr => [...new Set(arr.filter(Boolean))]
+  const notHidden = (hidden) => { const h = new Set(hidden.map(x => x.toLowerCase())); return v => !h.has(v.toLowerCase()) }
   const pickupSuggestions   = uniq([...savedPickup, ...supplierOptions,
-    ...(orders ?? []).flatMap(o => splitLocs(o.pickup_address))])
+    ...(orders ?? []).flatMap(o => splitLocs(o.pickup_address))]).filter(notHidden(hiddenPickup))
   const deliverySuggestions = uniq([...savedDelivery,
-    ...(orders ?? []).flatMap(o => splitLocs(o.delivery_address))])
+    ...(orders ?? []).flatMap(o => splitLocs(o.delivery_address))]).filter(notHidden(hiddenDelivery))
 
   // Counts shown in the section titles.
   const packagesQty = packages.reduce((s, p) => s + (Number(p.quantity) || 0), 0)
@@ -1669,6 +1727,13 @@ export default function DeliveriesPage({ closed = false }) {
               <option value="">All orders</option>
               <option value="LOCAL">Local orders</option>
               <option value="EXTERNAL">External orders</option>
+            </select>
+          </div>
+          <div>
+            <label className="label flex items-center gap-1"><Tag className="w-3 h-3" /> Order type</label>
+            <select className="input py-1.5 text-xs w-40" value={orderTypeFilter} onChange={e => setOrderTypeFilter(e.target.value)}>
+              <option value="">All order types</option>
+              {orderTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
           <div>
@@ -2173,6 +2238,8 @@ export default function DeliveriesPage({ closed = false }) {
                     setTags={arr => fld('pickup_address', joinLocs(arr))}
                     suggestions={pickupSuggestions}
                     onAddNew={rememberPickup}
+                    onEditSuggestion={editPickupSuggestion}
+                    onDeleteSuggestion={deletePickupSuggestion}
                     placeholder="Add warehouse / pickup…" />
                   <TagLocationField
                     label="Delivery Address" required
@@ -2180,6 +2247,8 @@ export default function DeliveriesPage({ closed = false }) {
                     setTags={arr => fld('delivery_address', joinLocs(arr))}
                     suggestions={deliverySuggestions}
                     onAddNew={rememberDelivery}
+                    onEditSuggestion={editDeliverySuggestion}
+                    onDeleteSuggestion={deleteDeliverySuggestion}
                     placeholder="Add delivery address…" />
                 </div>
                 <div className="flex items-end gap-5">
@@ -2262,7 +2331,9 @@ export default function DeliveriesPage({ closed = false }) {
                     <Plus className="w-3 h-3" /> Add Package
                   </button>
                 }>
-                <OrderPackages packages={packages} setPackages={setPackages} providers={providers} customerName={customerInput.trim()} embedded onAdd={addPackage} />
+                <OrderPackages packages={packages} setPackages={setPackages} providers={partnerContacts}
+                  onAddProvider={(name, onCreated) => openNewContact(name, 'partner', onCreated)}
+                  customerName={customerInput.trim()} embedded onAdd={addPackage} />
               </CollapsibleSection>
 
               {/* ── Order Services ────────────────────────────── */}
@@ -2274,7 +2345,8 @@ export default function DeliveriesPage({ closed = false }) {
                   </button>
                 }>
                 <OrderServices services={services} setServices={setServices}
-                  suppliers={customers.filter(c => c.contact_type === 'supplier')}
+                  suppliers={supplierContacts}
+                  onAddProvider={(name, onCreated) => openNewContact(name, 'supplier', onCreated)}
                   embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
               </CollapsibleSection>
 
@@ -2376,31 +2448,35 @@ export default function DeliveriesPage({ closed = false }) {
                       ) : retailInvoices.map((ri, idx) => (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           <td className="px-3 py-2 align-top">
-                            <select className="input py-1.5 text-xs" value={ri.shop_name}
-                              onChange={e => {
-                                const name = e.target.value
+                            <ContactCombobox
+                              value={ri.contact_id || ''}
+                              text={ri.shop_name}
+                              allowText
+                              options={supplierContacts}
+                              addLabel="supplier"
+                              placeholder="Type a warehouse / shop…"
+                              compact
+                              onSelect={c => {
+                                const name = c.company_name || customerName(c)
                                 const prevName = retailInvoices[idx]?.shop_name || ''
-                                // Auto-fill business type + the contact link/code from the selected supplier.
-                                const sup = supplierByName[name]
                                 const next = retailInvoices.map((r, j) => j === idx ? {
-                                  ...r,
-                                  shop_name:    name,
-                                  shop_type:    sup?.shop_type || '',
-                                  contact_id:   sup?.id || '',
-                                  contact_code: sup?.code || '',
+                                  ...r, shop_name: name, shop_type: c.shop_type || '', contact_id: c.id, contact_code: c.code || '',
                                 } : r)
                                 setRetailInvoices(next)
-                                // Keep pickup tags in sync: drop the old shop (if unused
-                                // elsewhere) and add the newly selected one.
+                                // Keep pickup tags in sync: drop the old shop (if unused) and add the new one.
                                 if (prevName.toLowerCase() !== name.toLowerCase()) dropPickupTagIfUnused(prevName, next)
                                 addPickupTag(name)
-                              }}>
-                              <option value="">— Select —</option>
-                              {ri.shop_name && !supplierOptions.includes(ri.shop_name) && (
-                                <option value={ri.shop_name}>{ri.shop_name}</option>
-                              )}
-                              {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                              }}
+                              onText={v => {
+                                const prevName = retailInvoices[idx]?.shop_name || ''
+                                // Manual text → free-form shop name, unlinked from any supplier contact.
+                                const next = retailInvoices.map((r, j) => j === idx ? {
+                                  ...r, shop_name: v, shop_type: '', contact_id: '', contact_code: '',
+                                } : r)
+                                setRetailInvoices(next)
+                                if (prevName && prevName.toLowerCase() !== v.toLowerCase()) dropPickupTagIfUnused(prevName, next)
+                              }}
+                              onAddNew={(name, onCreated) => openNewContact(name, 'supplier', onCreated)} />
                             {(ri.shop_type || ri.contact_code) && (
                               <p className="text-[10px] text-slate-500 mt-0.5 flex gap-2">
                                 {ri.contact_code && <span className="font-mono text-slate-400">{ri.contact_code}</span>}
@@ -2784,13 +2860,13 @@ export default function DeliveriesPage({ closed = false }) {
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-cyan-400" />
-                Add Customer
+                Add {({ customer: 'Customer', partner: 'Partner', supplier: 'Supplier' })[newContactType] || 'Contact'}
               </h2>
               <button onClick={() => setNewCustomerOpen(false)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
 
             <ContactFormFields
-              type="customer"
+              type={newContactType}
               form={newCustomer}
               setField={setNewCust}
               mode="add"

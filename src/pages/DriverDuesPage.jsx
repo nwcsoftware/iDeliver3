@@ -43,8 +43,11 @@ function isDelivered(o) { return o?.delivery_status === 'Delivered' }
 function isFullyCollected(o) { return o?.payment_status === 'paid_to_office' }
 /* An order shows up for driver settlement only once it's fully paid: either it's
    already closed (historical), or it's delivered AND fully collected from the
-   customer. A partially-paid order has nothing to encash yet, so it's excluded. */
+   customer. A partially-paid order has nothing to encash yet, so it's excluded.
+   Credit-customer orders are excluded entirely — the driver collects no cash on
+   them; the customer settles their account later on the Credit Customers page. */
 function isSettlementEligible(o) {
+  if (o?.customer?.credit_debit_allowed === true) return false
   return o?.isclosed === true
     || (isDelivered(o) && isFullyCollected(o))
 }

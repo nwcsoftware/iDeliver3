@@ -1,0 +1,142 @@
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Check, Plus } from 'lucide-react'
+
+/* Display name for a contact: company name first, else person name. */
+function cname(c) {
+  return (c?.company_name?.trim()) || `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim() || '—'
+}
+
+/**
+ * Typeahead contact picker that behaves like the order form's customer box:
+ * type to search the given contacts; pick a match, or — when what you typed
+ * isn't a valid contact — choose "Add new …" to create one (the parent opens the
+ * full new-contact form and selects the result here).
+ *
+ * The dropdown is rendered with fixed positioning anchored to the field, so it
+ * floats above the section/table frame and is never clipped.
+ *
+ * Props:
+ *   value        selected contact id ('' when none)
+ *   text         free-text fallback to display when nothing is selected (allowText)
+ *   options      contacts to search
+ *   onSelect     (contact) => void      a contact was picked (or just created)
+ *   onText       (string)  => void      free text changed (only when allowText)
+ *   onAddNew     (typedName, onCreated) => void   open the add-contact flow
+ *   addLabel     word used in "Add new <addLabel>"
+ *   allowText    permit free-text values that aren't a contact (e.g. shop name)
+ *   compact      table-cell styling
+ *   placeholder
+ */
+export default function ContactCombobox({
+  value = '', text = '', options = [], onSelect, onText, onAddNew,
+  addLabel = 'contact', allowText = false, compact = false, placeholder = 'Type a name…',
+}) {
+  const selected = value ? options.find(o => o.id === value) : null
+  const [query, setQuery]     = useState('')
+  const [editing, setEditing] = useState(false)
+  const [open, setOpen]       = useState(false)
+  const [coords, setCoords]   = useState(null)
+  const wrapRef = useRef(null)
+  const boxRef  = useRef(null)
+
+  const baseDisplay = selected ? cname(selected) : (allowText ? (text || '') : '')
+  const display = editing ? query : baseDisplay
+
+  function updateCoords() {
+    const el = boxRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom
+    const openUp = spaceBelow < 240 && r.top > spaceBelow
+    setCoords(openUp
+      ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + 4 }
+      : { left: r.left, width: r.width, top: r.bottom + 4 })
+  }
+  useLayoutEffect(() => { if (open) updateCoords() }, [open, query])
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = e => {
+      if (wrapRef.current && wrapRef.current.contains(e.target)) return
+      if (e.target.closest?.('[data-contact-popup]')) return
+      close()
+    }
+    const onKey  = e => { if (e.key === 'Escape') close() }
+    const onMove = () => updateCoords()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
+    }
+  }, [open])
+
+  function close() { setOpen(false); setEditing(false); setQuery('') }
+
+  const q = query.trim().toLowerCase()
+  const matches = options.filter(o =>
+    cname(o).toLowerCase().includes(q) ||
+    o.company_name?.toLowerCase?.().includes(q) ||
+    (o.mobile || '').includes(query.trim()) ||
+    o.code?.toLowerCase?.().includes(q)
+  ).slice(0, 8)
+  const exact     = options.some(o => cname(o).toLowerCase() === q)
+  const canCreate = !!q && !exact
+
+  function pick(c) { onSelect?.(c); close() }
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <div className="relative" ref={boxRef}>
+        <input
+          className={`input w-full pr-7 ${compact ? 'py-1.5 text-xs' : ''}`}
+          placeholder={placeholder}
+          value={display}
+          onFocus={() => { setEditing(true); setOpen(true); setQuery(baseDisplay) }}
+          onChange={e => {
+            const v = e.target.value
+            setQuery(v); setEditing(true); setOpen(true)
+            if (allowText) onText?.(v)
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              if (matches.length === 1) pick(matches[0])
+              else if (canCreate && !allowText) { onAddNew?.(query.trim(), onSelect); close() }
+            }
+          }} />
+        {selected && !editing && <Check className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-green-400 pointer-events-none" />}
+      </div>
+
+      {open && coords && (
+        <div data-contact-popup
+          className="fixed z-[80] card border border-surface-border rounded-lg shadow-xl overflow-hidden"
+          style={{ left: coords.left, width: coords.width, top: coords.top, bottom: coords.bottom }}>
+          <div className="max-h-60 overflow-y-auto">
+            {matches.map(c => (
+              <button type="button" key={c.id} onMouseDown={e => { e.preventDefault(); pick(c) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover border-b border-surface-border/50 last:border-0">
+                <span className="text-slate-100 text-xs truncate flex-1">{cname(c)}</span>
+                {c.code && <span className="text-[10px] font-mono text-slate-500 flex-shrink-0">{c.code}</span>}
+                <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>
+              </button>
+            ))}
+            {canCreate && (
+              <button type="button" onMouseDown={e => { e.preventDefault(); onAddNew?.(query.trim(), onSelect); close() }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-cyan-300 hover:bg-surface-hover border-t border-surface-border/50">
+                <Plus className="w-3.5 h-3.5 flex-shrink-0" /> Add new {addLabel} “{query.trim()}”
+              </button>
+            )}
+            {matches.length === 0 && !canCreate && (
+              <p className="px-3 py-2 text-xs text-slate-600">{options.length ? 'No matches' : 'Type a name to add a new one'}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
