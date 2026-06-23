@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -427,11 +427,17 @@ export default function ContactsPage({ type }) {
                     <div>
                       {c.entity_type === 'company' && c.company_name ? (
                         <>
-                          <p className="text-slate-100 font-medium">{c.company_name}</p>
+                          <p className="text-slate-100 font-medium flex items-center gap-1.5">
+                            {c.company_name}
+                            {c.credit_debit_allowed && <CreditCard className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" title="Credit customer (may owe a balance)" />}
+                          </p>
                           <p className="text-slate-400 text-xs">{c.first_name} {c.last_name}</p>
                         </>
                       ) : (
-                        <p className="text-slate-100 font-medium">{c.first_name} {c.last_name}</p>
+                        <p className="text-slate-100 font-medium flex items-center gap-1.5">
+                          {c.first_name} {c.last_name}
+                          {c.credit_debit_allowed && <CreditCard className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" title="Credit customer (may owe a balance)" />}
+                        </p>
                       )}
                       {c.code && <p className="text-slate-500 text-xs font-mono">{c.code}</p>}
                       {c.account_number && <p className="text-slate-500 text-xs font-mono tracking-wider">{formatAccountNumber(c.account_number)}</p>}

@@ -106,12 +106,17 @@ function needsConfirmReminder(o, reminderMins, nowMs) {
 // pull selected orders into the Flagged filter. Independent of any status.
 function isFlagged(o) { return o?.is_flagged === true }
 
-// Quick "Mark Closed" from the list is allowed only once the money is fully
-// collected AND the materials are Delivered (and the row isn't already closed or
-// deactivated). The edit modal keeps the fuller close flow (status Completed,
-// credit handling); this is the one-click shortcut for the common case.
+// Is this order's customer a credit customer (allowed to owe a balance)?
+function isCreditCustomerOrder(o) { return o?.customer?.credit_debit_allowed === true }
+
+// Quick "Mark Closed" from the list is allowed once the materials are Delivered.
+// Normally the money must also be fully collected, but a credit customer may close
+// with an unpaid balance — they settle their dues later from the Credit Customers
+// page. The row must not already be closed/deactivated. The edit modal keeps the
+// fuller close flow (status Completed); this is the one-click shortcut.
 function canQuickClose(o) {
-  return !isRowLocked(o) && isFullyPaid(o) && o?.delivery_status === 'Delivered'
+  if (isRowLocked(o) || o?.delivery_status !== 'Delivered') return false
+  return isCreditCustomerOrder(o) || isFullyPaid(o)
 }
 
 // The scheduled deadline = scheduled_date at scheduled_time_to (else _from, else
@@ -1642,10 +1647,7 @@ export default function DeliveriesPage({ closed = false }) {
           {!closed && (
             <div className="ml-auto flex items-center gap-2">
               <button className="btn-primary" onClick={openAdd}>
-                <Plus className="w-4 h-4" /> New Multipurpose Order
-              </button>
-              <button className="btn-primary" onClick={openAddCredit}>
-                <Plus className="w-4 h-4" /> Add Credit Order
+                <Plus className="w-4 h-4" /> Add Order
               </button>
             </div>
           )}
@@ -1888,7 +1890,9 @@ export default function DeliveriesPage({ closed = false }) {
                     </button>
                     {!closed && !o.isclosed && !isDeactivated(o) && (
                       <button onClick={() => markClosed(o)} disabled={toggling === o.id || !canQuickClose(o)}
-                        title={canQuickClose(o) ? 'Mark as closed' : 'Can close only when fully collected and delivery status is Delivered'}
+                        title={canQuickClose(o)
+                          ? (isCreditCustomerOrder(o) && !isFullyPaid(o) ? 'Mark as closed (credit customer — balance settled later)' : 'Mark as closed')
+                          : (isCreditCustomerOrder(o) ? 'Can close once delivery status is Delivered' : 'Can close only when fully collected and delivery status is Delivered')}
                         className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
                         <Lock className="w-4 h-4" />
                       </button>
