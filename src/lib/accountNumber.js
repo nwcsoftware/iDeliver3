@@ -72,6 +72,25 @@ export function generateCustomerAccountNumber() {
 }
 
 /**
+ * Save-time guard against duplicate account numbers. The number is usually
+ * generated when a contact form opens, then saved later — by which point another
+ * record could have taken it (or it may be blank). This re-checks the candidate
+ * against the contacts table and, if it's empty or already in use, returns a
+ * freshly generated unique number for the given contact type. Call this right
+ * before inserting a NEW contact.
+ */
+export async function ensureUniqueAccountNumber(candidate, contactType) {
+  const v = String(candidate ?? '').replace(/\D/g, '')
+  if (v) {
+    const { data, error } = await supabase.from('contacts').select('id').eq('account_number', v).limit(1)
+    if (error) throw error
+    if (!data || data.length === 0) return v   // still free → keep it
+  }
+  // Blank or already taken → generate a new collision-checked number.
+  return generateAccountNumber(contactType)
+}
+
+/**
  * Generate a unique random 12-digit vehicle account number (prefix 58).
  * Checks the whole vehicles table (across companies) for collisions and
  * regenerates on conflict, so the number is globally unique.
@@ -111,4 +130,45 @@ export async function generateVehicleCode(companyId) {
 export function formatAccountNumber(v) {
   const digits = String(v ?? '').replace(/\D/g, '')
   return digits.replace(/(\d{4})(?=\d)/g, '$1 ').trim()
+}
+
+/**
+ * Human-readable contact code prefix per contact type (mirrors the DB trigger):
+ *   customer CST · supplier SUP · partner PTN · driver DRV · employee EMP · contractor CON
+ */
+export const CONTACT_CODE_PREFIXES = {
+  customer:   'CST',
+  supplier:   'SUP',
+  partner:    'PTN',
+  driver:     'DRV',
+  employee:   'EMP',
+  contractor: 'CON',
+}
+
+/**
+ * Generate a unique contact `code` (e.g. "PTN-000012") on the client and return
+ * it, so it can be sent with the insert. Providing a code bypasses the DB
+ * generate_contact_code trigger (which only runs when code IS NULL) and avoids
+ * the historical COUNT-based duplicate-key collisions. Uniqueness is verified
+ * against the contacts table, incrementing until an unused code is found.
+ */
+export async function generateContactCode(contactType) {
+  const prefix = CONTACT_CODE_PREFIXES[contactType] || 'OTH'
+  // Highest numeric suffix currently used for this prefix.
+  const { data, error } = await supabase.from('contacts').select('code').like('code', `${prefix}-%`)
+  if (error) throw error
+  let max = 0
+  for (const r of (data || [])) {
+    const m = String(r.code || '').match(/(\d+)$/)
+    if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n) && n > max) max = n }
+  }
+  let seq = max + 1
+  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
+    const candidate = `${prefix}-${String(seq).padStart(6, '0')}`
+    const { data: hit, error: e2 } = await supabase.from('contacts').select('id').eq('code', candidate).limit(1)
+    if (e2) throw e2
+    if (!hit || hit.length === 0) return candidate
+    seq++
+  }
+  return `${prefix}-${String(seq).padStart(6, '0')}`
 }

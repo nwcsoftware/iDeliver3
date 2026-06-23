@@ -9,7 +9,7 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
@@ -17,6 +17,7 @@ import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
+import { buildContactExtraFields, contactTypeExtras } from '../lib/contactFields'
 import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages'
 import { saveOrderPackages } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
@@ -218,6 +219,8 @@ const EMPTY_CUSTOMER = {
   company_name: '', commercial_registration: '',
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
   email: '', city: '', address: '', notes: '', account_number: '', credit_debit_allowed: false,
+  // Type-specific extras (supplier / partner) so the quick-add form matches the Contacts page.
+  supplier_code: '', payment_terms: '', shop_type: '', contact_category: '', partner_percentage: '',
 }
 
 function customerName(c) {
@@ -455,6 +458,8 @@ export default function DeliveriesPage({ closed = false }) {
   const [newCustomer,          setNewCustomer]          = useState(EMPTY_CUSTOMER)
   const [newContactType,       setNewContactType]       = useState('customer')   // customer | partner | supplier
   const newContactCreatedRef = useRef(null)   // (createdContact) => void — selects it back into the field
+  const [businessTypes,        setBusinessTypes]        = useState([])   // shared lookup: business_types
+  const [contactCategories,    setContactCategories]    = useState([])   // shared lookup: contact_categories
   const [custAddresses,        setCustAddresses]        = useState([])
   const [savingCustomer,       setSavingCustomer]       = useState(false)
   const [customerError,        setCustomerError]        = useState('')
@@ -497,7 +502,12 @@ export default function DeliveriesPage({ closed = false }) {
     // partners and suppliers.
     let typesQ = supabase.from('order_types').select('id, name').eq('is_active', true).order('name')
     if (COMPANY_ID) typesQ = typesQ.eq('company_id', COMPANY_ID)
-    const [{ data: custs }, { data: prods }, { data: types }, { data: provs }] = await Promise.all([
+    const lookupQ = (table) => {
+      let q = supabase.from(table).select('name').eq('is_active', true).order('name')
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      return q
+    }
+    const [{ data: custs }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
       supabase.from('contacts')
         .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
         .in('contact_type', ['customer', 'partner', 'supplier']),
@@ -507,11 +517,15 @@ export default function DeliveriesPage({ closed = false }) {
       supabase.from('contacts')
         .select('id,first_name,last_name,company_name,contact_type,account_number,code')
         .eq('contact_category', 'Online'),
+      lookupQ('business_types'),
+      lookupQ('contact_categories'),
     ])
     setCustomers(custs ?? [])
     setProducts(prods  ?? [])
     setOrderTypes(types ?? [])
     setProviders(provs ?? [])
+    setBusinessTypes((bt ?? []).map(r => r.name))
+    setContactCategories((cc ?? []).map(r => r.name))
   }, [COMPANY_ID])
 
   useEffect(() => { fetchLookups() }, [fetchLookups])
@@ -803,6 +817,27 @@ export default function DeliveriesPage({ closed = false }) {
 
   function setNewCust(k, v) { setNewCustomer(c => ({ ...c, [k]: v })); setCustomerError('') }
 
+  // Insert a value into a lookup table inline (business type / contact category),
+  // reusing an existing one case-insensitively. Returns the saved name or null.
+  async function addLookup(table, current, setCurrent, name) {
+    const clean = (name || '').trim()
+    if (!clean) return null
+    const existing = current.find(t => t.toLowerCase() === clean.toLowerCase())
+    if (existing) return existing
+    const { error } = await supabase.from(table).insert([{ name: clean, is_active: true, ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}) }])
+    if (error) { setCustomerError(error.message); return null }
+    setCurrent(ts => [...ts, clean].sort((a, b) => a.localeCompare(b)))
+    return clean
+  }
+
+  // Live options for the supplier/partner "Business Type" & "Contact Category"
+  // selects in the quick-add contact form (same lookups as the Contacts page).
+  const newContactExtraFields = buildContactExtraFields(newContactType, {
+    businessTypes, contactCategories,
+    addBusinessType:    n => addLookup('business_types',     businessTypes,     setBusinessTypes,     n),
+    addContactCategory: n => addLookup('contact_categories', contactCategories, setContactCategories, n),
+  })
+
   async function saveNewCustomer() {
     const isCompany = newCustomer.entity_type === 'company'
     if (isCompany && !newCustomer.company_name.trim()) return setCustomerError('Company name is required.')
@@ -812,11 +847,15 @@ export default function DeliveriesPage({ closed = false }) {
 
     setSavingCustomer(true); setCustomerError('')
 
-    // Ensure an account number is generated before saving.
+    // Ensure a UNIQUE account number before saving — regenerate if the pre-filled
+    // one is blank or already taken (avoids duplicate partner/supplier codes).
     let accountNumber = newCustomer.account_number
-    if (!accountNumber) {
-      try { accountNumber = await generateAccountNumber(newContactType) } catch { /* leave blank */ }
-    }
+    try { accountNumber = await ensureUniqueAccountNumber(accountNumber, newContactType) } catch { /* leave as-is */ }
+
+    // Generate a unique contact code on the client (bypasses the DB trigger and
+    // its historical duplicate-key collisions).
+    let contactCode = null
+    try { contactCode = await generateContactCode(newContactType) } catch { /* fall back to the trigger */ }
 
     const payload = {
       contact_type:    newContactType,
@@ -836,10 +875,13 @@ export default function DeliveriesPage({ closed = false }) {
       address:         newCustomer.address?.trim()         || null,
       notes:           newCustomer.notes?.trim()           || null,
       credit_debit_allowed: !!newCustomer.credit_debit_allowed,
+      // Type-specific fields (supplier_code/payment_terms, partner commission, business type, category).
+      ...contactTypeExtras(newContactType, newCustomer),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       branch_id:      currentUser?.branch_id || null,
       created_by:     currentUser?.user_id   || null,
       account_number: accountNumber || null,
+      ...(contactCode ? { code: contactCode } : {}),
     }
     const { data, error: e } = await supabase
       .from('contacts')
@@ -2870,6 +2912,7 @@ export default function DeliveriesPage({ closed = false }) {
               form={newCustomer}
               setField={setNewCust}
               mode="add"
+              extraFields={newContactExtraFields}
             />
 
             <ContactAddresses addresses={custAddresses} setAddresses={setCustAddresses} />

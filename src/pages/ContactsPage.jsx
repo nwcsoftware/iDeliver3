@@ -6,7 +6,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
@@ -279,11 +279,18 @@ export default function ContactsPage({ type }) {
     if (!form.mobile.trim())     return setError('Mobile number is required.')
     setSaving(true); setError('')
 
-    // For new customers/suppliers, ensure an account number is generated before saving.
+    // For new customers/suppliers/partners, ensure a UNIQUE account number right
+    // before saving — regenerate if the pre-filled one is blank or already taken.
     const usesAccountNumber = ACCOUNT_NUMBER_TYPES.includes(type)
     let accountNumber = form.account_number
-    if (modal === 'add' && usesAccountNumber && !accountNumber) {
-      try { accountNumber = await generateAccountNumber(cfg.contactType) } catch { /* leave blank */ }
+    if (modal === 'add' && usesAccountNumber) {
+      try { accountNumber = await ensureUniqueAccountNumber(accountNumber, cfg.contactType) } catch { /* leave as-is */ }
+    }
+    // Generate a unique contact code on the client for new contacts (bypasses the
+    // DB trigger and its historical duplicate-key collisions).
+    let contactCode = null
+    if (modal === 'add') {
+      try { contactCode = await generateContactCode(cfg.contactType) } catch { /* fall back to the trigger */ }
     }
 
     const payload = {
@@ -323,6 +330,7 @@ export default function ContactsPage({ type }) {
             branch_id:  currentUser?.branch_id || null,
             created_by: currentUser?.user_id   || null,
             ...(usesAccountNumber ? { account_number: accountNumber || null } : {}),
+            ...(contactCode ? { code: contactCode } : {}),
           }
         : {
             updated_by: currentUser?.user_id   || null,
