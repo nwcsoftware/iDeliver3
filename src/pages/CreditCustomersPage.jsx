@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight } from 'lucide-react'
+import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -51,17 +51,20 @@ export default function CreditCustomersPage() {
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
   const [payments,     setPayments]     = useState([])      // credit_customer_payments rows
+  const [clears,       setClears]       = useState([])      // credit_customer_clears rows
   const [payLoading,   setPayLoading]    = useState(true)
   const [selectedId,   setSelectedId]   = useState(null)    // selected customer_id
+  const [showAll,      setShowAll]      = useState(false)   // expand statement past the clear checkpoint
+  const [clearing,     setClearing]     = useState(false)
 
   const [search,       setSearch]       = useState('')
   const [dateFrom,     setDateFrom]     = useState('')
   const [dateTo,       setDateTo]       = useState('')
   const [statusFilter, setStatusFilter] = useState('outstanding')  // outstanding | settled | all
 
-  // Collect-payment modal
+  // Collect-payment modal — an editable list of { currency, amount } lines.
   const [collectOpen,  setCollectOpen]  = useState(false)
-  const [payInput,     setPayInput]     = useState(() => Object.fromEntries(CURRENCIES.map(c => [c, ''])))
+  const [payLines,     setPayLines]     = useState([])
   const [payMethod,    setPayMethod]    = useState('cash')
   const [payDate,      setPayDate]      = useState(() => new Date().toISOString().slice(0, 10))
   const [payNotes,     setPayNotes]     = useState('')
@@ -78,7 +81,25 @@ export default function CreditCustomersPage() {
     setPayLoading(false)
   }, [COMPANY_ID])
 
-  useEffect(() => { fetchPayments() }, [fetchPayments])
+  /* ── fetch statement clear checkpoints ───────────────────── */
+  const fetchClears = useCallback(async () => {
+    let q = supabase.from('credit_customer_clears').select('*').order('cleared_through', { ascending: false })
+    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+    const { data, error } = await q
+    if (!error && data) setClears(data)
+  }, [COMPANY_ID])
+
+  useEffect(() => { fetchPayments(); fetchClears() }, [fetchPayments, fetchClears])
+
+  // customer_id → latest cleared_through date ('YYYY-MM-DD'), the active checkpoint.
+  const cutoffByCustomer = useMemo(() => {
+    const m = new Map()
+    for (const c of clears) {
+      const d = String(c.cleared_through).slice(0, 10)
+      if (!m.has(c.customer_id) || d > m.get(c.customer_id)) m.set(c.customer_id, d)
+    }
+    return m
+  }, [clears])
 
   /* ── closed orders belonging to credit customers ─────────── */
   // Every CLOSED order whose customer is credit-allowed is a charge on that
@@ -155,38 +176,69 @@ export default function CreditCustomersPage() {
   }, [accounts, search, statusFilter])
 
   const selected = selectedId ? accounts.get(selectedId) : null
+  const cutoff   = selectedId ? (cutoffByCustomer.get(selectedId) || null) : null   // active clear date
 
   // Keep a valid selection as filters change.
   useEffect(() => {
     if (selectedId && !accounts.has(selectedId)) setSelectedId(null)
   }, [accounts, selectedId])
 
-  /* ── statement of the selected customer (date-filtered) ─────
-     Orders (debit) + payments (credit) merged chronologically. The date filter
-     applies here only; the header balance cards always show the full balance. */
+  // Collapse back to "since the checkpoint" whenever a different customer is opened.
+  useEffect(() => { setShowAll(false) }, [selectedId])
+
+  /* ── statement of the selected customer ─────────────────────
+     Orders (debit) + payments (credit) merged chronologically. When the account
+     has been cleared up to a date (and "Show all" is off), everything on/before
+     that date is folded into one "Standing balance brought forward" opening line
+     and only newer entries are listed. The date filter narrows the listed rows;
+     the header balance cards always show the full account balance. */
   const statement = useMemo(() => {
     if (!selected) return []
     const inRange = (d) => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo)
-    const rows = []
+    const activeCutoff = showAll ? null : cutoff      // fold entries on/before this date
+
+    const all = []
     for (const o of selected.orders) {
-      const d = orderDate(o)
-      if (!inRange(d)) continue
-      rows.push({
-        kind: 'order', date: d, ref: o.order_number || String(o.id).slice(0, 8),
+      all.push({
+        kind: 'order', date: orderDate(o), ref: o.order_number || String(o.id).slice(0, 8),
         label: o.recipient_name || o.order_type || 'Order', debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at,
       })
     }
     for (const p of selected.payments) {
-      const d = (p.paid_at || p.created_at || '').slice(0, 10)
-      if (!inRange(d)) continue
-      rows.push({
-        kind: 'payment', date: d, ref: p.method || 'payment',
+      all.push({
+        kind: 'payment', date: (p.paid_at || p.created_at || '').slice(0, 10), ref: p.method || 'payment',
         label: p.notes || 'Account payment', debit: null, credit: { [p.currency || 'USD']: round2(Number(p.amount) || 0) }, _t: p.paid_at || p.created_at,
       })
     }
-    rows.sort((a, b) => String(a._t || a.date).localeCompare(String(b._t || b.date)))
+    all.sort((a, b) => String(a._t || a.date).localeCompare(String(b._t || b.date)))
+
+    // Brought-forward opening balance = net of everything on/before the cutoff.
+    const rows = []
+    if (activeCutoff) {
+      const opening = emptyCur()
+      for (const r of all) {
+        if (r.date && r.date <= activeCutoff) {
+          if (r.debit)  for (const c of CURRENCIES) opening[c] += round2(r.debit[c] || 0)
+          if (r.credit) for (const c of CURRENCIES) opening[c] -= round2(r.credit[c] || 0)
+        }
+      }
+      const debit = {}, credit = {}
+      for (const c of CURRENCIES) {
+        const v = round2(opening[c])
+        if (v > 0) debit[c] = v
+        else if (v < 0) credit[c] = -v
+      }
+      rows.push({ kind: 'opening', date: activeCutoff, ref: '—', label: 'Standing balance brought forward',
+        debit: Object.keys(debit).length ? debit : null, credit: Object.keys(credit).length ? credit : null, _t: '' })
+    }
+
+    for (const r of all) {
+      if (activeCutoff && r.date && r.date <= activeCutoff) continue   // folded into opening
+      if (!inRange(r.date)) continue
+      rows.push(r)
+    }
     return rows
-  }, [selected, dateFrom, dateTo])
+  }, [selected, dateFrom, dateTo, cutoff, showAll])
 
   // Totals of what's currently listed in the statement (respects the date filter).
   const statementTotals = useMemo(() => {
@@ -203,18 +255,33 @@ export default function CreditCustomersPage() {
   function clearFilters() { setSearch(''); setDateFrom(''); setDateTo(''); setStatusFilter('outstanding') }
 
   /* ── collect payment ─────────────────────────────────────── */
+  // A new payment list always starts with one USD line and one LBP line.
+  function defaultPayLines() {
+    return [
+      { _key: Date.now(),     currency: 'USD', amount: '' },
+      { _key: Date.now() + 1, currency: 'LBP', amount: '' },
+    ]
+  }
+  const addPayLine    = () => setPayLines(ls => [...ls, { _key: Date.now(), currency: CURRENCIES[0], amount: '' }])
+  const removePayLine = (key) => setPayLines(ls => ls.filter(l => l._key !== key))
+  const setPayLine    = (key, patch) => setPayLines(ls => ls.map(l => l._key === key ? { ...l, ...patch } : l))
+
   function openCollect() {
-    setPayInput(Object.fromEntries(CURRENCIES.map(c => [c, ''])))
+    setPayLines(defaultPayLines())
     setPayMethod('cash'); setPayDate(new Date().toISOString().slice(0, 10)); setPayNotes('')
     setPostError(''); setCollectOpen(true)
   }
 
   async function recordPayment() {
     if (!selected) return
-    const rows = CURRENCIES
-      .map(c => ({ currency: c, amount: round2(Number(payInput[c]) || 0) }))
-      .filter(r => r.amount > 0)
-    if (rows.length === 0) { setPostError('Enter an amount in at least one currency.'); return }
+    // Sum the lines by currency so multiple lines of the same currency combine.
+    const byCur = {}
+    for (const l of payLines) {
+      const amt = round2(Number(l.amount) || 0)
+      if (amt > 0) byCur[l.currency] = round2((byCur[l.currency] || 0) + amt)
+    }
+    const rows = Object.entries(byCur).map(([currency, amount]) => ({ currency, amount }))
+    if (rows.length === 0) { setPostError('Enter an amount in at least one line.'); return }
 
     setPosting(true); setPostError('')
     const payload = rows.map(r => ({
@@ -233,6 +300,33 @@ export default function CreditCustomersPage() {
 
     await fetchPayments()
     setPosting(false); setCollectOpen(false)
+  }
+
+  /* ── clear the statement (carry-forward checkpoint) ────────
+     Records a checkpoint at the given date; everything on/before it folds into a
+     "Standing balance brought forward" line next time. Defaults to yesterday. */
+  async function clearStatement(throughDate) {
+    if (!selected) return
+    setClearing(true)
+    const { error } = await supabase.from('credit_customer_clears').insert([{
+      customer_id:     selected.customer.id,
+      cleared_through: throughDate,
+      created_by:      currentUser?.user_id || null,
+      created_by_name: currentUserName,
+      ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+    }])
+    setClearing(false)
+    if (error) { window.alert(`Could not clear the statement: ${error.message}`); return }
+    setShowAll(false)
+    await fetchClears()
+  }
+
+  function clearAsOfYesterday() {
+    const y = new Date(); y.setDate(y.getDate() - 1)
+    const ymd = y.toISOString().slice(0, 10)
+    if (window.confirm(`Clear ${customerName(selected.customer)}'s statement as of ${ymd}?\n\nEntries on or before that date will be summarised as a single brought-forward balance. Nothing is deleted — "Show all" still shows the full history.`)) {
+      clearStatement(ymd)
+    }
   }
 
   /* ── PDF — the selected customer's statement ─────────────── */
@@ -380,6 +474,10 @@ export default function CreditCustomersPage() {
                     {selected.customer.mobile && <p className="text-xs text-slate-500">{selected.customer.mobile}</p>}
                   </div>
                   <div className="flex items-center gap-2">
+                    <button onClick={clearAsOfYesterday} disabled={clearing} title="Summarise everything up to yesterday as a brought-forward balance"
+                      className="btn-ghost text-xs text-slate-300 hover:text-slate-100 disabled:opacity-50">
+                      <Scissors className="w-4 h-4" /> Clear as of yesterday
+                    </button>
                     <button onClick={exportPDF} className="btn-ghost text-xs text-slate-300 hover:text-slate-100">
                       <FileDown className="w-4 h-4" /> Statement PDF
                     </button>
@@ -410,9 +508,23 @@ export default function CreditCustomersPage() {
 
               {/* Statement table */}
               <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between">
+                <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between gap-3 flex-wrap">
                   <span className="text-sm font-semibold text-slate-200">Statement</span>
-                  <span className="text-xs text-slate-500">{statement.length} entr{statement.length === 1 ? 'y' : 'ies'}{(dateFrom || dateTo) ? ' (filtered)' : ''}</span>
+                  <div className="flex items-center gap-3">
+                    {cutoff && (
+                      <span className="text-xs text-slate-500">
+                        {showAll ? 'Showing full history' : `Cleared through ${cutoff} — showing newer activity`}
+                      </span>
+                    )}
+                    {cutoff && (
+                      <button onClick={() => setShowAll(s => !s)} className="btn-ghost text-xs text-brand-400 hover:text-brand-300">
+                        {showAll
+                          ? <><ChevronUp className="w-3.5 h-3.5" /> Collapse</>
+                          : <><ChevronDown className="w-3.5 h-3.5" /> Show all</>}
+                      </button>
+                    )}
+                    <span className="text-xs text-slate-500">{statement.length} entr{statement.length === 1 ? 'y' : 'ies'}{(dateFrom || dateTo) ? ' (filtered)' : ''}</span>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -428,14 +540,18 @@ export default function CreditCustomersPage() {
                     {statement.length === 0 ? (
                       <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No entries for the selected dates.</td></tr>
                     ) : statement.map((r, i) => (
-                      <tr key={i} className="border-b border-surface-border/50 hover:bg-surface-hover/40">
+                      <tr key={i} className={`border-b border-surface-border/50 ${r.kind === 'opening' ? 'bg-amber-500/5' : 'hover:bg-surface-hover/40'}`}>
                         <td className="px-4 py-2.5 text-slate-400 font-mono text-xs whitespace-nowrap">{r.date || '—'}</td>
                         <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center gap-1 text-xs font-medium ${r.kind === 'order' ? 'text-brand-400' : 'text-green-400'}`}>
-                            {r.kind === 'order' ? `#${r.ref}` : <><Banknote className="w-3 h-3" /> {r.ref}</>}
-                          </span>
+                          {r.kind === 'opening' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-400"><RotateCcw className="w-3 h-3" /> B/F</span>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${r.kind === 'order' ? 'text-brand-400' : 'text-green-400'}`}>
+                              {r.kind === 'order' ? `#${r.ref}` : <><Banknote className="w-3 h-3" /> {r.ref}</>}
+                            </span>
+                          )}
                         </td>
-                        <td className="px-4 py-2.5 text-slate-300 truncate max-w-[280px]">{r.label}</td>
+                        <td className={`px-4 py-2.5 truncate max-w-[280px] ${r.kind === 'opening' ? 'text-amber-300 font-medium italic' : 'text-slate-300'}`}>{r.label}</td>
                         <td className="px-4 py-2.5 text-right text-slate-300 whitespace-nowrap">{r.debit ? fmtCurMap(r.debit) : ''}</td>
                         <td className="px-4 py-2.5 text-right text-green-400 whitespace-nowrap">{r.credit ? fmtCurMap(r.credit) : ''}</td>
                       </tr>
@@ -470,20 +586,33 @@ export default function CreditCustomersPage() {
             </div>
 
             <div className="p-4 space-y-3">
-              <div className="grid grid-cols-1 gap-2">
-                {CURRENCIES.map(c => (
-                  <div key={c} className="flex items-center gap-2">
-                    <span className="w-12 text-xs font-semibold text-slate-400">{c}</span>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold px-0.5">
+                  <span className="flex-1">Amount</span>
+                  <span className="w-24">Currency</span>
+                  <span className="w-6" />
+                </div>
+                {payLines.map(line => (
+                  <div key={line._key} className="flex items-center gap-2">
                     <input type="number" min="0" step="any" className="input flex-1" placeholder="0.00"
-                      value={payInput[c]} onChange={e => setPayInput(p => ({ ...p, [c]: e.target.value }))} />
-                    {selected.balance[c] > 0 && (
-                      <button type="button" onClick={() => setPayInput(p => ({ ...p, [c]: String(selected.balance[c]) }))}
-                        className="text-[11px] text-brand-400 hover:text-brand-300 whitespace-nowrap" title="Fill outstanding balance">
-                        Due {fmtMoney(selected.balance[c], c)}
-                      </button>
-                    )}
+                      value={line.amount} onChange={e => setPayLine(line._key, { amount: e.target.value })} />
+                    <select className="input w-24" value={line.currency} onChange={e => setPayLine(line._key, { currency: e.target.value })}>
+                      {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button type="button" onClick={() => removePayLine(line._key)} disabled={payLines.length <= 1}
+                      className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed" title="Remove line">
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 ))}
+                <div className="flex items-center justify-between">
+                  <button type="button" onClick={addPayLine} className="btn-ghost text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3.5 h-3.5" /> Add line
+                  </button>
+                  {CURRENCIES.some(c => selected.balance[c] > 0) && (
+                    <span className="text-[11px] text-slate-500">Due {fmtCurMap(selected.balance)}</span>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
