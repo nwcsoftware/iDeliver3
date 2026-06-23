@@ -472,7 +472,6 @@ export default function DeliveriesPage({ closed = false }) {
   const [driverQuickSearch,    setDriverQuickSearch]    = useState('')
   const [quickBusy,            setQuickBusy]            = useState(false)
   const [sectionsOpen,         setSectionsOpen]         = useState(allSectionsClosed)
-  const [addCredit,            setAddCredit]            = useState(false)   // creating a Credit Order
   // Quick "Pay" from the list — records a payment on an order without opening the full form.
   const [payModal,             setPayModal]             = useState(null)   // order being paid | null
   const [payForm,              setPayForm]              = useState(EMPTY_PAYMENT)
@@ -831,22 +830,10 @@ export default function DeliveriesPage({ closed = false }) {
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
-    setAddCredit(false)
     setCustomerInput(''); setError(''); setModal('add')
     // Default to the "GENERAL CUSTOMER" contact; the user can still type/select another.
     const general = findGeneralCustomer()
     if (general) applyCustomer(general)
-  }
-
-  // Credit Order: same form, but pricing sections hidden and credit-only customers.
-  function openAddCredit() {
-    savedOrderIdRef.current = null
-    setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
-    setPackages([]); setOrigPackageIds([])
-    setServices([]); setOrigServiceIds([])
-    setSectionsOpen(defaultNewSections())
-    setAddCredit(true)
-    setCustomerInput(''); setError(''); setModal('add')
   }
 
   async function openEdit(o) {
@@ -990,7 +977,7 @@ export default function DeliveriesPage({ closed = false }) {
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
-    setCustomerInput(''); setCustomerDropdownOpen(false); setAddCredit(false)
+    setCustomerInput(''); setCustomerDropdownOpen(false)
   }
 
   /* ── payments helpers ────────────────────────────────────── */
@@ -1156,7 +1143,7 @@ export default function DeliveriesPage({ closed = false }) {
       recipient_whatsapp:   form.recipient_whatsapp?.trim() || null,
       customer_id:          form.customer_id,
       main_account:         form.main_account || null,
-      is_credit_order:      addCredit || (modal !== 'add' && modal?.is_credit_order === true),
+      is_credit_order:      modal !== 'add' && modal?.is_credit_order === true,   // preserved on edit; credit handling now keys off the customer
       pickup_address:       form.pickup_address?.trim()  || null,
       delivery_address:     form.delivery_address.trim(),
       delivery_zone_id:     form.delivery_zone_id        || null,
@@ -1513,10 +1500,9 @@ export default function DeliveriesPage({ closed = false }) {
   const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
   const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || Number(form.delivery_fee) > 0
 
-  // Credit Order mode: active when adding a credit order, or editing one.
-  const isCreditOrder = addCredit || (modal && modal !== 'add' && modal.is_credit_order === true)
-  // In credit mode the customer pickers list only credit-allowed contacts.
-  const pickCustomers = isCreditOrder ? customers.filter(c => c.credit_debit_allowed === true) : customers
+  // Every order uses the same full form regardless of the customer; the picker
+  // always lists all customers (credit handling is derived from the customer).
+  const pickCustomers = customers
   // Shops/warehouses for the retail invoices dropdown = supplier contacts.
   // supplierByName maps a shop's display name → its contact, so selecting a
   // shop can auto-fill the invoice's business type (shop_type).
@@ -1556,13 +1542,11 @@ export default function DeliveriesPage({ closed = false }) {
   const alreadyClosed = modal && modal !== 'add' && modal.isclosed === true
   // Credit customers may close an order with an unpaid balance (it becomes a receivable).
   const customerAllowsCredit = customers.find(c => c.id === form.customer_id)?.credit_debit_allowed === true
-  // "Mark Closed" eligibility. Credit orders: driver assigned + Completed +
-  // Delivered (no payment requirement). Normal orders: fully paid + Completed +
-  // Delivered (payment waived for credit-allowed customers).
+  // "Mark Closed" eligibility: order status Completed + delivery Delivered, and
+  // fully paid — except a credit-allowed customer may close with an unpaid
+  // balance (it becomes a receivable settled later on the Credit Customers page).
   const closeRequirements = []
-  if (isCreditOrder) {
-    if (!form.driver_id)                    closeRequirements.push('a driver assigned')
-  } else if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit) {
+  if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit) {
     closeRequirements.push('fully paid (no pending dues)')
   }
   if (form.status !== 'completed')          closeRequirements.push('order status Completed')
@@ -1805,7 +1789,7 @@ export default function DeliveriesPage({ closed = false }) {
                       <p className="text-slate-300 flex items-center gap-1.5">
                         {customerListName(o.customer)}
                         {o.customer.credit_debit_allowed && (
-                          <span title="Credit customer — credit order" className="inline-flex text-amber-400">
+                          <span title="Credit customer (may owe a balance)" className="inline-flex text-amber-400">
                             <CreditCard className="w-3.5 h-3.5" />
                           </span>
                         )}
@@ -2020,8 +2004,8 @@ export default function DeliveriesPage({ closed = false }) {
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <Package className="w-4 h-4 text-brand-400" />
                 {modal === 'add'
-                  ? (isCreditOrder ? 'Credit Order' : 'New Order')
-                  : `${isCreditOrder ? 'Credit Order' : 'Edit'} — ${modal.order_number}`}
+                  ? 'New Order'
+                  : `Edit — ${modal.order_number}`}
               </h2>
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
@@ -2294,8 +2278,7 @@ export default function DeliveriesPage({ closed = false }) {
                   embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
               </CollapsibleSection>
 
-              {/* Pricing sections (hidden for Credit Orders) */}
-              {!isCreditOrder && (<>
+              {/* Pricing sections */}
               {/* ── Items ─────────────────────────────────────── */}
               <div id="order-section-items" className="scroll-mt-4" />
               <CollapsibleSection title={`Local retail items (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
@@ -2523,11 +2506,8 @@ export default function DeliveriesPage({ closed = false }) {
                   </div>
                 )}
               </CollapsibleSection>
-              </>)}
 
               {/* ── Payments ──────────────────────────────────── */}
-              {/* Outside the credit-order block: payments (incl. quick-Pay from
-                  the list) must be visible/editable on every order. */}
               <CollapsibleSection title="Payments" accent="blue" open={sectionsOpen.payments} onToggle={v => toggleSection('payments', v)}
                 right={
                   <button type="button" onClick={() => { openSection('payments'); addPayment() }}
