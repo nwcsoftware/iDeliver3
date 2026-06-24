@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2 } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 /* General application settings. Currently holds the order-confirmation reminder
@@ -14,8 +14,18 @@ export default function AppSettingsPage() {
   )
   const [savedMsg, setSavedMsg] = useState('')
 
+  // Minutes before an order's scheduled deadline at which its row starts being
+  // highlighted in the daily order list. Edited as a draft string like above.
+  const [highlightMins, setHighlightMins] = useState(
+    String(appSettings.highlightBeforeDeadlineMinutes ?? 30)
+  )
+  const [highlightSavedMsg, setHighlightSavedMsg] = useState('')
+
   const reminderDirty =
     String(appSettings.orderConfirmReminderMinutes ?? 15) !== reminderMins.trim()
+
+  const highlightDirty =
+    String(appSettings.highlightBeforeDeadlineMinutes ?? 30) !== highlightMins.trim()
 
   function saveReminder() {
     const n = Math.max(0, Math.round(Number(reminderMins) || 0))
@@ -23,6 +33,14 @@ export default function AppSettingsPage() {
     setReminderMins(String(n))
     setSavedMsg('Saved')
     setTimeout(() => setSavedMsg(''), 2000)
+  }
+
+  function saveHighlight() {
+    const n = Math.max(0, Math.round(Number(highlightMins) || 0))
+    updateAppSettings({ highlightBeforeDeadlineMinutes: n })
+    setHighlightMins(String(n))
+    setHighlightSavedMsg('Saved')
+    setTimeout(() => setHighlightSavedMsg(''), 2000)
   }
 
   return (
@@ -84,6 +102,54 @@ export default function AppSettingsPage() {
 
           <p className="text-[11px] text-slate-500">
             Set to <span className="font-mono text-slate-400">0</span> to turn the blinking reminder off.
+          </p>
+        </div>
+
+        {/* Highlight before deadline */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+              <Clock className="w-4 h-4 text-amber-300" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100">Highlight orders nearing their deadline</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                When an active order's scheduled deadline is this close, its row in the
+                daily order list is highlighted as an early warning — before the deadline
+                passes and the row turns red (overdue).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-end gap-3">
+            <div className="flex-1 max-w-[12rem]">
+              <label className="label">Highlight starts before deadline (minutes)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                className="input"
+                value={highlightMins}
+                onChange={e => { setHighlightMins(e.target.value); setHighlightSavedMsg('') }}
+                onKeyDown={e => { if (e.key === 'Enter') saveHighlight() }}
+              />
+            </div>
+            <button
+              className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={saveHighlight}
+              disabled={!highlightDirty}
+            >
+              <Save className="w-4 h-4" /> Save
+            </button>
+            {highlightSavedMsg && (
+              <span className="text-xs text-green-400 flex items-center gap-1.5 pb-2.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> {highlightSavedMsg}
+              </span>
+            )}
+          </div>
+
+          <p className="text-[11px] text-slate-500">
+            Set to <span className="font-mono text-slate-400">0</span> to turn the deadline highlight off.
           </p>
         </div>
 

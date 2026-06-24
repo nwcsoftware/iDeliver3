@@ -26,6 +26,10 @@ const DEFAULT_APP_SETTINGS = {
   // Minutes an unconfirmed order may sit (since creation) before its row starts
   // blinking a reminder to confirm it. 0 disables the reminder.
   orderConfirmReminderMinutes: 15,
+  // Minutes before an order's scheduled deadline at which its row starts being
+  // highlighted in the daily order list (an early warning before it goes
+  // overdue). 0 disables the highlight.
+  highlightBeforeDeadlineMinutes: 30,
 }
 function readAppSettings() {
   try {

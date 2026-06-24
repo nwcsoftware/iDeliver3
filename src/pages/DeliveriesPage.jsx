@@ -141,6 +141,20 @@ function isOverdue(o) {
   return !!dl && Date.now() > dl.getTime()
 }
 
+// Approaching deadline = an active order whose scheduled deadline is within the
+// configured lead time from now but has not yet passed (once it passes the row
+// becomes overdue/red instead). Highlights the row as an early warning.
+// `leadMins <= 0` disables it.
+function isApproachingDeadline(o, leadMins, nowMs) {
+  if (!(leadMins > 0)) return false
+  if (!o || o.isclosed) return false
+  if (!['scheduled', 'confirmed', 'in_progress'].includes(normalizeStatus(o.status))) return false
+  const dl = orderDeadline(o)
+  if (!dl) return false
+  const dlMs = dl.getTime()
+  return nowMs < dlMs && dlMs - nowMs <= leadMins * 60 * 1000
+}
+
 // The `status` column is the order_status enum, which has no scheduled/in_progress/completed
 // values, so map the lifecycle labels back to valid enum values before writing.
 function toDbStatus(uiStatus) {
@@ -404,6 +418,8 @@ export default function DeliveriesPage({ closed = false }) {
   const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID, showSummary, appSettings } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
+  // Minutes before an order's deadline at which its row starts being highlighted (0 = off).
+  const highlightLeadMins = Number(appSettings?.highlightBeforeDeadlineMinutes) || 0
   // Ticks the clock so blinking starts on time without needing a manual refresh.
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1836,6 +1852,8 @@ export default function DeliveriesPage({ closed = false }) {
                 className={`border-b border-surface-border/50 transition-colors ${
                 isDeactivated(o) ? 'opacity-50 hover:bg-surface-hover/40'
                 : isOverdue(o)   ? 'bg-red-500/10 hover:bg-red-500/20'
+                : isApproachingDeadline(o, highlightLeadMins, now)
+                                 ? 'bg-amber-500/10 hover:bg-amber-500/20'
                 :                  'hover:bg-surface-hover/40'} ${
                 isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
                 <td className="px-4 py-3">
