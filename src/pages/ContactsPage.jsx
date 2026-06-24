@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
-import ContactFormFields, { ACCOUNT_NUMBER_TYPES } from '../components/contacts/ContactFormFields'
+import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import { saveContactAddresses } from '../lib/contactAddresses'
 
@@ -74,6 +74,8 @@ const BASE_FORM = {
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
   email: '', city: '', address: '', notes: '',
   account_number: '', credit_debit_allowed: false,
+  // Roles this contact holds (tags). Always includes the page's primary type.
+  contact_types: [],
   // supplier extras
   supplier_code: '', payment_terms: '', shop_type: '', contact_category: '',
   // partner extras
@@ -115,10 +117,12 @@ export default function ContactsPage({ type }) {
 
   const fetchContacts = useCallback(async () => {
     setLoading(true)
+    // A contact appears here if this page's type is among its roles (contact_types),
+    // so multi-role contacts (e.g. Customer + Partner) show on every matching page.
     let q = supabase
       .from('contacts')
       .select('*')
-      .eq('contact_type', cfg.contactType)
+      .contains('contact_types', [cfg.contactType])
       .order('first_name')
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data } = await q
@@ -197,7 +201,7 @@ export default function ContactsPage({ type }) {
   function fld(k, v) { setForm(f => ({ ...f, [k]: v })); setError('') }
 
   function openAdd() {
-    setForm(BASE_FORM); setAddresses([]); setOrigAddressIds([]); setError(''); setModal('add')
+    setForm({ ...BASE_FORM, contact_types: [cfg.contactType] }); setAddresses([]); setOrigAddressIds([]); setError(''); setModal('add')
     if (ACCOUNT_NUMBER_TYPES.includes(type)) {
       generateAccountNumber(cfg.contactType)
         .then(acct => setForm(f => ({ ...f, account_number: acct })))
@@ -205,7 +209,14 @@ export default function ContactsPage({ type }) {
     }
   }
   async function openEdit(c) {
-    setForm({ ...BASE_FORM, ...c, entity_type: c.entity_type || 'individual' })
+    setForm({
+      ...BASE_FORM, ...c,
+      entity_type: c.entity_type || 'individual',
+      // Fall back to the single primary type for rows saved before multi-role.
+      contact_types: (Array.isArray(c.contact_types) && c.contact_types.length)
+        ? c.contact_types
+        : [c.contact_type].filter(Boolean),
+    })
     setAddresses([]); setOrigAddressIds([]); setError(''); setModal(c)
     setCredOpen(false); setUsernameInput(c.username || ''); setPwInput(''); setShowPw(false); setEditingPw(false); setNewPassword(''); setCredError('')
     const { data } = await supabase
@@ -293,8 +304,19 @@ export default function ContactsPage({ type }) {
       try { contactCode = await generateContactCode(cfg.contactType) } catch { /* fall back to the trigger */ }
     }
 
+    // Roles (tags) chosen on the form; always keep at least the page's own type.
+    const selectedTypes = (Array.isArray(form.contact_types) && form.contact_types.length)
+      ? [...new Set(form.contact_types)]
+      : [cfg.contactType]
+    // The primary type drives the contact code & account-number prefix. Keep the
+    // existing primary when it's still among the selected roles; otherwise fall
+    // back to the first selected role (e.g. when a role is switched entirely).
+    const existingPrimary = modal === 'add' ? cfg.contactType : (modal.contact_type || cfg.contactType)
+    const primaryType = selectedTypes.includes(existingPrimary) ? existingPrimary : selectedTypes[0]
+
     const payload = {
-      contact_type:   cfg.contactType,
+      contact_type:   primaryType,
+      contact_types:  selectedTypes,
       // Company-only columns are sent only for companies, so individuals don't
       // depend on the entity_type/company_name/commercial_registration columns.
       ...(isCompany ? {
@@ -449,6 +471,16 @@ export default function ContactsPage({ type }) {
                       )}
                       {c.code && <p className="text-slate-500 text-xs font-mono">{c.code}</p>}
                       {c.account_number && <p className="text-slate-500 text-xs font-mono tracking-wider">{formatAccountNumber(c.account_number)}</p>}
+                      {/* Other roles this contact also holds (besides this page's). */}
+                      {Array.isArray(c.contact_types) && c.contact_types.filter(t => t !== cfg.contactType).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {CONTACT_ROLES.filter(r => c.contact_types.includes(r.value) && r.value !== cfg.contactType).map(r => (
+                            <span key={r.value} className={`px-1.5 py-0.5 rounded text-[9px] font-medium border ${r.cls}`}>
+                              {r.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </td>
@@ -515,6 +547,7 @@ export default function ContactsPage({ type }) {
               setField={fld}
               mode={modal === 'add' ? 'add' : 'edit'}
               extraFields={formExtraFields}
+              showRoles
             />
 
             <ContactAddresses addresses={addresses} setAddresses={setAddresses} />

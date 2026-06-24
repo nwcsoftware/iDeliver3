@@ -52,6 +52,14 @@ function AddableSelect({ value, options, placeholder, addPlaceholder = 'New valu
 /* Contact types that get a system-generated account number on creation. */
 export const ACCOUNT_NUMBER_TYPES = ['customer', 'supplier', 'partner']
 
+/* The roles a contact can hold. A contact can have several at once (tags), e.g.
+   someone who is both a Customer and a Partner. Order here drives chip order. */
+export const CONTACT_ROLES = [
+  { value: 'customer', label: 'Customer', cls: 'bg-cyan-600/20 text-cyan-300 border-cyan-600/40' },
+  { value: 'partner',  label: 'Partner',  cls: 'bg-purple-600/20 text-purple-300 border-purple-600/40' },
+  { value: 'supplier', label: 'Supplier', cls: 'bg-orange-600/20 text-orange-300 border-orange-600/40' },
+]
+
 // User-editable fields. Once any of these has a value, the entity-type toggle
 // locks — the user must Cancel and start a new entry to change Individual/Company.
 export const ENTRY_FIELDS = [
@@ -72,12 +80,25 @@ export const ENTRY_FIELDS = [
  *   setField    - (key, value) => void
  *   mode        - 'add' | 'edit'
  *   extraFields - type-specific extra fields ([] for none)
+ *   showRoles   - render the multi-role (Customer/Partner/Supplier) tag selector
  */
-export default function ContactFormFields({ type, form, setField, mode, extraFields = [] }) {
+export default function ContactFormFields({ type, form, setField, mode, extraFields = [], showRoles = false }) {
   const isCompany    = form.entity_type === 'company'
   // Toggle locks once data entry begins, or whenever editing an existing contact.
   const hasEntryData = ENTRY_FIELDS.some(k => String(form[k] ?? '').trim() !== '')
   const typeLocked   = mode !== 'add' || hasEntryData
+
+  // Roles this contact holds. Falls back to the single primary type so the
+  // selector still reflects reality even before contact_types has been set.
+  const roles = (Array.isArray(form.contact_types) && form.contact_types.length)
+    ? form.contact_types
+    : [form.contact_type || type].filter(Boolean)
+  // Toggle a role on/off, never letting the list become empty.
+  function toggleRole(r) {
+    const has = roles.includes(r)
+    if (has && roles.length === 1) return            // keep at least one role
+    setField('contact_types', has ? roles.filter(x => x !== r) : [...roles, r])
+  }
 
   return (
     <div className="space-y-3">
@@ -118,6 +139,33 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
           </p>
         )}
       </div>
+
+      {/* Contact roles — a contact can be several at once (e.g. Customer + Partner) */}
+      {showRoles && (
+        <div>
+          <label className="label">Roles</label>
+          <div className="flex flex-wrap gap-2">
+            {CONTACT_ROLES.map(r => {
+              const active = roles.includes(r.value)
+              return (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => toggleRole(r.value)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors
+                    ${active ? r.cls : 'text-slate-400 border-surface-border hover:text-slate-100 hover:bg-surface-hover'}`}
+                >
+                  {r.label}
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Tap to add or remove roles. A contact can hold several at once and will
+            appear on each matching page. At least one role is required.
+          </p>
+        </div>
+      )}
 
       {/* Account number (customers, suppliers & partners) — system-generated, read-only */}
       {ACCOUNT_NUMBER_TYPES.includes(type) && (
