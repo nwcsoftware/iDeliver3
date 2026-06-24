@@ -131,6 +131,24 @@ function orderDeadline(o) {
   return isNaN(dt.getTime()) ? null : dt
 }
 
+// The scheduled START (pickup) time = scheduled_date at scheduled_time_from
+// (else _to, else start of day). Used to highlight orders that are about to start.
+function orderScheduledStart(o) {
+  if (!o?.scheduled_date) return null
+  const d = String(o.scheduled_date).slice(0, 10)
+  const t = String(o.scheduled_time_from || o.scheduled_time_to || '00:00').slice(0, 5)
+  const dt = new Date(`${d}T${t}`)
+  return isNaN(dt.getTime()) ? null : dt
+}
+
+// Display a scheduled time range "HH:MM – HH:MM" (or just one side if only one set).
+function fmtTimeRange(from, to) {
+  const f = from ? String(from).slice(0, 5) : ''
+  const t = to   ? String(to).slice(0, 5)   : ''
+  if (f && t) return `${f} – ${t}`
+  return f || t
+}
+
 // Overdue = an active order (scheduled / confirmed / in progress, i.e. not yet
 // completed and not cancelled/failed/closed) whose scheduled deadline has passed.
 // Covers both "scheduled but not started in time" and "in progress past the date".
@@ -141,18 +159,50 @@ function isOverdue(o) {
   return !!dl && Date.now() > dl.getTime()
 }
 
-// Approaching deadline = an active order whose scheduled deadline is within the
-// configured lead time from now but has not yet passed (once it passes the row
-// becomes overdue/red instead). Highlights the row as an early warning.
+// Approaching scheduled time = an active order whose row should turn red as a
+// reminder it is about to start. The trigger is simply:
+//   now >= (scheduled start time − leadMins)
+// i.e. once the current time passes "scheduled time minus the timer", the row
+// stays highlighted (it remains a reminder until the order is delivered/closed).
 // `leadMins <= 0` disables it.
-function isApproachingDeadline(o, leadMins, nowMs) {
+function isApproachingStart(o, leadMins, nowMs) {
   if (!(leadMins > 0)) return false
   if (!o || o.isclosed) return false
   if (!['scheduled', 'confirmed', 'in_progress'].includes(normalizeStatus(o.status))) return false
-  const dl = orderDeadline(o)
-  if (!dl) return false
-  const dlMs = dl.getTime()
-  return nowMs < dlMs && dlMs - nowMs <= leadMins * 60 * 1000
+  const start = orderScheduledStart(o)
+  if (!start) return false
+  return nowMs >= start.getTime() - leadMins * 60 * 1000
+}
+
+// An in-progress order currently inside its scheduled window — now is between the
+// scheduled start and end time (on the scheduled date). Such orders are already
+// under way, so they don't get the red reminder highlight; instead the row text
+// is shown in the in-progress colour.
+function isInProgressWindow(o, nowMs) {
+  if (!o || o.isclosed) return false
+  if (normalizeStatus(o.status) !== 'in_progress') return false
+  const start = orderScheduledStart(o)
+  const end   = orderDeadline(o)
+  if (!start || !end) return false
+  return nowMs >= start.getTime() && nowMs <= end.getTime()
+}
+
+// Local YYYY-MM-DD for a timestamp (matches how scheduled_date is stored/compared).
+function localDateStr(ms) {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Past the scheduled delivery end time, on the scheduled date itself, and not yet
+// completed. The row's text turns salmon red to flag a delivery that overran its
+// window today (only on the scheduled date — not on later days).
+function isPastDeliveryEnd(o, nowMs) {
+  if (!o || o.isclosed) return false
+  if (normalizeStatus(o.status) === 'completed') return false
+  const end = orderDeadline(o)
+  if (!end) return false
+  if (String(o.scheduled_date).slice(0, 10) !== localDateStr(nowMs)) return false   // same date only
+  return nowMs > end.getTime()
 }
 
 // The `status` column is the order_status enum, which has no scheduled/in_progress/completed
@@ -418,8 +468,8 @@ export default function DeliveriesPage({ closed = false }) {
   const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID, showSummary, appSettings } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
-  // Minutes before an order's deadline at which its row starts being highlighted (0 = off).
-  const highlightLeadMins = Number(appSettings?.highlightBeforeDeadlineMinutes) || 0
+  // Minutes before an order's scheduled start time at which its row turns red (0 = off).
+  const highlightLeadMins = Number(appSettings?.highlightBeforeScheduledMinutes) || 0
   // Ticks the clock so blinking starts on time without needing a manual refresh.
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1820,7 +1870,7 @@ export default function DeliveriesPage({ closed = false }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #','Recipient','Customer','Driver','Delivery Fee','Status','Payment',''].map(h => {
+              {['Order #','Schedule','Recipient','Customer','Driver','Delivery Fee','Notes','Status','Payment',''].map(h => {
                 const sortable = !!SORT_GETTERS[h]
                 const active   = sort.col === h
                 return (
@@ -1842,24 +1892,26 @@ export default function DeliveriesPage({ closed = false }) {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : sorted.map(o => (
               <tr key={o.id}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
                 onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
                 className={`border-b border-surface-border/50 transition-colors ${
-                isDeactivated(o) ? 'opacity-50 hover:bg-surface-hover/40'
-                : isOverdue(o)   ? 'bg-red-500/10 hover:bg-red-500/20'
-                : isApproachingDeadline(o, highlightLeadMins, now)
-                                 ? 'bg-amber-500/10 hover:bg-amber-500/20'
-                :                  'hover:bg-surface-hover/40'} ${
-                isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
+                isDeactivated(o)            ? 'opacity-50 hover:bg-surface-hover/40'
+                : isInProgressWindow(o, now) ? 'hover:bg-surface-hover/40'
+                : isOverdue(o)              ? 'bg-red-500/10 hover:bg-red-500/20'
+                : isApproachingStart(o, highlightLeadMins, now)
+                                            ? 'bg-red-500/10 hover:bg-red-500/20'
+                :                            'hover:bg-surface-hover/40'} ${
+                isPastDeliveryEnd(o, now)
+                  ? '[&_*]:!text-[#fa8072]'
+                  : isInProgressWindow(o, now)
+                  ? '[&_*]:!text-brand-400'
+                  : isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
                 <td className="px-4 py-3">
-                  {o.scheduled_date && (
-                    <p className="text-slate-500 text-[11px] font-mono tracking-wider">{String(o.scheduled_date).slice(0, 10)}</p>
-                  )}
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => copyNum(o.order_number)}
                       className="font-mono text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
@@ -1897,6 +1949,17 @@ export default function DeliveriesPage({ closed = false }) {
                       <Lock className="w-3 h-3" /> Closed
                     </span>
                   )}
+                </td>
+                {/* Schedule — scheduled date + time range */}
+                <td className="px-4 py-3 text-xs">
+                  {o.scheduled_date ? (
+                    <>
+                      <p className="text-slate-300 font-mono tracking-wider">{String(o.scheduled_date).slice(0, 10)}</p>
+                      {fmtTimeRange(o.scheduled_time_from, o.scheduled_time_to) && (
+                        <p className="text-slate-500 font-mono tracking-wider mt-0.5">{fmtTimeRange(o.scheduled_time_from, o.scheduled_time_to)}</p>
+                      )}
+                    </>
+                  ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3">
                   <p className="text-slate-100 text-sm">{o.recipient_name}</p>
@@ -1957,6 +2020,21 @@ export default function DeliveriesPage({ closed = false }) {
                       Discount : {fmtMoney(Math.abs(Number(o.discount_amount)), o.discount_currency || o.currency)} {o.discount_currency || o.currency || 'USD'}
                     </p>
                   )}
+                </td>
+                {/* Notes — delivery description (order details) + special instructions */}
+                <td className="px-4 py-3 text-xs">
+                  {(o.order_details_text || o.special_instructions) ? (
+                    <div className="space-y-0.5 max-w-[16rem]">
+                      {o.order_details_text && (
+                        <p className="text-slate-300 truncate" title={o.order_details_text}>{o.order_details_text}</p>
+                      )}
+                      {o.special_instructions && (
+                        <p className="text-slate-500 truncate" title={o.special_instructions}>
+                          <span className="text-slate-600">Note: </span>{o.special_instructions}
+                        </p>
+                      )}
+                    </div>
+                  ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3">
                   <button type="button" disabled={isRowLocked(o)}

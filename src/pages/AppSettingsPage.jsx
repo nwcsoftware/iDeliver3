@@ -14,10 +14,10 @@ export default function AppSettingsPage() {
   )
   const [savedMsg, setSavedMsg] = useState('')
 
-  // Minutes before an order's scheduled deadline at which its row starts being
-  // highlighted in the daily order list. Edited as a draft string like above.
+  // Minutes before an order's scheduled (start) time at which its row turns red
+  // in the daily order list. Edited as a draft string like above.
   const [highlightMins, setHighlightMins] = useState(
-    String(appSettings.highlightBeforeDeadlineMinutes ?? 30)
+    String(appSettings.highlightBeforeScheduledMinutes ?? 5)
   )
   const [highlightSavedMsg, setHighlightSavedMsg] = useState('')
 
@@ -25,7 +25,7 @@ export default function AppSettingsPage() {
     String(appSettings.orderConfirmReminderMinutes ?? 15) !== reminderMins.trim()
 
   const highlightDirty =
-    String(appSettings.highlightBeforeDeadlineMinutes ?? 30) !== highlightMins.trim()
+    String(appSettings.highlightBeforeScheduledMinutes ?? 5) !== highlightMins.trim()
 
   function saveReminder() {
     const n = Math.max(0, Math.round(Number(reminderMins) || 0))
@@ -37,7 +37,7 @@ export default function AppSettingsPage() {
 
   function saveHighlight() {
     const n = Math.max(0, Math.round(Number(highlightMins) || 0))
-    updateAppSettings({ highlightBeforeDeadlineMinutes: n })
+    updateAppSettings({ highlightBeforeScheduledMinutes: n })
     setHighlightMins(String(n))
     setHighlightSavedMsg('Saved')
     setTimeout(() => setHighlightSavedMsg(''), 2000)
@@ -105,25 +105,25 @@ export default function AppSettingsPage() {
           </p>
         </div>
 
-        {/* Highlight before deadline */}
+        {/* Highlight before scheduled time */}
         <div className="card p-5 space-y-4">
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
-              <Clock className="w-4 h-4 text-amber-300" />
+            <div className="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-center flex-shrink-0">
+              <Clock className="w-4 h-4 text-red-300" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">Highlight orders nearing their deadline</h2>
+              <h2 className="text-sm font-semibold text-slate-100">Highlight orders before their scheduled time</h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                When an active order's scheduled deadline is this close, its row in the
-                daily order list is highlighted as an early warning — before the deadline
-                passes and the row turns red (overdue).
+                A reminder before pickup: when an active order's scheduled start time is
+                this many minutes away, its row in the daily order list turns red — so you
+                can see at a glance which orders are about to start.
               </p>
             </div>
           </div>
 
           <div className="flex items-end gap-3">
             <div className="flex-1 max-w-[12rem]">
-              <label className="label">Highlight starts before deadline (minutes)</label>
+              <label className="label">Highlight starts before scheduled time (minutes)</label>
               <input
                 type="number"
                 min="0"
@@ -149,7 +149,8 @@ export default function AppSettingsPage() {
           </div>
 
           <p className="text-[11px] text-slate-500">
-            Set to <span className="font-mono text-slate-400">0</span> to turn the deadline highlight off.
+            Example: <span className="font-mono text-slate-400">5</span> turns a row red 5 minutes before
+            its scheduled time. Set to <span className="font-mono text-slate-400">0</span> to turn it off.
           </p>
         </div>
 
