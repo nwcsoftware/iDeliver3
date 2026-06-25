@@ -141,10 +141,10 @@ function orderScheduledStart(o) {
   return isNaN(dt.getTime()) ? null : dt
 }
 
-// Display a scheduled time range "HH:MM – HH:MM" (or just one side if only one set).
+// Display a scheduled time range "03:30 PM – 04:30 PM" (or one side if only one set).
 function fmtTimeRange(from, to) {
-  const f = from ? String(from).slice(0, 5) : ''
-  const t = to   ? String(to).slice(0, 5)   : ''
+  const f = fmtTime12(from)
+  const t = fmtTime12(to)
   if (f && t) return `${f} – ${t}`
   return f || t
 }
@@ -237,6 +237,31 @@ const BASE_FORM = {
 function fmt2(n) { return String(n).padStart(2, '0') }
 function timeStr(d) { return `${fmt2(d.getHours())}:${fmt2(d.getMinutes())}` }
 
+// Times are stored as 24-hour "HH:MM" strings but shown to the user as 12-hour
+// with AM/PM (e.g. "15:30" → "03:30 PM"). These helpers convert both ways.
+function parse12h(hhmm) {
+  const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return { h12: '', mm: '', ap: 'AM' }
+  let h = parseInt(m[1], 10)
+  const ap = h >= 12 ? 'PM' : 'AM'
+  h = h % 12; if (h === 0) h = 12
+  return { h12: String(h), mm: m[2], ap }
+}
+function to24h(h12, mm, ap) {
+  let h = parseInt(h12, 10); if (isNaN(h)) h = 12
+  h = h % 12                                  // 12 → 0 before adding PM offset
+  if (ap === 'PM') h += 12
+  let m = parseInt(mm, 10); if (isNaN(m)) m = 0
+  m = Math.min(59, Math.max(0, m))
+  return `${fmt2(h)}:${fmt2(m)}`
+}
+// 12-hour display string, e.g. "03:30 PM". Empty string when there's no value.
+function fmtTime12(hhmm) {
+  const { h12, mm, ap } = parse12h(hhmm)
+  if (h12 === '') return ''
+  return `${fmt2(Number(h12))}:${mm} ${ap}`
+}
+
 function getEmptyForm() {
   const now      = new Date()
   const plusHour = new Date(now.getTime() + 60 * 60 * 1000)
@@ -283,18 +308,27 @@ const EMPTY_CUSTOMER = {
   company_name: '', commercial_registration: '',
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
   email: '', city: '', address: '', notes: '', account_number: '', credit_debit_allowed: false,
-  // Type-specific extras (supplier / partner) so the quick-add form matches the Contacts page.
-  supplier_code: '', payment_terms: '', shop_type: '', contact_category: '', partner_percentage: '',
+  // Shared "general form" extras so the quick-add form matches the Contacts page.
+  partner_percentage: '', shop_type: '', contact_category: '',
 }
 
 function customerName(c) {
   return `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
 }
 
+// True when a contact holds the given role. Multi-role contacts carry every role
+// in the contact_types[] tag array, so read membership from there; fall back to
+// the single primary contact_type for legacy rows that predate the array.
+function contactHasType(c, t) {
+  return (Array.isArray(c?.contact_types) && c.contact_types.length)
+    ? c.contact_types.includes(t)
+    : c?.contact_type === t
+}
+
 // Display name for a contact in lists: company name for companies/partners,
 // otherwise the person's name.
 function customerListName(c) {
-  const isCompany = c.entity_type === 'company' || c.contact_type === 'partner'
+  const isCompany = c.entity_type === 'company' || contactHasType(c, 'partner')
   return (isCompany && c.company_name) ? c.company_name : (customerName(c) || '—')
 }
 
@@ -365,6 +399,43 @@ function AdjBtn({ onClick, children }) {
   )
 }
 
+/* A 12-hour time editor (hour : minute + AM/PM toggle) that reads and emits the
+   stored 24-hour "HH:MM" string, so storage and all time math stay unchanged
+   while the user always sees AM/PM — independent of the browser's locale. */
+function TwelveHourTimeInput({ value, onChange }) {
+  const { h12, mm, ap } = parse12h(value)
+  const baseH = h12 || '12'
+  const baseM = mm  || '00'
+
+  function setHour(v) {
+    const digits = String(v).replace(/\D/g, '')
+    if (digits === '') { onChange(''); return }
+    const n = Math.min(12, Math.max(1, parseInt(digits, 10)))
+    onChange(to24h(String(n), baseM, ap))
+  }
+  function setMin(v) {
+    const digits = String(v).replace(/\D/g, '')
+    const n = Math.min(59, Math.max(0, parseInt(digits || '0', 10)))
+    onChange(to24h(baseH, String(n), ap))
+  }
+
+  return (
+    <div className="input flex-1 min-w-0 flex items-center gap-1 px-2">
+      <input type="text" inputMode="numeric" value={h12} placeholder="--"
+        onChange={e => setHour(e.target.value)}
+        className="w-7 bg-transparent text-center outline-none" />
+      <span className="text-slate-500">:</span>
+      <input type="text" inputMode="numeric" value={mm} placeholder="--"
+        onChange={e => setMin(e.target.value)}
+        className="w-7 bg-transparent text-center outline-none" />
+      <button type="button" onClick={() => onChange(to24h(baseH, baseM, ap === 'AM' ? 'PM' : 'AM'))}
+        className="ml-auto text-xs font-bold text-brand-300 px-2 py-0.5 rounded border border-surface-border hover:bg-surface-hover">
+        {ap}
+      </button>
+    </div>
+  )
+}
+
 function TimeField({ label, value, onChange, leftButtons, rightButtons }) {
   return (
     <div>
@@ -380,8 +451,7 @@ function TimeField({ label, value, onChange, leftButtons, rightButtons }) {
               : lbl}
           </AdjBtn>
         ))}
-        <input type="time" className="input flex-1 min-w-0" value={value}
-          onChange={e => onChange(e.target.value)} />
+        <TwelveHourTimeInput value={value} onChange={onChange} />
         {(rightButtons ?? []).map(([d, lbl]) => (
           <AdjBtn key={lbl} onClick={() => onChange(adjustTime(value, d))}>
             {d === 10
@@ -510,6 +580,7 @@ export default function DeliveriesPage({ closed = false }) {
   // Deactivate-order confirmation: { order, reason, counts, loading, busy }
   const [cancelModal, setCancelModal] = useState(null)
   const [customers,          setCustomers]          = useState([])
+  const [allContacts,        setAllContacts]        = useState([])   // every contact, any role — for the service-provider picker
   const [products,           setProducts]           = useState([])
   const [providers,          setProviders]          = useState([])   // "Online" contacts → package providers
   const [orderTypes,         setOrderTypes]         = useState([])   // custom order types (DB)
@@ -573,10 +644,18 @@ export default function DeliveriesPage({ closed = false }) {
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
       return q
     }
-    const [{ data: custs }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
+    const [{ data: custs }, { data: allc }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
       supabase.from('contacts')
-        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
-        .in('contact_type', ['customer', 'partner', 'supplier']),
+        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
+        // Membership is by role tags, so a multi-role contact (e.g. Customer +
+        // Partner) shows up here regardless of which type is its primary.
+        .overlaps('contact_types', ['customer', 'partner', 'supplier']),
+      // Every contact, any role — the Order Services "Service provider" picker is
+      // not restricted to suppliers; it lists all contacts (search by name /
+      // mobile / contact code).
+      supabase.from('contacts')
+        .select('id,first_name,last_name,mobile,company_name,contact_type,contact_types,entity_type,code,account_number')
+        .order('first_name'),
       supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
       typesQ,
       // Package providers — contacts categorised as "Online".
@@ -587,6 +666,7 @@ export default function DeliveriesPage({ closed = false }) {
       lookupQ('contact_categories'),
     ])
     setCustomers(custs ?? [])
+    setAllContacts(allc ?? [])
     setProducts(prods  ?? [])
     setOrderTypes(types ?? [])
     setProviders(provs ?? [])
@@ -646,9 +726,9 @@ export default function DeliveriesPage({ closed = false }) {
     const c = o.customer
     if (!c) return false
     if (categoryFilter === 'credit')  return c.credit_debit_allowed === true
-    if (categoryFilter === 'regular') return c.contact_type === 'customer' && c.credit_debit_allowed !== true
-    if (categoryFilter === 'partner') return c.contact_type === 'partner'
-    if (categoryFilter === 'supplier') return c.contact_type === 'supplier'
+    if (categoryFilter === 'regular') return contactHasType(c, 'customer') && c.credit_debit_allowed !== true
+    if (categoryFilter === 'partner') return contactHasType(c, 'partner')
+    if (categoryFilter === 'supplier') return contactHasType(c, 'supplier')
     return true
   }
   function matchSource(o) {
@@ -823,7 +903,7 @@ export default function DeliveriesPage({ closed = false }) {
      recipient (the end customer) is left blank to be entered manually. The
      main_account is always taken from the contact's account_number (read-only). */
   function applyCustomer(c) {
-    const isCompany   = c.entity_type === 'company' || c.contact_type === 'partner'
+    const isCompany   = c.entity_type === 'company' || contactHasType(c, 'partner')
     const displayName = (isCompany && c.company_name) ? c.company_name : customerName(c)
     setForm(f => ({
       ...f,
@@ -941,7 +1021,7 @@ export default function DeliveriesPage({ closed = false }) {
       address:         newCustomer.address?.trim()         || null,
       notes:           newCustomer.notes?.trim()           || null,
       credit_debit_allowed: !!newCustomer.credit_debit_allowed,
-      // Type-specific fields (supplier_code/payment_terms, partner commission, business type, category).
+      // Shared form fields (commission %, business type, contact category).
       ...contactTypeExtras(newContactType, newCustomer),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       branch_id:      currentUser?.branch_id || null,
@@ -963,6 +1043,7 @@ export default function DeliveriesPage({ closed = false }) {
     if (addrErr) { setCustomerError(addrErr); setSavingCustomer(false); return }
 
     setCustomers(prev => [...prev, data])
+    setAllContacts(prev => [...prev, data])
     // Select the new contact back into whichever field opened the modal.
     const onCreated = newContactCreatedRef.current
     if (onCreated) onCreated(data); else applyCustomer(data)
@@ -1089,7 +1170,7 @@ export default function DeliveriesPage({ closed = false }) {
     setOrigServiceIds(mappedServices.map(s => s._id))
 
     const existing = customers.find(x => x.id === o.customer_id) || o.customer
-    const existingIsCompany = existing && (existing.entity_type === 'company' || existing.contact_type === 'partner')
+    const existingIsCompany = existing && (existing.entity_type === 'company' || contactHasType(existing, 'partner'))
     setCustomerInput(
       existing
         ? (existingIsCompany && existing.company_name ? existing.company_name : customerName(existing))
@@ -1669,8 +1750,8 @@ export default function DeliveriesPage({ closed = false }) {
   // Shops/warehouses for the retail invoices dropdown = supplier contacts.
   // supplierByName maps a shop's display name → its contact, so selecting a
   // shop can auto-fill the invoice's business type (shop_type).
-  const supplierContacts  = customers.filter(c => c.contact_type === 'supplier')
-  const partnerContacts   = customers.filter(c => c.contact_type === 'partner')
+  const supplierContacts  = customers.filter(c => contactHasType(c, 'supplier'))
+  const partnerContacts   = customers.filter(c => contactHasType(c, 'partner'))
   const supplierByName    = {}
   supplierContacts.forEach(c => {
     const name = c.company_name || customerName(c)
@@ -2483,7 +2564,7 @@ export default function DeliveriesPage({ closed = false }) {
                   </button>
                 }>
                 <OrderServices services={services} setServices={setServices}
-                  suppliers={supplierContacts}
+                  suppliers={allContacts}
                   onAddProvider={(name, onCreated) => openNewContact(name, 'supplier', onCreated)}
                   embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
               </CollapsibleSection>

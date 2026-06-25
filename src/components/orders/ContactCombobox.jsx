@@ -6,6 +6,11 @@ function cname(c) {
   return (c?.company_name?.trim()) || `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim() || '—'
 }
 
+/* The person's name (first + last), regardless of company name. */
+function personName(c) {
+  return `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim()
+}
+
 /**
  * Typeahead contact picker that behaves like the order form's customer box:
  * type to search the given contacts; pick a match, or — when what you typed
@@ -46,11 +51,19 @@ export default function ContactCombobox({
     const el = boxRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
+    // The field cell can be narrow (e.g. the Order Services "Service provider"
+    // column), which would clip contact names. Widen the menu to a readable
+    // minimum, but never wider than the field needs or the viewport allows, and
+    // shift it left if it would overflow the right edge.
+    const MIN_MENU_W = 320
+    const menuW = Math.min(Math.max(r.width, MIN_MENU_W), window.innerWidth - 16)
+    let left = r.left
+    if (left + menuW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - menuW)
     const spaceBelow = window.innerHeight - r.bottom
     const openUp = spaceBelow < 240 && r.top > spaceBelow
     setCoords(openUp
-      ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + 4 }
-      : { left: r.left, width: r.width, top: r.bottom + 4 })
+      ? { left, width: menuW, bottom: window.innerHeight - r.top + 4 }
+      : { left, width: menuW, top: r.bottom + 4 })
   }
   useLayoutEffect(() => { if (open) updateCoords() }, [open, query])
 
@@ -78,12 +91,14 @@ export default function ContactCombobox({
   function close() { setOpen(false); setEditing(false); setQuery('') }
 
   const q = query.trim().toLowerCase()
-  const matches = options.filter(o =>
-    cname(o).toLowerCase().includes(q) ||
-    o.company_name?.toLowerCase?.().includes(q) ||
-    (o.mobile || '').includes(query.trim()) ||
-    o.code?.toLowerCase?.().includes(q)
-  ).slice(0, 8)
+  // Search across company name, the person's name, mobile and contact code so a
+  // contact is findable by any of them (even a company contact, by its person).
+  const matches = options.filter(o => {
+    const hay = `${o.company_name ?? ''} ${o.first_name ?? ''} ${o.last_name ?? ''}`.toLowerCase()
+    return hay.includes(q) ||
+      (o.mobile || '').includes(query.trim()) ||
+      o.code?.toLowerCase?.().includes(q)
+  }).slice(0, 50)
   const exact     = options.some(o => cname(o).toLowerCase() === q)
   const canCreate = !!q && !exact
 
@@ -116,15 +131,24 @@ export default function ContactCombobox({
         <div data-contact-popup
           className="fixed z-[80] card border border-surface-border rounded-lg shadow-xl overflow-hidden"
           style={{ left: coords.left, width: coords.width, top: coords.top, bottom: coords.bottom }}>
-          <div className="max-h-60 overflow-y-auto">
-            {matches.map(c => (
-              <button type="button" key={c.id} onMouseDown={e => { e.preventDefault(); pick(c) }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover border-b border-surface-border/50 last:border-0">
-                <span className="text-slate-100 text-xs truncate flex-1">{cname(c)}</span>
-                {c.code && <span className="text-[10px] font-mono text-slate-500 flex-shrink-0">{c.code}</span>}
-                <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>
-              </button>
-            ))}
+          <div className="max-h-72 overflow-y-auto">
+            {matches.map(c => {
+              // Show the person's name as a sub-line when the primary label is a
+              // company name, plus the mobile, so the user can tell contacts apart.
+              const showPerson = !!c.company_name?.trim() && !!personName(c)
+              const sub = [showPerson ? personName(c) : null, c.mobile || null].filter(Boolean).join('  ·  ')
+              return (
+                <button type="button" key={c.id} onMouseDown={e => { e.preventDefault(); pick(c) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover border-b border-surface-border/50 last:border-0">
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-slate-100 text-xs truncate">{cname(c)}</span>
+                    {sub && <span className="block text-[10px] text-slate-500 truncate">{sub}</span>}
+                  </span>
+                  {c.code && <span className="text-[10px] font-mono text-slate-500 flex-shrink-0">{c.code}</span>}
+                  {c.contact_type && <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>}
+                </button>
+              )
+            })}
             {canCreate && (
               <button type="button" onMouseDown={e => { e.preventDefault(); onAddNew?.(query.trim(), onSelect); close() }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-left text-cyan-300 hover:bg-surface-hover border-t border-surface-border/50">

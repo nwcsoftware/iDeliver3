@@ -228,7 +228,7 @@ export function AppProvider({ children }) {
       .select(`
         *,
         driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
-        customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, company_name, credit_debit_allowed),
+        customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
         zone:delivery_zones(id, name),
         order_items(currency, line_total, is_deleted),
         delivery_packages(package_price, paid, currency, provider:contacts!provider_id(company_name, first_name, last_name)),

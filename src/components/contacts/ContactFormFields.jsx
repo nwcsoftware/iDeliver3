@@ -66,7 +66,7 @@ export const ENTRY_FIELDS = [
   'company_name', 'commercial_registration',
   'first_name', 'last_name', 'mobile', 'whatsapp_number',
   'email', 'city', 'address', 'notes',
-  'supplier_code', 'payment_terms', 'partner_percentage',
+  'partner_percentage',
 ]
 
 /**

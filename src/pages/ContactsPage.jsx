@@ -17,44 +17,20 @@ import { saveContactAddresses } from '../lib/contactAddresses'
 // Seed business types; users can add their own (persisted in business_types).
 const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
 
+// Every non-driver contact type shares ONE form — the former Partner form
+// (Commission %, Business Type, Contact Category). Only the title/icon/colour
+// differ per page; the in-form Roles selector lets a contact be Customer,
+// Partner, Supplier (or several at once) and be switched between them any time.
+const GENERAL_EXTRA_FIELDS = [
+  { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
+  { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
+  { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
+]
+
 const TYPE_CONFIG = {
-  supplier: {
-    title:       'Suppliers',
-    contactType: 'supplier',
-    Icon:        Building,
-    color:       'text-orange-400',
-    bg:          'bg-orange-600/20 border-orange-600/30',
-    extraFields: [
-      { key: 'supplier_code', label: 'Supplier Code', type: 'text', placeholder: 'SUP-001' },
-      { key: 'payment_terms', label: 'Payment Terms (days)', type: 'number', placeholder: '30' },
-      { key: 'shop_type', label: 'Business Type', type: 'select', placeholder: '— Select —',
-        options: DEFAULT_BUSINESS_TYPES },
-      { key: 'contact_category', label: 'Contact Category', type: 'select', placeholder: '— Select —',
-        options: [] },
-    ],
-  },
-  customer: {
-    title:       'Customers',
-    contactType: 'customer',
-    Icon:        UserCheck,
-    color:       'text-cyan-400',
-    bg:          'bg-cyan-600/20 border-cyan-600/30',
-    extraFields: [],
-  },
-  partner: {
-    title:       'Partners',
-    contactType: 'partner',
-    Icon:        Handshake,
-    color:       'text-purple-400',
-    bg:          'bg-purple-600/20 border-purple-600/30',
-    extraFields: [
-      { key: 'partner_percentage', label: 'Commission %', type: 'number', placeholder: '10' },
-      { key: 'shop_type', label: 'Business Type', type: 'select', placeholder: '— Select —',
-        options: DEFAULT_BUSINESS_TYPES },
-      { key: 'contact_category', label: 'Contact Category', type: 'select', placeholder: '— Select —',
-        options: [] },
-    ],
-  },
+  supplier: { title: 'Suppliers', contactType: 'supplier', Icon: Building,  color: 'text-orange-400', bg: 'bg-orange-600/20 border-orange-600/30', extraFields: GENERAL_EXTRA_FIELDS },
+  customer: { title: 'Customers', contactType: 'customer', Icon: UserCheck, color: 'text-cyan-400',   bg: 'bg-cyan-600/20 border-cyan-600/30',   extraFields: GENERAL_EXTRA_FIELDS },
+  partner:  { title: 'Partners',  contactType: 'partner',  Icon: Handshake, color: 'text-purple-400', bg: 'bg-purple-600/20 border-purple-600/30', extraFields: GENERAL_EXTRA_FIELDS },
 }
 
 // A random 12-character password of letters and digits.
@@ -76,10 +52,8 @@ const BASE_FORM = {
   account_number: '', credit_debit_allowed: false,
   // Roles this contact holds (tags). Always includes the page's primary type.
   contact_types: [],
-  // supplier extras
-  supplier_code: '', payment_terms: '', shop_type: '', contact_category: '',
-  // partner extras
-  partner_percentage: '',
+  // Shared "general form" fields (all non-driver contact types).
+  partner_percentage: '', shop_type: '', contact_category: '',
 }
 
 export default function ContactsPage({ type }) {
@@ -135,7 +109,7 @@ export default function ContactsPage({ type }) {
   /* ── user-extensible lookups (supplier form) ─────────────── */
 
   const fetchLookups = useCallback(async () => {
-    if (!['supplier', 'partner'].includes(type)) return
+    // Every contact type now uses the shared form, so all pages need these lookups.
     const load = async (table) => {
       let q = supabase.from(table).select('name').eq('is_active', true).order('name')
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
@@ -334,18 +308,10 @@ export default function ContactsPage({ type }) {
       notes:          form.notes?.trim()     || null,
       credit_debit_allowed: !!form.credit_debit_allowed,
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
-      // type-specific
-      ...(type === 'supplier' ? {
-        supplier_code:    form.supplier_code?.trim() || null,
-        payment_terms:    Number(form.payment_terms) || null,
-        shop_type:        form.shop_type?.trim() || null,
-        contact_category: form.contact_category?.trim() || null,
-      } : {}),
-      ...(type === 'partner' ? {
-        partner_percentage: Number(form.partner_percentage) || null,
-        shop_type:          form.shop_type?.trim() || null,
-        contact_category:   form.contact_category?.trim() || null,
-      } : {}),
+      // Shared "general form" fields — saved for every non-driver contact type.
+      partner_percentage: Number(form.partner_percentage) || null,
+      shop_type:          form.shop_type?.trim() || null,
+      contact_category:   form.contact_category?.trim() || null,
       // audit / branch — account_number is generated client-side for customers & suppliers
       ...(modal === 'add'
         ? {

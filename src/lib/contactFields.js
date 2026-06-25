@@ -4,24 +4,22 @@
 
 export const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
 
-/* Type-specific fields beyond the shared name/contact/location block. */
+/* Every non-driver contact type (customer/supplier/partner) shares ONE form —
+   the former Partner form: Commission %, Business Type, Contact Category. */
+const GENERAL_EXTRA_FIELDS = [
+  { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
+  { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
+  { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
+]
+
 export const CONTACT_EXTRA_FIELDS = {
-  customer: [],
-  supplier: [
-    { key: 'supplier_code',    label: 'Supplier Code',        type: 'text',   placeholder: 'SUP-001' },
-    { key: 'payment_terms',    label: 'Payment Terms (days)', type: 'number', placeholder: '30' },
-    { key: 'shop_type',        label: 'Business Type',        type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
-    { key: 'contact_category', label: 'Contact Category',     type: 'select', placeholder: '— Select —', options: [] },
-  ],
-  partner: [
-    { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
-    { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
-    { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
-  ],
+  customer: GENERAL_EXTRA_FIELDS,
+  supplier: GENERAL_EXTRA_FIELDS,
+  partner:  GENERAL_EXTRA_FIELDS,
 }
 
 /* All type-specific keys — used to initialise/clear form state. */
-export const CONTACT_EXTRA_KEYS = ['supplier_code', 'payment_terms', 'shop_type', 'contact_category', 'partner_percentage']
+export const CONTACT_EXTRA_KEYS = ['shop_type', 'contact_category', 'partner_percentage']
 
 /* Enrich the addable lookup selects (business type, contact category) with their
    live options and an inline "add new" handler. `addBusinessType` /
@@ -38,18 +36,12 @@ export function buildContactExtraFields(type, { businessTypes = [], contactCateg
   })
 }
 
-/* Build the contacts payload fragment for the type-specific fields. */
-export function contactTypeExtras(type, form) {
-  if (type === 'supplier') return {
-    supplier_code:    form.supplier_code?.trim() || null,
-    payment_terms:    Number(form.payment_terms) || null,
-    shop_type:        form.shop_type?.trim() || null,
-    contact_category: form.contact_category?.trim() || null,
-  }
-  if (type === 'partner') return {
+/* Build the contacts payload fragment for the shared form fields. Saved for
+   every non-driver contact type (customer/supplier/partner). */
+export function contactTypeExtras(_type, form) {
+  return {
     partner_percentage: Number(form.partner_percentage) || null,
     shop_type:          form.shop_type?.trim() || null,
     contact_category:   form.contact_category?.trim() || null,
   }
-  return {}
 }
