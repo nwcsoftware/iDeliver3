@@ -4,6 +4,7 @@ import {
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
+  Eye, Pin, PinOff, User,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -174,19 +175,6 @@ function isApproachingStart(o, leadMins, nowMs) {
   return nowMs >= start.getTime() - leadMins * 60 * 1000
 }
 
-// An in-progress order currently inside its scheduled window — now is between the
-// scheduled start and end time (on the scheduled date). Such orders are already
-// under way, so they don't get the red reminder highlight; instead the row text
-// is shown in the in-progress colour.
-function isInProgressWindow(o, nowMs) {
-  if (!o || o.isclosed) return false
-  if (normalizeStatus(o.status) !== 'in_progress') return false
-  const start = orderScheduledStart(o)
-  const end   = orderDeadline(o)
-  if (!start || !end) return false
-  return nowMs >= start.getTime() && nowMs <= end.getTime()
-}
-
 // Local YYYY-MM-DD for a timestamp (matches how scheduled_date is stored/compared).
 function localDateStr(ms) {
   const d = new Date(ms)
@@ -203,6 +191,16 @@ function isPastDeliveryEnd(o, nowMs) {
   if (!end) return false
   if (String(o.scheduled_date).slice(0, 10) !== localDateStr(nowMs)) return false   // same date only
   return nowMs > end.getTime()
+}
+
+// An in-progress order that is still under way — its scheduled deadline has not
+// passed. These show the in-progress (brand) row colour regardless of whether
+// `now` is inside the scheduled window yet; only once the deadline is overrun do
+// they turn red (see isOverdue / isPastDeliveryEnd).
+function isActiveInProgress(o, nowMs) {
+  if (!o || o.isclosed) return false
+  if (normalizeStatus(o.status) !== 'in_progress') return false
+  return !isOverdue(o) && !isPastDeliveryEnd(o, nowMs)
 }
 
 // The `status` column is the order_status enum, which has no scheduled/in_progress/completed
@@ -330,6 +328,30 @@ function contactHasType(c, t) {
 function customerListName(c) {
   const isCompany = c.entity_type === 'company' || contactHasType(c, 'partner')
   return (isCompany && c.company_name) ? c.company_name : (customerName(c) || '—')
+}
+
+/* Read-only detail-drawer building blocks: a labelled, boxed section and a
+   label/value row. Used only by the order detail drawer. */
+function DetailSection({ icon: Icon, title, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500 mb-1.5">
+        {Icon && <Icon className="w-3.5 h-3.5" />}{title}
+      </div>
+      <div className="rounded-lg border border-surface-border bg-surface-hover/30 p-3 space-y-1">
+        {children}
+      </div>
+    </div>
+  )
+}
+function DetailRow({ label, value }) {
+  if (value == null || value === '') return null
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-slate-500 text-xs">{label}</span>
+      <span className="text-slate-200 text-xs text-right">{value}</span>
+    </div>
+  )
 }
 
 const PAYMENT_METHODS = [
@@ -616,6 +638,14 @@ export default function DeliveriesPage({ closed = false }) {
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
   const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
   const hoverPanelRef = useRef(null)
+  // Read-only order detail drawer (slides in from the right). `detail` holds the
+  // order, `detailData` its loaded sub-records; `detailShown` drives the slide
+  // animation; `detailPinned` keeps it open (otherwise a click outside closes it).
+  const [detail,        setDetail]        = useState(null)
+  const [detailData,    setDetailData]    = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailShown,   setDetailShown]   = useState(false)
+  const [detailPinned,  setDetailPinned]  = useState(false)
   const [feeDraft,             setFeeDraft]             = useState({ amount: '', currency: 'USD' })   // quick delivery-fee edit
   const [driverQuickSearch,    setDriverQuickSearch]    = useState('')
   const [quickBusy,            setQuickBusy]            = useState(false)
@@ -1198,6 +1228,38 @@ export default function DeliveriesPage({ closed = false }) {
     setError(''); setModal(o)
   }
 
+  /* ── Read-only detail drawer ─────────────────────────────────
+     Loads every sub-record for an order and shows them in a slide-in panel.
+     Display only — no edits happen here. */
+  async function openDetail(o) {
+    setDetail(o)
+    setDetailData(null)
+    setDetailLoading(true)
+    // Bring it in on the next frame so the slide transition runs from off-screen.
+    setTimeout(() => setDetailShown(true), 10)
+    const [itemsRes, pkgRes, svcRes, riRes, payRes] = await Promise.all([
+      supabase.from('order_items').select('*, product:products(name,code)').eq('order_id', o.id).eq('is_deleted', false),
+      supabase.from('delivery_packages').select('*, provider:contacts!provider_id(company_name,first_name,last_name)').eq('order_id', o.id).order('created_at'),
+      supabase.from('order_services').select('*, provider:contacts!provider_id(company_name,first_name,last_name)').eq('order_id', o.id).order('service_date'),
+      supabase.from('retail_goods_invoices').select('*').eq('order_id', o.id).order('created_at'),
+      supabase.from('payment_collections').select('*').eq('order_id', o.id).order('collected_at'),
+    ])
+    setDetailData({
+      items:          itemsRes.data ?? [],
+      packages:       pkgRes.data   ?? [],
+      services:       svcRes.data   ?? [],
+      retailInvoices: riRes.data    ?? [],
+      payments:       payRes.data   ?? [],
+    })
+    setDetailLoading(false)
+  }
+
+  function closeDetail() {
+    setDetailShown(false)
+    // Wait for the slide-out before unmounting so the animation is visible.
+    setTimeout(() => { setDetail(null); setDetailData(null); setDetailPinned(false) }, 300)
+  }
+
   function closeModal() {
     savedOrderIdRef.current = null
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
@@ -1583,6 +1645,11 @@ export default function DeliveriesPage({ closed = false }) {
     // Selecting "Completed" implies the materials reached the customer — move the
     // delivery status straight to Delivered so both stay in sync from the list.
     if (uiStatus === 'completed') patch.delivery_status = 'Delivered'
+    // Selecting "In Progress" means the delivery is on its way — move the delivery
+    // status to In Transit (unless already further along) so both stay in sync.
+    else if (uiStatus === 'in_progress' && order.delivery_status !== 'Delivered') {
+      patch.delivery_status = 'In Transit'
+    }
     await supabase.from('delivery_orders').update(patch).eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
@@ -1955,7 +2022,7 @@ export default function DeliveriesPage({ closed = false }) {
                 const sortable = !!SORT_GETTERS[h]
                 const active   = sort.col === h
                 return (
-                  <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">
+                  <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">
                     {sortable ? (
                       <button type="button" onClick={() => toggleSort(h)}
                         className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-slate-200 transition-colors ${active ? 'text-brand-300' : ''}`}
@@ -1982,20 +2049,20 @@ export default function DeliveriesPage({ closed = false }) {
                 onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
                 className={`border-b border-surface-border/50 transition-colors ${
                 isDeactivated(o)            ? 'opacity-50 hover:bg-surface-hover/40'
-                : isInProgressWindow(o, now) ? 'hover:bg-surface-hover/40'
+                : isActiveInProgress(o, now) ? 'hover:bg-surface-hover/40'
                 : isOverdue(o)              ? 'bg-red-500/10 hover:bg-red-500/20'
                 : isApproachingStart(o, highlightLeadMins, now)
                                             ? 'bg-red-500/10 hover:bg-red-500/20'
                 :                            'hover:bg-surface-hover/40'} ${
-                isPastDeliveryEnd(o, now)
+                (isPastDeliveryEnd(o, now) || (normalizeStatus(o.status) === 'in_progress' && isOverdue(o)))
                   ? '[&_*]:!text-[#fa8072]'
-                  : isInProgressWindow(o, now)
+                  : isActiveInProgress(o, now)
                   ? '[&_*]:!text-brand-400'
                   : isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300'}`}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => copyNum(o.order_number)}
-                      className="font-mono text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                      className="font-mono text-xs text-brand-400 hover:text-brand-300 inline-flex items-center gap-1 whitespace-nowrap">
                       {o.order_number}
                       {copied === o.order_number && <Check className="w-3 h-3 text-green-400" />}
                     </button>
@@ -2032,12 +2099,12 @@ export default function DeliveriesPage({ closed = false }) {
                   )}
                 </td>
                 {/* Schedule — scheduled date + time range */}
-                <td className="px-4 py-3 text-xs">
+                <td className="px-4 py-3 text-xs whitespace-nowrap">
                   {o.scheduled_date ? (
                     <>
-                      <p className="text-slate-300 font-mono tracking-wider">{String(o.scheduled_date).slice(0, 10)}</p>
+                      <p className="text-slate-300 font-mono tracking-wider whitespace-nowrap">{String(o.scheduled_date).slice(0, 10)}</p>
                       {fmtTimeRange(o.scheduled_time_from, o.scheduled_time_to) && (
-                        <p className="text-slate-500 font-mono tracking-wider mt-0.5">{fmtTimeRange(o.scheduled_time_from, o.scheduled_time_to)}</p>
+                        <p className="text-slate-500 font-mono tracking-wider mt-0.5 whitespace-nowrap">{fmtTimeRange(o.scheduled_time_from, o.scheduled_time_to)}</p>
                       )}
                     </>
                   ) : <span className="text-slate-600">—</span>}
@@ -2152,6 +2219,10 @@ export default function DeliveriesPage({ closed = false }) {
                         <Banknote className="w-4 h-4" />
                       </button>
                     )}
+                    <button onClick={() => openDetail(o)} className="btn-ghost p-1.5 text-slate-500 hover:text-brand-300 hover:bg-brand-500/10"
+                      title="View order details">
+                      <Eye className="w-4 h-4" />
+                    </button>
                     <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
                       title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
                       <Edit2 className="w-4 h-4" />
@@ -3451,6 +3522,159 @@ export default function DeliveriesPage({ closed = false }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Read-only order detail drawer (slides in from the right) ──
+          Pinned: stays open. Unpinned: a click anywhere outside closes it. */}
+      {detail && (
+        <>
+          {!detailPinned && <div className="fixed inset-0 z-[65]" onClick={closeDetail} />}
+          <div
+            onClick={e => e.stopPropagation()}
+            className={`fixed top-0 right-0 h-full w-full max-w-md z-[66] card border-l border-surface-border shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+              detailShown ? 'translate-x-0' : 'translate-x-full'}`}>
+            {/* Header */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-border">
+              <Receipt className="w-4 h-4 text-brand-300 flex-shrink-0" />
+              <span className="font-mono text-brand-300 text-sm">{detail.order_number}</span>
+              <Badge status={normalizeStatus(detail.status)} />
+              <div className="ml-auto flex items-center gap-1">
+                <button onClick={() => setDetailPinned(p => !p)}
+                  title={detailPinned ? 'Unpin — closes when you click outside' : 'Pin — keep open'}
+                  className={`btn-ghost p-1.5 ${detailPinned ? 'text-brand-300 bg-brand-500/10' : 'text-slate-500 hover:text-brand-300'}`}>
+                  {detailPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+                </button>
+                <button onClick={closeDetail} title="Close"
+                  className="btn-ghost p-1.5 text-slate-500 hover:text-slate-100">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <DetailSection icon={User} title="Customer">
+                <p className="text-slate-100 text-sm">{detail.customer ? customerListName(detail.customer) : '—'}</p>
+                {detail.customer?.account_number && (
+                  <p className="text-slate-500 text-xs font-mono">{formatAccountNumber(detail.customer.account_number)}</p>
+                )}
+                {detail.customer?.mobile && <p className="text-slate-500 text-xs">{formatMobile(detail.customer.mobile)}</p>}
+              </DetailSection>
+
+              <DetailSection icon={UserCheck} title="Recipient">
+                <p className="text-slate-100 text-sm">{detail.recipient_name || '—'}</p>
+                {detail.recipient_mobile && <p className="text-slate-500 text-xs">{formatMobile(detail.recipient_mobile)}</p>}
+                {detail.pickup_address && <p className="text-slate-500 text-xs font-mono tracking-wider">From : {detail.pickup_address}</p>}
+                {detail.delivery_address && <p className="text-slate-500 text-xs font-mono tracking-wider">To : {detail.delivery_address}</p>}
+              </DetailSection>
+
+              <DetailSection icon={Calendar} title="Schedule">
+                {detail.scheduled_date ? (
+                  <>
+                    <p className="text-slate-200 text-xs font-mono tracking-wider">{String(detail.scheduled_date).slice(0, 10)}</p>
+                    {fmtTimeRange(detail.scheduled_time_from, detail.scheduled_time_to) && (
+                      <p className="text-slate-500 text-xs font-mono tracking-wider">{fmtTimeRange(detail.scheduled_time_from, detail.scheduled_time_to)}</p>
+                    )}
+                  </>
+                ) : <p className="text-slate-500 text-xs">Not scheduled</p>}
+                <DetailRow label="Delivery status" value={detail.delivery_status} />
+              </DetailSection>
+
+              <DetailSection icon={Truck} title="Driver">
+                {detail.driver ? (
+                  <>
+                    <p className="text-slate-100 text-sm">{`${detail.driver.first_name ?? ''} ${detail.driver.last_name ?? ''}`.trim() || '—'}</p>
+                    {driverVehicle[detail.driver_id] && (
+                      <p className="text-slate-500 text-xs font-mono tracking-wider">{driverVehicle[detail.driver_id]}</p>
+                    )}
+                    {detail.driver.mobile && <p className="text-slate-500 text-xs">{formatMobile(detail.driver.mobile)}</p>}
+                    {detail.driver.driver_status && <DetailRow label="Driver status" value={detail.driver.driver_status} />}
+                  </>
+                ) : <p className="text-slate-500 text-xs">Unassigned</p>}
+              </DetailSection>
+
+              {detailLoading ? (
+                <p className="text-slate-500 text-xs text-center py-4">Loading details…</p>
+              ) : detailData && (
+                <>
+                  <DetailSection icon={Package} title="Items">
+                    {detailData.items.length ? detailData.items.map(it => (
+                      <div key={it.id} className="flex justify-between gap-3">
+                        <span className="text-slate-200 text-xs">
+                          {it.product?.name || 'Item'}<span className="text-slate-500"> × {it.quantity}</span>
+                        </span>
+                        <span className="text-slate-300 text-xs text-right tabular-nums">{fmtAmount(it.line_total, it.currency)}</span>
+                      </div>
+                    )) : <p className="text-slate-500 text-xs">No items</p>}
+                  </DetailSection>
+
+                  {detailData.packages.length > 0 && (
+                    <DetailSection icon={Package} title="Delivery Packages">
+                      {detailData.packages.map(pk => (
+                        <div key={pk.id} className="flex justify-between gap-3">
+                          <span className="text-slate-200 text-xs">
+                            {pk.description || pk.category || 'Package'}{pk.quantity > 1 ? ` × ${pk.quantity}` : ''}
+                          </span>
+                          <span className="text-slate-300 text-xs text-right tabular-nums">{fmtAmount(pk.package_price, pk.currency)}</span>
+                        </div>
+                      ))}
+                    </DetailSection>
+                  )}
+
+                  {detailData.services.length > 0 && (
+                    <DetailSection icon={Wallet} title="Order Services">
+                      {detailData.services.map(sv => (
+                        <div key={sv.id} className="flex justify-between gap-3">
+                          <span className="text-slate-200 text-xs">{sv.service_description || 'Service'}</span>
+                          <span className="text-slate-300 text-xs text-right tabular-nums">{fmtAmount(sv.service_fees, sv.service_fees_currency)}</span>
+                        </div>
+                      ))}
+                    </DetailSection>
+                  )}
+
+                  {detailData.retailInvoices.length > 0 && (
+                    <DetailSection icon={Receipt} title="Retail Invoices">
+                      {detailData.retailInvoices.map(ri => (
+                        <div key={ri.id} className="flex justify-between gap-3">
+                          <span className="text-slate-200 text-xs">{ri.shop_name || 'Invoice'}{ri.invoice_reference ? ` · ${ri.invoice_reference}` : ''}</span>
+                          <span className="text-slate-300 text-xs text-right tabular-nums">{fmtAmount(ri.invoice_value, ri.currency)}</span>
+                        </div>
+                      ))}
+                    </DetailSection>
+                  )}
+
+                  {detailData.payments.length > 0 && (
+                    <DetailSection icon={Banknote} title="Payments Collected">
+                      {detailData.payments.map(p => (
+                        <div key={p.id} className="flex justify-between gap-3">
+                          <span className="text-slate-200 text-xs">
+                            {p.collection_type || 'cash'}{p.collected_at ? ` · ${String(p.collected_at).slice(0, 10)}` : ''}
+                          </span>
+                          <span className="text-emerald-300 text-xs text-right tabular-nums">{fmtAmount(p.amount, p.currency)}</span>
+                        </div>
+                      ))}
+                    </DetailSection>
+                  )}
+                </>
+              )}
+
+              <DetailSection icon={Wallet} title="Delivery Fees & Payments">
+                <div className="-mx-3 -my-3">
+                  <AmountSummaryContent order={detail} />
+                </div>
+              </DetailSection>
+
+              {(detail.order_details_text || detail.special_instructions) && (
+                <DetailSection title="Notes">
+                  {detail.order_details_text && <p className="text-slate-300 text-xs">{detail.order_details_text}</p>}
+                  {detail.special_instructions && (
+                    <p className="text-slate-500 text-xs"><span className="text-slate-600">Note: </span>{detail.special_instructions}</p>
+                  )}
+                </DetailSection>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
