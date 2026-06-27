@@ -25,8 +25,8 @@ function contactLabel(c) {
 export default function DeleteOrderPage() {
   const { fetchOrders } = useApp()
   const { currentUser, hasRole } = useAuth()
-  // Permanently removing data is restricted to admins.
-  const isAdmin = hasRole('super_admin', 'admin')
+  // Permanently removing data is restricted to the super_admin (the developer).
+  const isAdmin = hasRole('super_admin')
 
   const [orderNumber, setOrderNumber] = useState('')
   const [order,       setOrder]       = useState(null)   // looked-up order + counts

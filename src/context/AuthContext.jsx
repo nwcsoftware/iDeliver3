@@ -102,6 +102,34 @@ export function AuthProvider({ children }) {
     return { success: true }
   }, [currentUser])
 
+  // Change the current user's own username. Reserved server-side for the
+  // super_admin (the developer); requires the current password for confirmation.
+  const changeUsername = useCallback(async (password, newUsername) => {
+    if (!currentUser?.user_id) return { success: false, error: 'Not signed in.' }
+    const trimmed = (newUsername || '').trim()
+    const { data, error } = await supabase.rpc('change_username', {
+      p_user_id:      currentUser.user_id,
+      p_password:     password,
+      p_new_username: trimmed,
+    })
+    if (error) return { success: false, error: 'Connection error. Please try again.' }
+
+    if (data === 'OK') {
+      const updated = { ...currentUser, username: trimmed }
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updated))
+      setCurrentUser(updated)
+      return { success: true }
+    }
+    const messages = {
+      BAD_PASSWORD:      'Current password is incorrect.',
+      USERNAME_TAKEN:    'That username is already taken.',
+      USERNAME_REQUIRED: 'Enter a username.',
+      NOT_AUTHORIZED:    'You are not allowed to change the username.',
+      USER_NOT_FOUND:    'Account not found.',
+    }
+    return { success: false, error: messages[data] || 'Could not change username.' }
+  }, [currentUser])
+
   const logout = useCallback(async () => {
     // Best-effort audit log. The supabase query builder is a thenable without a
     // .catch(), so guard with try/catch — otherwise a failure here would abort
@@ -122,7 +150,7 @@ export function AuthProvider({ children }) {
   }, [currentUser])
 
   return (
-    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword }}>
+    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword, changeUsername }}>
       {children}
     </AuthContext.Provider>
   )

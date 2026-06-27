@@ -22,7 +22,8 @@ function fmtWhen(ts) {
 export default function MessagesPage() {
   const { sendMessage, deactivateMessage } = useApp()
   const { currentUser, hasRole } = useAuth()
-  const isAdmin = hasRole('super_admin', 'admin')
+  // Broadcast messaging is reserved for the super_admin (the developer).
+  const isAdmin = hasRole('super_admin')
 
   const [title,    setTitle]    = useState('')
   const [body,     setBody]     = useState('')

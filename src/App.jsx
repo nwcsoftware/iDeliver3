@@ -24,6 +24,7 @@ import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
+import DeveloperAccountPage    from './pages/DeveloperAccountPage'
 import AppSettingsPage         from './pages/AppSettingsPage'
 import MessagesPage            from './pages/MessagesPage'
 import BroadcastPopup         from './components/messages/BroadcastPopup'
@@ -101,6 +102,7 @@ function AppShell() {
                 <Route path="/settings/app"        element={<AppSettingsPage />} />
                 <Route path="/settings/messages"   element={<MessagesPage />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
+                <Route path="/settings/account"    element={<DeveloperAccountPage />} />
                 <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/reset"      element={<ResetOrdersPage />} />
               </Routes>

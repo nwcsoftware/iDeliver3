@@ -53,6 +53,26 @@
   animation: blink 1.1s steps(1, end) infinite;
 }
 
+/* In-progress order indicator: a delivery truck that drives back and forth */
+@keyframes truck-drive {
+  0%   { transform: translateX(-2px); }
+  50%  { transform: translateX(2px); }
+  100% { transform: translateX(-2px); }
+}
+.animate-truck {
+  animation: truck-drive 1s ease-in-out infinite;
+}
+
+/* Flagged order indicator: a flag that waves */
+@keyframes flag-wave {
+  0%, 100% { transform: rotate(-7deg); }
+  50%      { transform: rotate(7deg); }
+}
+.animate-flag {
+  animation: flag-wave 1.2s ease-in-out infinite;
+  transform-origin: bottom left;
+}
+
 /* Leaflet overrides for dark theme */
 .leaflet-container {
   background: #1e293b !important;

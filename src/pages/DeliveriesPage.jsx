@@ -2140,9 +2140,9 @@ export default function DeliveriesPage({ closed = false }) {
                   <div className="flex items-center gap-1.5">
                     <button type="button" disabled={isRowLocked(o) || isPickedUp(o)}
                       onClick={(e) => openPopover('driver', o, e)}
-                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : 'Assign driver'}
+                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver'}
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Truck className="w-3.5 h-3.5" />
+                      <Truck className={`w-3.5 h-3.5 ${normalizeStatus(o.status) === 'in_progress' ? 'animate-truck' : ''}`} />
                     </button>
                     <div>
                       {o.driver ? `${o.driver.first_name} ${o.driver.last_name}` : <span className="text-slate-600">Unassigned</span>}
@@ -2203,9 +2203,9 @@ export default function DeliveriesPage({ closed = false }) {
                       title={isFlagged(o) ? 'Unflag order' : 'Flag order'}
                       className={`btn-ghost p-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
                         isFlagged(o)
-                          ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10'
-                          : 'text-slate-500 hover:text-amber-400 hover:bg-amber-500/10'}`}>
-                      <Flag className={`w-4 h-4 ${isFlagged(o) ? 'fill-amber-400' : ''}`} />
+                          ? 'text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/10'
+                          : 'text-slate-500 hover:text-cyan-300 hover:bg-cyan-500/10'}`}>
+                      <Flag className={`w-4 h-4 ${isFlagged(o) ? 'fill-cyan-300 animate-flag' : ''}`} />
                     </button>
                     {isFullyPaid(o) ? (
                       <span title="Fully paid — nothing to collect"
