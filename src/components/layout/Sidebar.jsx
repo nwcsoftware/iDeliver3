@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -30,6 +30,7 @@ const secondaryNav = [
   { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
   { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
   { to: '/account-transactions', icon: BookText,        label: 'Account Transactions' },
+  { to: '/supplier-settlements', icon: Store,           label: 'Supplier Settlements' },
   { to: '/vehicles',             icon: Car,             label: 'Vehicles'  },
   { to: '/company',              icon: Building2,       label: 'Company'   },
 ]

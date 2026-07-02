@@ -4,7 +4,7 @@ import {
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
-  Eye, Pin, PinOff, User,
+  Eye, Pin, PinOff, User, Building, Handshake,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -17,6 +17,7 @@ import MobileInput from '../components/MobileInput'
 import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
+import MapPicker from '../components/contacts/MapPicker'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { buildContactExtraFields, contactTypeExtras } from '../lib/contactFields'
 import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages'
@@ -224,12 +225,15 @@ function collectionFromPayStatus(payStatus) {
 const BASE_FORM = {
   recipient_name: '', recipient_mobile: '', recipient_whatsapp: '',
   customer_id: '', main_account: '', pickup_address: '', delivery_address: '',
+  delivery_lat: '', delivery_lng: '',
   delivery_zone_id: '', driver_id: '',
   status: 'scheduled', delivery_status: 'Awaiting Pickup', payment_status: 'unpaid',
   delivery_fee: '', currency: 'USD',
   discount_amount: '0', discount_currency: 'USD', vat_amount: '0',
   order_type: '', order_details_text: '', special_instructions: '',
   scheduled_date: '', scheduled_time_from: '', scheduled_time_to: '',
+  // "We purchased the goods" → the order earns a month-end commission from the shop.
+  is_procurement: false,
 }
 
 function fmt2(n) { return String(n).padStart(2, '0') }
@@ -556,7 +560,7 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 
 /* ── page ─────────────────────────────────────────────────── */
 
-export default function DeliveriesPage({ closed = false }) {
+export default function DeliveriesPage({ closed = false, partyContactId = null }) {
   const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID, showSummary, appSettings } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
@@ -572,6 +576,45 @@ export default function DeliveriesPage({ closed = false }) {
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
+  // 2nd-party (supplier/partner) view: the set of order ids this contact owns —
+  // orders whose packages (provider_id) or retail invoices (contact_id) point at
+  // them. `null` while loading, so we show nothing rather than everything.
+  const [ownedOrderIds, setOwnedOrderIds] = useState(null)
+  useEffect(() => {
+    if (!partyContactId) { setOwnedOrderIds(null); return }
+    let cancelled = false
+    ;(async () => {
+      const [pkgRes, invRes] = await Promise.all([
+        supabase.from('delivery_packages').select('order_id').eq('provider_id', partyContactId),
+        supabase.from('retail_goods_invoices').select('order_id').eq('contact_id', partyContactId),
+      ])
+      if (cancelled) return
+      const ids = new Set()
+      for (const r of pkgRes.data ?? []) if (r.order_id) ids.add(r.order_id)
+      for (const r of invRes.data ?? []) if (r.order_id) ids.add(r.order_id)
+      setOwnedOrderIds(ids)
+    })()
+    return () => { cancelled = true }
+  }, [partyContactId, orders])
+
+  // The party's own contact — used to auto-fill (and lock) the package provider
+  // and retail-invoice shop so a 2nd-party order always references them.
+  const [partyContact, setPartyContact] = useState(null)
+  useEffect(() => {
+    if (!partyContactId) { setPartyContact(null); return }
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase.from('contacts')
+        .select('id, first_name, last_name, company_name, code, shop_type')
+        .eq('id', partyContactId).single()
+      if (!cancelled) setPartyContact(data ?? null)
+    })()
+    return () => { cancelled = true }
+  }, [partyContactId])
+  const partyContactName = partyContact
+    ? (partyContact.company_name?.trim() || `${partyContact.first_name ?? ''} ${partyContact.last_name ?? ''}`.trim())
+    : ''
+
   // Remembers the id of an order created during this modal session, so if a
   // later step (items, packages, services…) fails the retry UPDATEs that order
   // instead of inserting a duplicate. Reset whenever the modal opens/closes.
@@ -584,6 +627,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [filter,    setFilter]    = useState('all')
   const [sort,      setSort]      = useState({ col: null, dir: null })  // column sort: asc | desc | null
   const [modal,     setModal]     = useState(null)
+  const [mapOpen,   setMapOpen]   = useState(false)   // delivery-address map picker
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
   const [retailInvoices, setRetailInvoices] = useState([])   // retail_goods_invoices
@@ -613,6 +657,7 @@ export default function DeliveriesPage({ closed = false }) {
   const [customerSearch,     setCustomerSearch]     = useState('')
   const [customerInput,        setCustomerInput]        = useState('')
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false)
+  const [recipientDropdownOpen, setRecipientDropdownOpen] = useState(false)
   const [newCustomerOpen,      setNewCustomerOpen]      = useState(false)
   const [newCustomer,          setNewCustomer]          = useState(EMPTY_CUSTOMER)
   const [newContactType,       setNewContactType]       = useState('customer')   // customer | partner | supplier
@@ -660,7 +705,7 @@ export default function DeliveriesPage({ closed = false }) {
   const toggleSection = (id, val) => setSectionsOpen(s => ({ ...s, [id]: val }))
   const openSection   = (id) => setSectionsOpen(s => (s[id] ? s : { ...s, [id]: true }))
   // Add a package from the section header (works even while the subform is collapsed/unmounted).
-  const addPackage    = () => { openSection('packages'); setPackages(p => [...p, { ...EMPTY_PACKAGE, _key: Date.now() }]) }
+  const addPackage    = () => { openSection('packages'); setPackages(p => [...p, { ...EMPTY_PACKAGE, ...(partyContactId ? { provider_id: partyContactId } : {}), _key: Date.now() }]) }
 
   /* ── lookups ─────────────────────────────────────────────── */
 
@@ -676,7 +721,7 @@ export default function DeliveriesPage({ closed = false }) {
     }
     const [{ data: custs }, { data: allc }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
       supabase.from('contacts')
-        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type')
+        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type,partner_percentage')
         // Membership is by role tags, so a multi-role contact (e.g. Customer +
         // Partner) shows up here regardless of which type is its primary.
         .overlaps('contact_types', ['customer', 'partner', 'supplier']),
@@ -712,6 +757,8 @@ export default function DeliveriesPage({ closed = false }) {
     if (!editId || loading.orders || handledEditRef.current === editId) return
     const o = orders.find(x => x.id === editId)
     if (!o) return   // wait until the orders list includes it
+    // 2nd-party users may only deep-link into their own orders.
+    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(editId))) return
     handledEditRef.current = editId
     setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('edit'); return p }, { replace: true })
     ;(async () => {
@@ -770,8 +817,20 @@ export default function DeliveriesPage({ closed = false }) {
   }
   // An order from the online application = external source.
   const isOnlineOrder = (o) => (o.order_source || '').trim().toUpperCase().startsWith('EXT')
+  // Orders that need the call-center confirm affordance in the list: online (EXT),
+  // plus partner & supplier orders (treated like online). Returns the icon "kind".
+  const orderSourceKind = (o) => {
+    const src = (o.order_source || '').trim()
+    if (src.toUpperCase().startsWith('EXT')) return 'online'
+    if (src.toLowerCase() === 'supplier')    return 'supplier'
+    if (src.toLowerCase() === 'partner')     return 'partner'
+    return null
+  }
 
   const filtered = orders.filter(o => {
+    // 2nd-party view: restrict to orders that reference this contact (their
+    // packages or retail invoices). Empty while ownership is still loading.
+    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(o.id))) return false
     // Closed orders live on their own page; the daily Orders page excludes them.
     const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
     const q = search.toLowerCase()
@@ -957,6 +1016,26 @@ export default function DeliveriesPage({ closed = false }) {
     if (c) applyCustomer(c)
   }
 
+  /* Recipient box behaves like the Customer box: pick an existing contact from
+     the dropdown (fills name / mobile / whatsapp), or add a new one when not
+     found. Unlike Customer it doesn't set customer_id — it only fills the
+     recipient fields stored on the order. */
+  function applyRecipient(c) {
+    const isCompany = c.entity_type === 'company' || contactHasType(c, 'partner')
+    const name = (isCompany && c.company_name) ? c.company_name : customerName(c)
+    setForm(f => ({
+      ...f,
+      recipient_name:     name || f.recipient_name,
+      recipient_mobile:   c.mobile ?? f.recipient_mobile,
+      recipient_whatsapp: c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp,
+    }))
+    setRecipientDropdownOpen(false)
+    setError('')
+  }
+  function openNewRecipient(seedName = form.recipient_name) {
+    openNewContact(seedName, 'customer', applyRecipient)
+  }
+
   /* Open the quick "new contact" modal for any type (customer / partner /
      supplier), pre-filling the typed name. `onCreated(contact)` selects the new
      contact back into whatever field opened the modal. */
@@ -1084,7 +1163,9 @@ export default function DeliveriesPage({ closed = false }) {
 
   function openAdd() {
     savedOrderIdRef.current = null
-    setForm(getEmptyForm()); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
+    // 2nd-party users: order type defaults to their contact's business type (locked).
+    setForm({ ...getEmptyForm(), ...(partyContactId && partyContact?.shop_type ? { order_type: partyContact.shop_type } : {}) })
+    setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
@@ -1105,6 +1186,8 @@ export default function DeliveriesPage({ closed = false }) {
       discount_amount:  o.discount_amount  ?? '0',
       discount_currency: o.discount_currency || o.currency || 'USD',
       vat_amount:       o.vat_amount       ?? '0',
+      // 2nd-party users: order type is fixed to their contact's business type.
+      ...(partyContactId && partyContact?.shop_type ? { order_type: partyContact.shop_type } : {}),
     })
     const { data } = await supabase
       .from('order_items')
@@ -1372,7 +1455,11 @@ export default function DeliveriesPage({ closed = false }) {
 
   /* Retail goods invoices (retail_goods_invoices). */
   function addRetailInvoice() {
-    setRetailInvoices(p => [...p, { ...EMPTY_RETAIL_INVOICE, invoice_date: new Date().toISOString().slice(0, 10), _key: Date.now() }])
+    // 2nd-party users: the shop is always their own linked contact.
+    const partyFields = partyContactId
+      ? { shop_name: partyContactName, contact_id: partyContactId, contact_code: partyContact?.code || '', shop_type: partyContact?.shop_type || '' }
+      : {}
+    setRetailInvoices(p => [...p, { ...EMPTY_RETAIL_INVOICE, invoice_date: new Date().toISOString().slice(0, 10), ...partyFields, _key: Date.now() }])
   }
   function removeRetailInvoice(i) {
     const removed = retailInvoices[i]
@@ -1392,8 +1479,25 @@ export default function DeliveriesPage({ closed = false }) {
     if (!form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
     if (!form.delivery_address.trim()) return setError('Delivery address is required.')
     if (!form.customer_id)             return setError('Please select a customer.')
+
+    // 2nd-party (supplier/partner) users: force their own linked contact as the
+    // package provider and the retail-invoice shop, so the order always
+    // references them (and they can't set it to anyone else).
+    const packagesEff = partyContactId
+      ? packages.map(p => ({ ...p, provider_id: partyContactId }))
+      : packages
+    const retailEff = partyContactId
+      ? retailInvoices.map(r => ({
+          ...r,
+          shop_name:    partyContactName || r.shop_name,
+          contact_id:   partyContactId,
+          contact_code: partyContact?.code || r.contact_code || '',
+          shop_type:    partyContact?.shop_type || r.shop_type || '',
+        }))
+      : retailInvoices
+
     // Package provider and reference are mandatory on every package row.
-    for (const p of packages) {
+    for (const p of packagesEff) {
       if (!p.provider_id)             return setError('Each package needs a Package provider.')
       if (!p.tracking_number?.trim()) return setError('Each package needs a Package reference.')
     }
@@ -1425,6 +1529,15 @@ export default function DeliveriesPage({ closed = false }) {
       ? { isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null }
       : {}
 
+    // New-order source: when a 2nd-party (supplier/partner) user creates it, the
+    // source is THEIR role; otherwise it's the customer's contact type, else
+    // "Call center". Partner & supplier orders are treated like online orders:
+    // they arrive UNCONFIRMED so the call center reviews them.
+    const addSource = partyContactId
+      ? (currentUser?.role === 'supplier' ? 'supplier' : 'partner')
+      : ((customers.find(c => c.id === form.customer_id)?.contact_type) || 'Call center')
+    const addNeedsConfirm = !!partyContactId || addSource === 'partner' || addSource === 'supplier'
+
     const payload = {
       recipient_name:       form.recipient_name.trim(),
       recipient_mobile:     form.recipient_mobile.trim(),
@@ -1434,6 +1547,8 @@ export default function DeliveriesPage({ closed = false }) {
       is_credit_order:      modal !== 'add' && modal?.is_credit_order === true,   // preserved on edit; credit handling now keys off the customer
       pickup_address:       form.pickup_address?.trim()  || null,
       delivery_address:     form.delivery_address.trim(),
+      delivery_lat:         form.delivery_lat === '' || form.delivery_lat == null ? null : Number(form.delivery_lat),
+      delivery_lng:         form.delivery_lng === '' || form.delivery_lng == null ? null : Number(form.delivery_lng),
       delivery_zone_id:     form.delivery_zone_id        || null,
       driver_id:            form.driver_id               || null,
       status:                   toDbStatus(form.status),
@@ -1448,16 +1563,22 @@ export default function DeliveriesPage({ closed = false }) {
       discount_currency:    form.discount_currency || form.currency,
       vat_amount:           Number(form.vat_amount)      || 0,
       total_amount:         Math.max(0, totals[form.currency] || 0),
-      order_type:            form.order_type                   || null,
+      order_type:            (partyContactId && partyContact?.shop_type) ? partyContact.shop_type : (form.order_type || null),
+      // Procurement = we bought the goods → the order earns shop commission.
+      // Never set for shop-sent (2nd-party) orders.
+      is_procurement:        !partyContactId && !!form.is_procurement,
       order_details_text:    form.order_details_text?.trim()   || null,
       special_instructions:  form.special_instructions?.trim() || null,
       scheduled_date:        form.scheduled_date               || null,
       scheduled_time_from:   form.scheduled_time_from          || null,
       scheduled_time_to:     form.scheduled_time_to            || null,
-      // Staff-created orders are confirmed on creation (online orders arrive
-      // unconfirmed and are confirmed via the globe popup) and are tagged as
-      // entered by the call center.
-      ...(modal === 'add' ? { order_confirmed: true, order_source: 'Call center' } : {}),
+      // New orders are tagged with the customer's contact type as the source.
+      // Regular/customer orders are confirmed on creation; partner & supplier
+      // orders arrive unconfirmed (treated like online orders) so the call
+      // center confirms them via the popover.
+      ...(modal === 'add'
+        ? { order_confirmed: !addNeedsConfirm, order_source: addSource }
+        : {}),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
 
@@ -1507,24 +1628,35 @@ export default function DeliveriesPage({ closed = false }) {
       if (ie) { setError(ie.message); setSaving(false); return }
     }
 
-    // Retail goods invoices — only rows with a shop selected.
-    const retailRows = retailInvoices
+    // Retail goods invoices — only rows with a shop selected. On a procurement
+    // order, snapshot the shop's commission % and the money we earn on each
+    // invoice (invoice value × %); shop-sent orders record no commission.
+    const isProcurementOrder = !partyContactId && !!form.is_procurement
+    const retailRows = retailEff
       .filter(r => r.shop_name?.trim())
-      .map(r => ({
-        order_id:          orderId,
-        shop_name:         r.shop_name.trim(),
-        shop_type:         r.shop_type?.trim() || null,
-        contact_id:        r.contact_id || null,
-        contact_code:      r.contact_code?.trim() || null,
-        invoice_reference: r.invoice_reference?.trim() || null,
-        invoice_date:      r.invoice_date || new Date().toISOString().slice(0, 10),
-        invoice_value:     Number(r.invoice_value) || 0,
-        currency:          r.currency || 'USD',
-        paid:              !!r.paid,
-        payment_type:      r.payment_type || null,
-        created_by:        currentUser?.user_id || null,
-        ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
-      }))
+      .map(r => {
+        const value = Number(r.invoice_value) || 0
+        const shop  = r.contact_id ? customers.find(c => c.id === r.contact_id) : null
+        const rate  = isProcurementOrder ? Number(shop?.partner_percentage) : NaN
+        const hasRate = Number.isFinite(rate) && rate > 0
+        return {
+          order_id:          orderId,
+          shop_name:         r.shop_name.trim(),
+          shop_type:         r.shop_type?.trim() || null,
+          contact_id:        r.contact_id || null,
+          contact_code:      r.contact_code?.trim() || null,
+          invoice_reference: r.invoice_reference?.trim() || null,
+          invoice_date:      r.invoice_date || new Date().toISOString().slice(0, 10),
+          invoice_value:     value,
+          currency:          r.currency || 'USD',
+          paid:              !!r.paid,
+          payment_type:      r.payment_type || null,
+          commission_rate:   hasRate ? rate : null,
+          commission_amount: hasRate ? round2(value * rate / 100) : null,
+          created_by:        currentUser?.user_id || null,
+          ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+        }
+      })
     if (retailRows.length > 0) {
       const { error: re } = await supabase.from('retail_goods_invoices').insert(retailRows)
       if (re) { setError(re.message); setSaving(false); return }
@@ -1565,7 +1697,7 @@ export default function DeliveriesPage({ closed = false }) {
     // ── Sync delivery packages (partners) ────────────────────
     const selCustomer = customers.find(c => c.id === form.customer_id) || null
     const pkgErr = await saveOrderPackages({
-      orderId, packages, origIds: origPackageIds,
+      orderId, packages: packagesEff, origIds: origPackageIds,
       companyId: COMPANY_ID, contactCode: selCustomer?.code || null,
       userId: currentUser?.user_id || null,
     })
@@ -1847,6 +1979,13 @@ export default function DeliveriesPage({ closed = false }) {
     !form.customer_id &&
     !customers.some(c => customerName(c).toLowerCase() === trimmedCustomer.toLowerCase())
 
+  const trimmedRecipient = (form.recipient_name || '').trim()
+  const isNewRecipient =
+    trimmedRecipient !== '' &&
+    !customers.some(c =>
+      customerName(c).toLowerCase() === trimmedRecipient.toLowerCase() ||
+      (c.company_name || '').toLowerCase() === trimmedRecipient.toLowerCase())
+
   const paidByCur     = paidByCurrency(payments)
   const paymentStatus = derivePaymentStatus(paidByCur, totals)
   const collectionFromCustomer = collectionFromPayStatus(paymentStatus)
@@ -2018,7 +2157,9 @@ export default function DeliveriesPage({ closed = false }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #','Schedule','Recipient','Customer','Driver','Delivery Fee','Notes','Status','Payment',''].map(h => {
+              {['Order #','Schedule','Recipient','Customer','Driver',
+                ...(partyContactId ? [] : ['Delivery Fee']),'Notes','Status',
+                ...(partyContactId ? [] : ['Payment']),''].map(h => {
                 const sortable = !!SORT_GETTERS[h]
                 const active   = sort.col === h
                 return (
@@ -2040,9 +2181,9 @@ export default function DeliveriesPage({ closed = false }) {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
+              <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : sorted.map(o => (
               <tr key={o.id}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
@@ -2066,20 +2207,30 @@ export default function DeliveriesPage({ closed = false }) {
                       {o.order_number}
                       {copied === o.order_number && <Check className="w-3 h-3 text-green-400" />}
                     </button>
-                    {isOnlineOrder(o) && (
-                      <button type="button" disabled={isRowLocked(o)}
-                        onClick={(e) => openPopover('online', o, e)}
-                        title="Online order — confirm"
-                        className="inline-flex text-cyan-400 hover:text-cyan-300 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <Globe className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    {(() => {
+                      const kind = orderSourceKind(o)
+                      if (!kind || partyContactId) return null
+                      const cfg = {
+                        online:   { Icon: Globe,     title: 'Online order — confirm',   cls: 'text-cyan-400 hover:text-cyan-300' },
+                        supplier: { Icon: Building,  title: 'Supplier order — confirm', cls: 'text-orange-400 hover:text-orange-300' },
+                        partner:  { Icon: Handshake, title: 'Partner order — confirm',  cls: 'text-purple-400 hover:text-purple-300' },
+                      }[kind]
+                      const { Icon } = cfg
+                      return (
+                        <button type="button" disabled={isRowLocked(o)}
+                          onClick={(e) => openPopover('online', o, e)}
+                          title={cfg.title}
+                          className={`inline-flex ${cfg.cls} disabled:opacity-40 disabled:cursor-not-allowed`}>
+                          <Icon className="w-3.5 h-3.5" />
+                        </button>
+                      )
+                    })()}
                   </div>
                   {(() => {
                     const remind = needsConfirmReminder(o, reminderMins, now)
                     return (
-                      <button type="button" onClick={(e) => openPopover('online', o, e)} disabled={isRowLocked(o)}
-                        title={remind ? 'This order has been placed but not confirmed — click to confirm' : 'Click to change confirmation'}
+                      <button type="button" onClick={(e) => openPopover('online', o, e)} disabled={isRowLocked(o) || !!partyContactId}
+                        title={partyContactId ? undefined : (remind ? 'This order has been placed but not confirmed — click to confirm' : 'Click to change confirmation')}
                         className={`inline-flex items-center gap-1 text-[10px] mt-1 px-1.5 py-0.5 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
                         isConfirmed(o)
                           ? 'text-green-400 bg-green-500/10 border-green-500/20'
@@ -2138,9 +2289,9 @@ export default function DeliveriesPage({ closed = false }) {
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   <div className="flex items-center gap-1.5">
-                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o)}
+                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId}
                       onClick={(e) => openPopover('driver', o, e)}
-                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver'}
+                      title={partyContactId ? 'Assigned by the operations team' : (o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver')}
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Truck className={`w-3.5 h-3.5 ${normalizeStatus(o.status) === 'in_progress' ? 'animate-truck' : ''}`} />
                     </button>
@@ -2152,6 +2303,7 @@ export default function DeliveriesPage({ closed = false }) {
                     </div>
                   </div>
                 </td>
+                {!partyContactId && (
                 <td className="px-4 py-3">
                   <button type="button" disabled={isRowLocked(o)}
                     onClick={(e) => openPopover('fee', o, e)}
@@ -2169,6 +2321,7 @@ export default function DeliveriesPage({ closed = false }) {
                     </p>
                   )}
                 </td>
+                )}
                 {/* Notes — delivery description (order details) + special instructions */}
                 <td className="px-4 py-3 text-xs">
                   {(o.order_details_text || o.special_instructions) ? (
@@ -2185,20 +2338,35 @@ export default function DeliveriesPage({ closed = false }) {
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3">
-                  <button type="button" disabled={isRowLocked(o)}
-                    onClick={(e) => openPopover('status', o, e)}
-                    title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Change status'}
-                    className="disabled:cursor-not-allowed hover:opacity-80 transition-opacity">
+                  {partyContactId ? (
+                    /* 2nd-party users can't change order/delivery status — view only. */
                     <Badge status={normalizeStatus(o.status)} />
-                  </button>
+                  ) : (
+                    <button type="button" disabled={isRowLocked(o)}
+                      onClick={(e) => openPopover('status', o, e)}
+                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Change status'}
+                      className="disabled:cursor-not-allowed hover:opacity-80 transition-opacity">
+                      <Badge status={normalizeStatus(o.status)} />
+                    </button>
+                  )}
                   {o.delivery_status && <p className="text-slate-500 text-[11px] mt-1">{o.delivery_status}</p>}
                 </td>
+                {!partyContactId && (
                 <td className="px-4 py-3">
                   <Badge status={o.payment_status} />
                   {o.collection_from_customer && <p className="text-slate-500 text-[11px] mt-1">{o.collection_from_customer}</p>}
                 </td>
+                )}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
+                    {partyContactId ? (
+                      /* 2nd-party users: edit only — no flag/pay/detail/close/cancel. */
+                      <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
+                        title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    ) : (
+                    <>
                     <button onClick={() => toggleFlag(o)} disabled={toggling === o.id}
                       title={isFlagged(o) ? 'Unflag order' : 'Flag order'}
                       className={`btn-ghost p-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -2243,6 +2411,8 @@ export default function DeliveriesPage({ closed = false }) {
                         : 'text-slate-500 hover:text-red-400 hover:bg-red-500/10'}`}>
                       <Power className="w-4 h-4" />
                     </button>
+                    </>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -2382,14 +2552,25 @@ export default function DeliveriesPage({ closed = false }) {
                 <div>
                   <div className="flex items-center justify-between">
                     <label className="label">Order Type</label>
-                    {!addingType && (
+                    {!addingType && !partyContactId && (
                       <button type="button" onClick={() => { setAddingType(true); setNewTypeName('') }}
                         className="text-[11px] text-brand-400 hover:text-brand-300 mb-1">
                         <Plus className="w-3 h-3 inline -mt-0.5" /> New type
                       </button>
                     )}
                   </div>
-                  {addingType ? (
+                  {partyContactId ? (
+                    /* 2nd-party users: fixed to their contact's business type. */
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.order_type || ''} disabled>
+                      <option value="">—</option>
+                      {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                      {orderTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                      {form.order_type
+                        && !ORDER_TYPES.some(t => t.value === form.order_type)
+                        && !orderTypes.some(t => t.name === form.order_type)
+                        && <option value={form.order_type}>{form.order_type}</option>}
+                    </select>
+                  ) : addingType ? (
                     <div className="flex items-center gap-1.5">
                       <input autoFocus className="input" value={newTypeName}
                         onChange={e => setNewTypeName(e.target.value)}
@@ -2504,14 +2685,59 @@ export default function DeliveriesPage({ closed = false }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label text-fuchsia-300">Recipient Name *</label>
-                    <input className="input" value={form.recipient_name}
-                      onChange={e => fld('recipient_name', e.target.value)} placeholder="Jane Smith" />
+                    {/* Same behaviour as Customer: search dropdown + add-new contact. */}
+                    <div className="relative">
+                      <input
+                        className="input w-full"
+                        placeholder="Type a recipient name…"
+                        value={form.recipient_name}
+                        onChange={e => { fld('recipient_name', e.target.value); setRecipientDropdownOpen(true) }}
+                        onFocus={() => setRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setRecipientDropdownOpen(false), 150)}
+                      />
+                      {recipientDropdownOpen && trimmedRecipient !== '' && (() => {
+                        const q = trimmedRecipient.toLowerCase()
+                        const list = customers.filter(c =>
+                          customerName(c).toLowerCase().includes(q) ||
+                          c.company_name?.toLowerCase().includes(q) ||
+                          c.mobile?.includes(trimmedRecipient)
+                        ).slice(0, 6)
+                        if (list.length === 0) return null
+                        return (
+                          <div className="absolute z-[55] left-0 right-0 mt-1 card border border-surface-border rounded-lg shadow-xl overflow-hidden max-h-56 overflow-y-auto">
+                            {list.map(c => (
+                              <button type="button" key={c.id}
+                                onMouseDown={e => { e.preventDefault(); applyRecipient(c) }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover transition-colors border-b border-surface-border/50 last:border-0">
+                                <div className="w-7 h-7 rounded-full bg-cyan-600/20 border border-cyan-600/30 flex items-center justify-center text-[10px] font-bold text-cyan-400 flex-shrink-0">
+                                  {c.first_name?.[0]?.toUpperCase()}{c.last_name?.[0]?.toUpperCase()}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-slate-100 text-sm truncate">{c.company_name || `${c.first_name} ${c.last_name}`}</p>
+                                  <p className="text-slate-500 text-xs truncate">{formatMobile(c.mobile)}</p>
+                                </div>
+                                <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </div>
                   </div>
                   <div>
                     <label className="label text-fuchsia-300">Mobile *</label>
                     <MobileInput value={form.recipient_mobile} onChange={v => fld('recipient_mobile', v)} />
                   </div>
                 </div>
+
+                {/* New-recipient hint — add a contact from the recipient box. */}
+                {isNewRecipient && (
+                  <button type="button" onClick={() => openNewRecipient()}
+                    className="w-full flex items-center gap-2 text-left text-xs text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 rounded-lg px-3 py-2 hover:bg-cyan-500/15 transition-colors">
+                    <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>It seems <span className="font-semibold">“{trimmedRecipient}”</span> is a new contact — do you want to save?</span>
+                  </button>
+                )}
 
                 <div>
                   <label className="label">WhatsApp</label>
@@ -2522,24 +2748,35 @@ export default function DeliveriesPage({ closed = false }) {
               {/* ── Route ─────────────────────────────────────── */}
               <CollapsibleSection title="Route" open={sectionsOpen.route} onToggle={v => toggleSection('route', v)}>
                 <div className="grid grid-cols-2 gap-3">
+                  {/* 2nd-party (supplier/partner) users may select & type addresses
+                      but not add/edit/delete the shared saved-location list. */}
                   <TagLocationField
                     label="Pickup / Origin"
                     tags={splitLocs(form.pickup_address)}
                     setTags={arr => fld('pickup_address', joinLocs(arr))}
                     suggestions={pickupSuggestions}
-                    onAddNew={rememberPickup}
-                    onEditSuggestion={editPickupSuggestion}
-                    onDeleteSuggestion={deletePickupSuggestion}
+                    onAddNew={partyContactId ? undefined : rememberPickup}
+                    onEditSuggestion={partyContactId ? undefined : editPickupSuggestion}
+                    onDeleteSuggestion={partyContactId ? undefined : deletePickupSuggestion}
                     placeholder="Add warehouse / pickup…" />
                   <TagLocationField
                     label="Delivery Address" required
                     tags={splitLocs(form.delivery_address)}
                     setTags={arr => fld('delivery_address', joinLocs(arr))}
                     suggestions={deliverySuggestions}
-                    onAddNew={rememberDelivery}
-                    onEditSuggestion={editDeliverySuggestion}
-                    onDeleteSuggestion={deleteDeliverySuggestion}
-                    placeholder="Add delivery address…" />
+                    onAddNew={partyContactId ? undefined : rememberDelivery}
+                    onEditSuggestion={partyContactId ? undefined : editDeliverySuggestion}
+                    onDeleteSuggestion={partyContactId ? undefined : deleteDeliverySuggestion}
+                    placeholder="Add delivery address…"
+                    labelRight={
+                      <button type="button" onClick={() => setMapOpen(true)}
+                        title={form.delivery_lat && form.delivery_lng
+                          ? `Pinned at ${Number(form.delivery_lat).toFixed(5)}, ${Number(form.delivery_lng).toFixed(5)} — click to change`
+                          : 'Pick delivery location on map'}
+                        className={`btn-ghost p-1 -my-1 ${form.delivery_lat && form.delivery_lng ? 'text-brand-400' : 'text-slate-400 hover:text-brand-300'}`}>
+                        <MapPin className="w-4 h-4" />
+                      </button>
+                    } />
                 </div>
                 <div className="flex items-end gap-5">
                   <div className="w-36 flex-shrink-0">
@@ -2568,14 +2805,42 @@ export default function DeliveriesPage({ closed = false }) {
                 </div>
               </CollapsibleSection>
 
+              {/* Delivery-address map picker → fills coordinates (and the address). */}
+              <MapPicker
+                open={mapOpen}
+                initial={{
+                  latitude:  form.delivery_lat || null,
+                  longitude: form.delivery_lng || null,
+                  address_line: splitLocs(form.delivery_address)[0] || '',
+                }}
+                onCancel={() => setMapOpen(false)}
+                onConfirm={({ latitude, longitude, address_line }) => {
+                  setForm(f => {
+                    const next = { ...f, delivery_lat: latitude, delivery_lng: longitude }
+                    const name = (address_line || '').trim()
+                    if (name) {
+                      const existing = splitLocs(f.delivery_address)
+                      if (!existing.some(t => t.toLowerCase() === name.toLowerCase())) {
+                        next.delivery_address = joinLocs([...existing, name])
+                      }
+                    }
+                    return next
+                  })
+                  setError('')
+                  setMapOpen(false)
+                }} />
+
               {/* ── Assignment & Status ────────────────────────── */}
               <CollapsibleSection title="Assignment & Status" accent="fuchsia" open={sectionsOpen.assignment} onToggle={v => toggleSection('assignment', v)}>
+                {partyContactId && (
+                  <p className="text-[11px] text-slate-500 mb-2">View only — assignment &amp; status are managed by the operations team.</p>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Driver</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed"
                       value={form.driver_id} onChange={e => fld('driver_id', e.target.value)}
-                      disabled={isPickedUp(form)}
+                      disabled={isPickedUp(form) || !!partyContactId}
                       title={isPickedUp(form) ? 'Picked up — driver can no longer be changed' : undefined}>
                       <option value="">— Unassigned —</option>
                       {drivers.filter(d => ['available','on_duty'].includes(d.driver_status)).map(d => (
@@ -2588,7 +2853,8 @@ export default function DeliveriesPage({ closed = false }) {
                   </div>
                   <div>
                     <label className="label">Order Status</label>
-                    <select className="input" value={form.status} onChange={e => fld('status', e.target.value)}>
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.status} onChange={e => fld('status', e.target.value)}
+                      disabled={!!partyContactId}>
                       {!ORDER_STATUS_OPTIONS.some(o => o.value === form.status) && form.status && (
                         <option value={form.status}>{form.status.replace(/_/g, ' ')}</option>
                       )}
@@ -2597,10 +2863,13 @@ export default function DeliveriesPage({ closed = false }) {
                   </div>
                   <div>
                     <label className="label">Delivery Status</label>
-                    <select className="input" value={form.delivery_status} onChange={e => fld('delivery_status', e.target.value)}>
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.delivery_status} onChange={e => fld('delivery_status', e.target.value)}
+                      disabled={!!partyContactId}>
                       {DELIVERY_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
+                  {/* Hidden for 2nd-party (supplier/partner) users. */}
+                  {!partyContactId && (
                   <div>
                     <label className="label">Collection from Customer</label>
                     <input
@@ -2610,6 +2879,7 @@ export default function DeliveriesPage({ closed = false }) {
                       title="Derived from recorded payments"
                     />
                   </div>
+                  )}
                 </div>
               </CollapsibleSection>
 
@@ -2623,10 +2893,13 @@ export default function DeliveriesPage({ closed = false }) {
                 }>
                 <OrderPackages packages={packages} setPackages={setPackages} providers={partnerContacts}
                   onAddProvider={(name, onCreated) => openNewContact(name, 'partner', onCreated)}
+                  hideProvider={!!partyContactId} fixedProviderName={partyContactName}
                   customerName={customerInput.trim()} embedded onAdd={addPackage} />
               </CollapsibleSection>
 
               {/* ── Order Services ────────────────────────────── */}
+              {/* Hidden for 2nd-party (supplier/partner) users. */}
+              {!partyContactId && (
               <CollapsibleSection title={`Order Services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
                 right={
                   <button type="button" onClick={() => { openSection('services'); setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }]) }}
@@ -2639,10 +2912,13 @@ export default function DeliveriesPage({ closed = false }) {
                   onAddProvider={(name, onCreated) => openNewContact(name, 'supplier', onCreated)}
                   embedded onAdd={() => setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }])} />
               </CollapsibleSection>
+              )}
 
               {/* Pricing sections */}
               {/* ── Items ─────────────────────────────────────── */}
+              {/* Hidden for 2nd-party (supplier/partner) users. */}
               <div id="order-section-items" className="scroll-mt-4" />
+              {!partyContactId && (
               <CollapsibleSection title={`Local retail items (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
                 right={
                   <button type="button" onClick={() => { openSection('items'); addItem() }}
@@ -2708,6 +2984,7 @@ export default function DeliveriesPage({ closed = false }) {
                   </table>
                 </div>
               </CollapsibleSection>
+              )}
 
               {/* ── External Retails Invoices References (retail_goods_invoices) ── */}
               <CollapsibleSection title={`External retails invoices references (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
@@ -2718,11 +2995,28 @@ export default function DeliveriesPage({ closed = false }) {
                   </button>
                 }>
 
+                {/* Procurement toggle — staff only. When on, each invoice's
+                    shop commission (its % × value) is recorded for month-end. */}
+                {!partyContactId && (
+                  <label className="flex items-start gap-2 mb-3 px-3 py-2 rounded-lg border border-surface-border bg-surface-hover/40 cursor-pointer select-none">
+                    <input type="checkbox" className="mt-0.5 accent-brand-600"
+                      checked={!!form.is_procurement}
+                      onChange={e => fld('is_procurement', e.target.checked)} />
+                    <span className="text-xs">
+                      <span className="text-slate-200 font-medium">We purchased these goods (earn commission)</span>
+                      <span className="block text-[11px] text-slate-500">
+                        Tick when we bought the items for the customer — each shop invoice earns that shop’s commission % at month-end. Leave off for shop-sent orders (delivery fee only).
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 <div className="border border-surface-border rounded-xl overflow-x-auto">
                   <table className="w-full text-xs min-w-[860px]">
                     <thead>
                       <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
-                        <th className="text-left px-3 py-2 w-[22%]">Warehouse / Shop</th>
+                        {/* Warehouse/Shop hidden for 2nd-party users (fixed to them). */}
+                        {!partyContactId && <th className="text-left px-3 py-2 w-[22%]">Warehouse / Shop</th>}
                         <th className="text-left px-3 py-2 w-[14%]">Invoice Ref</th>
                         <th className="text-left px-3 py-2 w-[12%]">Date</th>
                         <th className="text-left px-3 py-2 w-[11%]">Amount</th>
@@ -2734,9 +3028,10 @@ export default function DeliveriesPage({ closed = false }) {
                     </thead>
                     <tbody>
                       {retailInvoices.length === 0 ? (
-                        <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
+                        <tr><td colSpan={partyContactId ? 7 : 8} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
                       ) : retailInvoices.map((ri, idx) => (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
+                          {!partyContactId && (
                           <td className="px-3 py-2 align-top">
                             <ContactCombobox
                               value={ri.contact_id || ''}
@@ -2774,6 +3069,7 @@ export default function DeliveriesPage({ closed = false }) {
                               </p>
                             )}
                           </td>
+                          )}
                           <td className="px-3 py-2 align-top">
                             <input className="input py-1.5 text-xs" value={ri.invoice_reference}
                               onChange={e => setRetailInvoice(idx, 'invoice_reference', e.target.value)} placeholder="Ref / #" />
@@ -2827,6 +3123,9 @@ export default function DeliveriesPage({ closed = false }) {
               {/* ── Delivery Fees & Totals ─────────────────────── */}
               <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={true} onToggle={() => {}}>
 
+                {/* Editable fee/discount inputs — hidden for 2nd-party
+                    (supplier/partner) users, who see only the totals summary. */}
+                {!partyContactId && (
                 <div className="grid grid-cols-4 gap-3">
                   <div>
                     <label className="label">Delivery Fee</label>
@@ -2851,6 +3150,7 @@ export default function DeliveriesPage({ closed = false }) {
                     </select>
                   </div>
                 </div>
+                )}
 
                 {/* Per-currency totals */}
                 {anyItems && (
@@ -2874,6 +3174,8 @@ export default function DeliveriesPage({ closed = false }) {
               </CollapsibleSection>
 
               {/* ── Payments ──────────────────────────────────── */}
+              {/* Hidden for 2nd-party (supplier/partner) users. */}
+              {!partyContactId && (
               <CollapsibleSection title="Payments" accent="blue" open={sectionsOpen.payments} onToggle={v => toggleSection('payments', v)}
                 right={
                   <button type="button" onClick={() => { openSection('payments'); addPayment() }}
@@ -2977,6 +3279,7 @@ export default function DeliveriesPage({ closed = false }) {
                   )}
                 </div>
               </CollapsibleSection>
+              )}
 
               {/* ── Notes ─────────────────────────────────────── */}
               <CollapsibleSection title="Notes" open={sectionsOpen.notes} onToggle={v => toggleSection('notes', v)}>

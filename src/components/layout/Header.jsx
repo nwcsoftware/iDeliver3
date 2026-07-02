@@ -17,6 +17,9 @@ const pageTitles = {
   '/tracking':   'Real-time Tracking',
   '/reports':    'Reports & Analytics',
   '/settings/users': 'User Accounts',
+  '/sold-orders':      'Sold Orders',
+  '/completed-orders': 'Completed Orders',
+  '/supplier-settlements': 'Supplier Settlements',
 }
 
 const roleLabel = {

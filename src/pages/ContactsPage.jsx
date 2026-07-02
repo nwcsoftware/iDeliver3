@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -61,6 +62,7 @@ export default function ContactsPage({ type }) {
   const { COMPANY_ID } = useApp()
   const { currentUser, hasRole } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
+  const navigate = useNavigate()
 
   const [contacts,  setContacts]  = useState([])
   const [loading,   setLoading]   = useState(true)
@@ -359,6 +361,41 @@ export default function ContactsPage({ type }) {
   // Entity type (Individual / Company) of the open form — used by the save button.
   const isCompany = form.entity_type === 'company'
 
+  /* ── login access (suppliers & partners) ─────────────────────
+     A contact tagged Supplier or Partner may be given a user account to sign in.
+     The button hands the entered details to the User Accounts form, where the
+     admin sets the username & password. */
+  const LOGIN_ROLES = ['supplier', 'partner']
+  const loginRole = (form.contact_types || []).find(t => LOGIN_ROLES.includes(t))
+  // A login must be tied to a saved contact so the 2nd-party user only sees their
+  // own orders — so this is offered on existing (edit-mode) contacts only.
+  const isSavedContact = modal && modal !== 'add'
+  const canCreateUser  = isAdmin && !!loginRole && isSavedContact
+
+  // Suggest a username from the contact's name (or company), sanitised.
+  function suggestUsername() {
+    const base = isCompany && form.company_name
+      ? form.company_name
+      : `${form.first_name} ${form.last_name}`
+    return base.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 30)
+  }
+
+  // Carry the contact's details (and id, to link the account) to the User
+  // Accounts form and open "New User".
+  function goCreateUser() {
+    navigate('/settings/users', {
+      state: {
+        prefillUser: {
+          contact_id: modal.id,
+          username: suggestUsername(),
+          email:  form.email?.trim()  || '',
+          mobile: form.mobile?.trim() || '',
+          role:   loginRole,
+        },
+      },
+    })
+  }
+
   /* ── render ──────────────────────────────────────────────── */
 
   return (
@@ -517,6 +554,28 @@ export default function ContactsPage({ type }) {
             />
 
             <ContactAddresses addresses={addresses} setAddresses={setAddresses} />
+
+            {/* Login access — suppliers & partners may be given a user account. */}
+            {isAdmin && loginRole && (
+              <div className="border border-surface-border rounded-lg p-3 flex items-start gap-3 bg-surface-hover/30">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-300 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-brand-400" /> Login Access
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    {isSavedContact
+                      ? <>This {loginRole} can have a user account to sign in and see only their own orders. You’ll set the username &amp; password on the next screen.</>
+                      : <>This {loginRole} can be given a sign-in account. Save the contact first, then reopen it to create the login.</>}
+                  </p>
+                </div>
+                {canCreateUser && (
+                  <button type="button" onClick={goCreateUser}
+                    className="btn-primary whitespace-nowrap self-center">
+                    <UserPlus className="w-4 h-4" /> Create User Profile
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Customer user account & security — collapsible, admin only */}
             {type === 'customer' && modal !== 'add' && isAdmin && (

@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { AppProvider }  from './context/AppContext'
 import Sidebar          from './components/layout/Sidebar'
 import Header           from './components/layout/Header'
+import PartnerShell      from './components/layout/PartnerShell'
 import LoginPage        from './pages/LoginPage'
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage'
 import DashboardPage    from './pages/DashboardPage'
@@ -20,6 +21,7 @@ import ReturnableItemsPage     from './pages/ReturnableItemsPage'
 import AccountTransactionsPage from './pages/AccountTransactionsPage'
 import DriverDuesPage           from './pages/DriverDuesPage'
 import CreditCustomersPage      from './pages/CreditCustomersPage'
+import SupplierSettlementsPage   from './pages/SupplierSettlementsPage'
 import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
@@ -34,7 +36,7 @@ import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import logo             from './assets/Logo.png'
 
 function AppShell() {
-  const { currentUser, loading } = useAuth()
+  const { currentUser, loading, hasRole } = useAuth()
 
   const isCustomerMobileRoute =
     window.location.hash.startsWith('#/customer') ||
@@ -69,6 +71,12 @@ function AppShell() {
     return <ForcePasswordChangePage />
   }
 
+  // Suppliers & Partners are limited to their own portal: only Sold Orders and
+  // Completed Orders. The full app (and all its routes) is never mounted for them.
+  if (hasRole('supplier', 'partner')) {
+    return <PartnerShell />
+  }
+
   return (
     <AppProvider>
       <HashRouter>
@@ -94,6 +102,7 @@ function AppShell() {
                 <Route path="/account-transactions" element={<AccountTransactionsPage />} />
                 <Route path="/driver-dues"          element={<DriverDuesPage />} />
                 <Route path="/credit-customers"     element={<CreditCustomersPage />} />
+                <Route path="/supplier-settlements" element={<SupplierSettlementsPage />} />
                 <Route path="/cashier-box"          element={<CashierBoxPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />

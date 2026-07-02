@@ -25,7 +25,7 @@ import { MapPin, Plus, X, Pencil } from 'lucide-react'
  */
 export default function TagLocationField({
   label, required = false, tags = [], setTags, suggestions = [], onAddNew,
-  onEditSuggestion, onDeleteSuggestion, placeholder = 'Add location…',
+  onEditSuggestion, onDeleteSuggestion, placeholder = 'Add location…', labelRight = null,
 }) {
   const [open, setOpen]   = useState(false)
   const [query, setQuery] = useState('')
@@ -113,7 +113,10 @@ export default function TagLocationField({
 
   return (
     <div className="relative" ref={wrapRef}>
-      <label className={`label ${required ? 'text-fuchsia-300' : ''}`}>{label}{required ? ' *' : ''}</label>
+      <div className="flex items-center justify-between">
+        <label className={`label ${required ? 'text-fuchsia-300' : ''}`}>{label}{required ? ' *' : ''}</label>
+        {labelRight}
+      </div>
 
       {/* Field box — chips + inline input */}
       <div ref={boxRef}

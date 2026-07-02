@@ -57,7 +57,7 @@ function providerName(c) {
  *   onAdd       - optional parent-owned "Add Package" handler (used when the
  *                 Add button lives in the collapsible section header)
  */
-export default function OrderPackages({ packages, setPackages, providers = [], onAddProvider, customerName = '', embedded = false, onAdd }) {
+export default function OrderPackages({ packages, setPackages, providers = [], onAddProvider, customerName = '', embedded = false, onAdd, hideProvider = false, fixedProviderName = '' }) {
   const trackingRefs = React.useRef({})        // rowKey -> tracking <input>
   const prevLen      = React.useRef(packages.length)
 
@@ -105,9 +105,11 @@ export default function OrderPackages({ packages, setPackages, providers = [], o
         </p>
       ) : packages.map((p, i) => {
         const provider = providers.find(pr => pr.id === p.provider_id)
-        const paidToName = provider ? providerName(provider) : 'provider'
+        const paidToName = provider ? providerName(provider) : (fixedProviderName || 'provider')
         return (
         <div key={p._id ?? p._key ?? i} data-package-row className="border border-surface-border rounded-lg p-3 space-y-2 bg-surface-hover/30">
+          {/* Package provider — hidden for 2nd-party users (fixed to their contact). */}
+          {!hideProvider && (
           <div>
             <label className="label text-fuchsia-300">Package provider *</label>
             <ContactCombobox
@@ -119,6 +121,7 @@ export default function OrderPackages({ packages, setPackages, providers = [], o
               placeholder="Type a partner / provider…"
               compact />
           </div>
+          )}
 
           <div>
             <label className="label text-fuchsia-300">Package reference *</label>

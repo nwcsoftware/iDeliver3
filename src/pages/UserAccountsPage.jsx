@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   UserCog, UserPlus, Search, Shield, X, Loader, AlertCircle,
   KeyRound, Power, PowerOff, Pencil, Eye, EyeOff,
@@ -26,7 +27,7 @@ const STATUS_STYLES = {
   pending:   'bg-amber-500/10 text-amber-400 border-amber-500/30',
 }
 
-const EMPTY_USER = { username: '', email: '', mobile: '', role: 'call_center', status: 'active', password: '' }
+const EMPTY_USER = { username: '', email: '', mobile: '', role: 'call_center', status: 'active', password: '', contact_id: '' }
 
 // Map RPC error codes to friendly text.
 function friendlyError(message = '') {
@@ -45,6 +46,8 @@ function friendlyError(message = '') {
 export default function UserAccountsPage() {
   const { currentUser, hasRole } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const [users,   setUsers]   = useState([])
   const [loading, setLoading] = useState(true)
@@ -64,11 +67,16 @@ export default function UserAccountsPage() {
 
   const [busyId, setBusyId] = useState(null)       // row with an in-flight status toggle
 
+  // Supplier & Partner contacts — a login for either role MUST be linked to one
+  // (via contact_id) so the 2nd-party user only sees their own orders.
+  const [partyContacts, setPartyContacts] = useState([])
+  const isPartyRole = form.role === 'supplier' || form.role === 'partner'
+
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     const { data, error: e } = await supabase
       .from('user_accounts')
-      .select('id,username,email,mobile,role,status,last_login_at,must_change_password,created_at')
+      .select('id,username,email,mobile,role,status,contact_id,last_login_at,must_change_password,created_at')
       .neq('role', 'super_admin')                  // exclude the top-level admin
       .order('created_at', { ascending: true })
     if (e) setError(friendlyError(e.message))
@@ -77,6 +85,42 @@ export default function UserAccountsPage() {
   }, [])
 
   useEffect(() => { if (isAdmin) fetchUsers() }, [isAdmin, fetchUsers])
+
+  // Load supplier/partner contacts once (for the "linked contact" picker).
+  useEffect(() => {
+    if (!isAdmin) return
+    ;(async () => {
+      const { data } = await supabase
+        .from('contacts')
+        .select('id, first_name, last_name, company_name, code, contact_types')
+        .overlaps('contact_types', ['supplier', 'partner'])
+        .order('first_name')
+      setPartyContacts(data ?? [])
+    })()
+  }, [isAdmin])
+
+  // Display name for a contact: company first, else person, then code.
+  function contactLabel(c) {
+    if (!c) return ''
+    const name = (c.company_name?.trim()) || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unnamed'
+    return c.code ? `${name} (${c.code})` : name
+  }
+  // Contacts offered for the current role (only those carrying that role tag).
+  const roleContacts = partyContacts.filter(c =>
+    Array.isArray(c.contact_types) && c.contact_types.includes(form.role))
+
+  // Arrived from a contact (supplier/partner) via "Create User Profile":
+  // open the New User form pre-filled with the contact's details, then clear
+  // the navigation state so a refresh/back doesn't re-open it.
+  useEffect(() => {
+    const prefill = location.state?.prefillUser
+    if (prefill && isAdmin) {
+      setForm({ ...EMPTY_USER, ...prefill })
+      setFormErr(''); setShowPw(false); setModal('add')
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, isAdmin])
 
   if (!isAdmin) {
     return (
@@ -102,7 +146,7 @@ export default function UserAccountsPage() {
     setForm(EMPTY_USER); setFormErr(''); setShowPw(false); setModal('add')
   }
   function openEdit(u) {
-    setForm({ username: u.username, email: u.email ?? '', mobile: u.mobile ?? '', role: u.role, status: u.status, password: '' })
+    setForm({ username: u.username, email: u.email ?? '', mobile: u.mobile ?? '', role: u.role, status: u.status, password: '', contact_id: u.contact_id ?? '' })
     setFormErr(''); setModal(u)
   }
   function closeModal() { setModal(null); setForm(EMPTY_USER); setFormErr('') }
@@ -110,6 +154,9 @@ export default function UserAccountsPage() {
   async function saveUser() {
     if (!form.username.trim()) { setFormErr('Username is required.'); return }
     if (!form.mobile.trim())   { setFormErr('Mobile is required.'); return }
+    if (isPartyRole && !form.contact_id) {
+      setFormErr(`Select the ${form.role} contact this login belongs to.`); return
+    }
     if (modal === 'add' && form.password.length < 8) {
       setFormErr('Set a temporary password of at least 8 characters.'); return
     }
@@ -118,23 +165,25 @@ export default function UserAccountsPage() {
     let rpcError
     if (modal === 'add') {
       const { error: e } = await supabase.rpc('admin_create_user', {
-        p_actor_id: currentUser.user_id,
-        p_username: form.username.trim(),
-        p_email:    form.email.trim(),
-        p_mobile:   form.mobile.trim(),
-        p_password: form.password,
-        p_role:     form.role,
-        p_status:   form.status,
+        p_actor_id:   currentUser.user_id,
+        p_username:   form.username.trim(),
+        p_email:      form.email.trim(),
+        p_mobile:     form.mobile.trim(),
+        p_password:   form.password,
+        p_role:       form.role,
+        p_status:     form.status,
+        p_contact_id: form.contact_id || null,
       })
       rpcError = e
     } else {
       const { error: e } = await supabase.rpc('admin_update_user', {
-        p_actor_id: currentUser.user_id,
-        p_user_id:  modal.id,
-        p_username: form.username.trim(),
-        p_email:    form.email.trim(),
-        p_mobile:   form.mobile.trim(),
-        p_role:     form.role,
+        p_actor_id:   currentUser.user_id,
+        p_user_id:    modal.id,
+        p_username:   form.username.trim(),
+        p_email:      form.email.trim(),
+        p_mobile:     form.mobile.trim(),
+        p_role:       form.role,
+        p_contact_id: form.contact_id || null,
       })
       rpcError = e
     }
@@ -276,6 +325,12 @@ export default function UserAccountsPage() {
             </div>
 
             <div className="p-5 space-y-4">
+              {form.contact_id && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/10 border border-brand-500/30 text-brand-300 text-[11px]">
+                  <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
+                  This login will be linked to the selected contact, so they’ll see only their own orders.
+                </div>
+              )}
               <div>
                 <label className="label">Username *</label>
                 <input className="input" value={form.username}
@@ -297,10 +352,38 @@ export default function UserAccountsPage() {
               <div>
                 <label className="label">Role *</label>
                 <select className="input" value={form.role}
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                  onChange={e => {
+                    const role = e.target.value
+                    // Drop any linked contact when leaving a supplier/partner role.
+                    const keepLink = role === 'supplier' || role === 'partner'
+                    setForm(f => ({ ...f, role, contact_id: keepLink ? f.contact_id : '' }))
+                    setFormErr('')
+                  }}>
                   {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
               </div>
+
+              {/* Supplier/Partner logins must be tied to a contact (contact_id). */}
+              {isPartyRole && (
+                <div>
+                  <label className="label capitalize">{form.role} contact *</label>
+                  <select className="input" value={form.contact_id || ''}
+                    onChange={e => { setForm(f => ({ ...f, contact_id: e.target.value })); setFormErr('') }}>
+                    <option value="">— Select the {form.role} —</option>
+                    {roleContacts.map(c => (
+                      <option key={c.id} value={c.id}>{contactLabel(c)}</option>
+                    ))}
+                    {/* Keep a prefilled/linked contact selectable even if it isn't
+                        in the loaded list (e.g. inactive or different role tag). */}
+                    {form.contact_id && !roleContacts.some(c => c.id === form.contact_id) && (
+                      <option value={form.contact_id}>Linked contact</option>
+                    )}
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Links the login to this contact so they only see their own orders.
+                  </p>
+                </div>
+              )}
 
               {modal === 'add' && (
                 <div>
