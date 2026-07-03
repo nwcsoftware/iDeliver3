@@ -53,7 +53,11 @@ export function orderCollectedByCurrency(o) {
 export function orderDriverCollectedByCurrency(o) {
   const c = {}
   for (const p of (o.payment_collections ?? [])) {
-    if (p.collected_by_name) continue   // collected by office user, not the driver
+    // Driver-collected = the order's own driver took the cash. The driver app stamps
+    // the driver's contact id (collected_by) + name; legacy driver payments carry no
+    // collector name at all. A named payment by anyone else is an office collection.
+    const byDriver = !p.collected_by_name || (o.driver_id && p.collected_by === o.driver_id)
+    if (!byDriver) continue
     const cur = p.currency || 'USD'
     c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
   }
@@ -68,7 +72,8 @@ export function orderDriverCollectedByCurrency(o) {
 export function orderOfficeCollectedByCurrency(o) {
   const c = {}
   for (const p of (o.payment_collections ?? [])) {
-    if (!p.collected_by_name) continue   // no collector name = driver-collected
+    if (!p.collected_by_name) continue                        // no name = driver-collected
+    if (o.driver_id && p.collected_by === o.driver_id) continue   // the order's driver, not office
     const cur = p.currency || 'USD'
     c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
   }
@@ -80,6 +85,7 @@ export function orderOfficeCollectedByCurrency(o) {
 export function orderCollectorNames(o) {
   const names = []
   for (const p of (o.payment_collections ?? [])) {
+    if (o.driver_id && p.collected_by === o.driver_id) continue   // the driver, not an office collector
     const n = (p.collected_by_name || '').trim()
     if (n && !names.includes(n)) names.push(n)
   }

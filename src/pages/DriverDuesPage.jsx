@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock } from 'lucide-react'
+import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -68,7 +68,8 @@ function orderDate(o) {
 
 export default function DriverDuesPage() {
   const { orders, drivers, loading, fetchOrders, showSummary } = useApp()
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
+  const isSuperAdmin = hasRole('super_admin')
 
   const [tab,     setTab]     = useState('collect')   // 'collect' (dues to collect) | 'history'
   const [filters, setFilters] = useState(EMPTY_FILTERS)
@@ -147,6 +148,7 @@ export default function DriverDuesPage() {
       .from('driver_daily_settlements')
       .select(`
         id, driver_id, settlement_date, total_orders, received_at, status, created_at,
+        driver:contacts!driver_id ( id, first_name, last_name, company_name ),
         driver_settlement_currency_totals ( currency, total_collected, amount_paid, difference ),
         driver_settlement_orders ( order_id, currency, collected, retail )
       `)
@@ -209,6 +211,20 @@ export default function DriverDuesPage() {
       paidToOffice: CURRENCIES.some(c => office[c] > 0),
     }
   }), [closedOrders, retailByOrder, settledIds])
+
+  // Orders still ready to collect (outstanding: not yet settled and not closed),
+  // per driver — shown next to each driver in the picker. '' key = grand total.
+  const readyByDriver = useMemo(() => {
+    const m = { '': 0 }
+    for (const r of allRows) {
+      if (r.settled || r.order.isclosed) continue
+      const id = r.order.driver_id
+      if (!id) continue
+      m[id] = (m[id] || 0) + 1
+      m[''] += 1
+    }
+    return m
+  }, [allRows])
 
   /* ── filtering ───────────────────────────────────────────── */
 
@@ -445,6 +461,19 @@ export default function DriverDuesPage() {
     if (!error) await fetchOrders()
   }
 
+  // Super-admin only: reopen a closed order (clears the isclosed lock) so it can be
+  // edited or re-settled.
+  async function reopenClosed(orderId) {
+    if (!isSuperAdmin) return
+    setClosingId(orderId)
+    const { error } = await supabase
+      .from('delivery_orders')
+      .update({ isclosed: false, closed_at: null, closed_by: null })
+      .eq('id', orderId)
+    setClosingId(null)
+    if (!error) await fetchOrders()
+  }
+
   /* ── filter summary (toolbar + PDF) ──────────────────────── */
 
   const selectedDriverName = filters.driver_id
@@ -521,7 +550,7 @@ export default function DriverDuesPage() {
     if (filters.date_to   && s.settlement_date > filters.date_to)   return false
     const q = search.trim().toLowerCase()
     if (q) {
-      const dn = driverName(drivers.find(d => d.id === s.driver_id)).toLowerCase()
+      const dn = driverName(s.driver || drivers.find(d => d.id === s.driver_id)).toLowerCase()
       const inOrders = (s.driver_settlement_orders ?? [])
         .some(l => String(orderNumById[l.order_id] ?? '').toLowerCase().includes(q))
       if (!dn.includes(q) && !inOrders) return false
@@ -589,8 +618,12 @@ export default function DriverDuesPage() {
           <div>
             <label className="label">Driver</label>
             <select className="input" value={filters.driver_id} onChange={e => setFilter('driver_id', e.target.value)}>
-              <option value="">All drivers</option>
-              {drivers.map(d => <option key={d.id} value={d.id}>{driverName(d)}</option>)}
+              <option value="">All drivers{readyByDriver[''] ? ` (${readyByDriver['']} to collect)` : ''}</option>
+              {drivers.map(d => (
+                <option key={d.id} value={d.id}>
+                  {driverName(d)}{readyByDriver[d.id] ? ` (${readyByDriver[d.id]})` : ''}
+                </option>
+              ))}
             </select>
           </div>
           <div>
@@ -713,6 +746,15 @@ export default function DriverDuesPage() {
                           <Lock className="w-4 h-4" />
                         </button>
                       )}
+                      {o.isclosed && isSuperAdmin && (
+                        <button
+                          onClick={() => reopenClosed(o.id)}
+                          disabled={closingId === o.id}
+                          title="Reopen — unmark as closed (super admin)"
+                          className="btn-ghost p-1.5 text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Unlock className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -799,7 +841,7 @@ export default function DriverDuesPage() {
                         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{s.settlement_date}</td>
-                      <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(drivers.find(d => d.id === s.driver_id))}</td>
+                      <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(s.driver || drivers.find(d => d.id === s.driver_id))}</td>
                       <td className="px-4 py-3 text-slate-300 text-xs">{s.total_orders}</td>
                       <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
                         {totals.filter(t => Number(t.total_collected)).map(t => (

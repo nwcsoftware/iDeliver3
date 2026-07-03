@@ -60,7 +60,9 @@ export default function DriverCollectionsPage() {
     if (!isSuperAdmin) return []
     return orders
       .filter(o =>
-        o.scheduled_date === date &&
+        // scheduled_date may carry a time component, so compare the date part only
+        // (matches how the rest of the app normalises it).
+        String(o.scheduled_date || '').slice(0, 10) === date &&
         o.order_confirmed === true &&
         o.isclosed !== true &&
         !['cancelled', 'failed'].includes(o.status) &&
@@ -95,8 +97,10 @@ export default function DriverCollectionsPage() {
 
     for (const { order, remaining } of rows) {
       // 1. One payment_collections row per currency still owed, attributed to the
-      //    driver (no collected_by_name → stays owed by the driver, like the real
-      //    driver app would record it).
+      //    driver: collected_by = the driver's contact id, collected_by_name = the
+      //    driver's name — exactly what the real driver app records. The driver
+      //    settlement math still counts these as driver-collected because the
+      //    collector matches the order's own driver.
       const payments = Object.entries(remaining).map(([currency, amount]) => ({
         order_id:          order.id,
         collection_type:   'cash',
@@ -104,17 +108,17 @@ export default function DriverCollectionsPage() {
         currency,
         collected_at:      collectedAt,
         notes:             `Driver app (simulated) — collected by ${driverName(order)}`,
-        collected_by:      null,
-        collected_by_name: null,
+        collected_by:      order.driver_id,
+        collected_by_name: driverName(order),
       }))
       const { error: pe } = await supabase.from('payment_collections').insert(payments)
       if (pe) { setError(`Order ${order.order_number}: ${pe.message}`); setBusy(false); return }
 
       // 2. Flag the order as collected by the driver (money is with the driver,
-      //    not yet in the office).
+      //    not yet in the office) and mark the customer collection complete.
       const { error: ue } = await supabase.from('delivery_orders').update({
         payment_status:           'collected_by_driver',
-        collection_from_customer: 'Money collected by driver',
+        collection_from_customer: 'Money Fully collected',
       }).eq('id', order.id)
       if (ue) { setError(`Order ${order.order_number}: ${ue.message}`); setBusy(false); return }
 

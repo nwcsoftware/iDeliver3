@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
-  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, ChevronRight, Globe, Banknote, CreditCard,
+  Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, Unlock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
   Eye, Pin, PinOff, User, Building, Handshake,
 } from 'lucide-react'
@@ -36,6 +36,13 @@ const ORDER_STATUS_OPTIONS = [
   { value: 'in_progress', label: 'In Progress' },
   { value: 'completed',   label: 'Completed' },
 ]
+// Picking an order status moves the delivery status to the matching stage so the
+// two stay in sync (same behaviour as the quick status change in the list).
+const STATUS_DELIVERY_MAP = {
+  completed:   'Delivered',
+  in_progress: 'In Transit',
+  scheduled:   'Awaiting Pickup',
+}
 // Business/merchant category of the order
 const ORDER_TYPES = [
   { value: 'restaurant',  label: 'Restaurant' },
@@ -60,6 +67,13 @@ const FILTER_LABELS    = { all: 'All' }
 // Payment-status filter chips — reuse the payment Badge styling/labels/colours.
 // '' is the "All" pseudo-value (no payment filter applied).
 const PAYMENT_FILTERS  = ['','unpaid','partially_paid','collected_by_driver','paid_to_office']
+// Customer-type filter options (multi-select). An empty selection means "All types".
+const CATEGORY_OPTIONS = [
+  { value: 'credit',   label: 'Credit customers' },
+  { value: 'regular',  label: 'Regular customers' },
+  { value: 'partner',  label: 'Partners' },
+  { value: 'supplier', label: 'Suppliers' },
+]
 // Flag filter — '' is the "All" pseudo-value (no flag filter applied).
 const FLAG_FILTERS     = [
   { value: '',          label: 'All',       cls: 'bg-brand-500/15 text-brand-400 border-brand-500/30' },
@@ -569,11 +583,49 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const highlightLeadMins = Number(appSettings?.highlightBeforeScheduledMinutes) || 0
   // Ticks the clock so blinking starts on time without needing a manual refresh.
   const [now, setNow] = useState(() => Date.now())
+
+  // Keep the user on the order they just acted on. Changing a status/payment/etc.
+  // calls fetchOrders(), which briefly flips the list to a "Loading…" row — that
+  // collapses the page height and the browser jumps to the top. We record the
+  // touched order and re-scroll to it (and flash it) after every refresh, whether
+  // that's an in-place data update or a full page reload.
+  const RESTORE_KEY = `ideliver_deliveries_lastorder_${closed ? 'closed' : partyContactId ? 'party' : 'daily'}`
+  const [flashOrderId, setFlashOrderId] = useState(null)
+  // Seed the "scroll back to" target from storage once, so a hard refresh restores too.
+  const pendingScrollRef = useRef(undefined)
+  if (pendingScrollRef.current === undefined) {
+    try { pendingScrollRef.current = sessionStorage.getItem(RESTORE_KEY) || null } catch { pendingScrollRef.current = null }
+  }
+  function rememberOrder(id) {
+    if (!id) return
+    pendingScrollRef.current = id
+    try { sessionStorage.setItem(RESTORE_KEY, id) } catch { /* storage unavailable */ }
+  }
+  // After the list finishes (re)loading, scroll the pending order into view + flash.
+  useEffect(() => {
+    if (loading.orders || orders.length === 0) return
+    const id = pendingScrollRef.current
+    if (!id) return
+    pendingScrollRef.current = null   // consume once — don't re-scroll on later refreshes
+    // Wait for the rows to paint before locating the row element.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`order-row-${id}`)
+      if (!el) return
+      // Only recenter if the row isn't already visible (avoids needless jumps when
+      // the list didn't collapse); always flash so the user can spot it.
+      const rect = el.getBoundingClientRect()
+      const vh = window.innerHeight || document.documentElement.clientHeight
+      if (rect.top < 64 || rect.bottom > vh) el.scrollIntoView({ block: 'center' })
+      setFlashOrderId(id)
+      setTimeout(() => setFlashOrderId(f => (f === id ? null : f)), 2000)
+    })
+  }, [orders, loading.orders])
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(id)
   }, [])
-  const { currentUser } = useAuth()
+  const { currentUser, hasRole } = useAuth()
+  const isSuperAdmin = hasRole('super_admin')
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
@@ -674,7 +726,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [payFilter,            setPayFilter]            = useState('')   // payment_status chip (toggle)
   const [flagFilter,           setFlagFilter]           = useState('')   // ''|flagged|unflagged
   const [customerFilter,       setCustomerFilter]       = useState('')
-  const [categoryFilter,       setCategoryFilter]       = useState('')   // credit|regular|partner|supplier
+  const [categoryFilter,       setCategoryFilter]       = useState([])   // [] = all; else subset of credit|regular|partner|supplier
+  const [catMenuOpen,          setCatMenuOpen]          = useState(false)
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
   const [orderTypeFilter,      setOrderTypeFilter]      = useState('')   // order_type (string)
   const [dateFrom,             setDateFrom]             = useState('')
@@ -799,15 +852,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return sd <= dateTo
   }
 
-  function matchCategory(o) {
-    if (!categoryFilter) return true
-    const c = o.customer
+  // Does a customer contact match one customer-type key?
+  function customerMatchesType(c, type) {
     if (!c) return false
-    if (categoryFilter === 'credit')  return c.credit_debit_allowed === true
-    if (categoryFilter === 'regular') return contactHasType(c, 'customer') && c.credit_debit_allowed !== true
-    if (categoryFilter === 'partner') return contactHasType(c, 'partner')
-    if (categoryFilter === 'supplier') return contactHasType(c, 'supplier')
-    return true
+    if (type === 'credit')   return c.credit_debit_allowed === true
+    if (type === 'regular')  return contactHasType(c, 'customer') && c.credit_debit_allowed !== true
+    if (type === 'partner')  return contactHasType(c, 'partner')
+    if (type === 'supplier') return contactHasType(c, 'supplier')
+    return false
+  }
+  // Multi-select customer-type filter: empty = all; otherwise the order matches if
+  // its customer is ANY of the selected types.
+  function matchCategory(o) {
+    if (categoryFilter.length === 0) return true
+    return categoryFilter.some(t => customerMatchesType(o.customer, t))
+  }
+  function toggleCategory(v) {
+    setCategoryFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
   }
   function matchSource(o) {
     if (!sourceFilter) return true
@@ -858,9 +919,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       && matchScheduledDate(o)
   })
 
-  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter || sourceFilter || orderTypeFilter || dateFrom || dateTo
+  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
-    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter(''); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
+    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
   }
 
   // Order-type filter options as { value, label }. `value` is exactly what's
@@ -965,6 +1026,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── modal handlers ──────────────────────────────────────── */
 
   function fld(k, v) { setForm(f => ({ ...f, [k]: v })); setError('') }
+  // Order-status change: also sync the delivery status to the matching stage.
+  function setOrderStatus(v) {
+    setForm(f => ({ ...f, status: v, ...(STATUS_DELIVERY_MAP[v] ? { delivery_status: STATUS_DELIVERY_MAP[v] } : {}) }))
+    setError('')
+  }
 
   /* Remember a location in the reusable library (localStorage) so it's offered
      as a quick-pick tag on future orders. */
@@ -1218,6 +1284,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   async function openEdit(o) {
+    rememberOrder(o.id)
     // 2nd-party (supplier/partner) users can't edit a confirmed order — it's
     // locked. Open the read-only detail drawer instead so they can still view it.
     if (partyContactId && isConfirmed(o)) { openDetail(o); return }
@@ -1362,6 +1429,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      Loads every sub-record for an order and shows them in a slide-in panel.
      Display only — no edits happen here. */
   async function openDetail(o) {
+    rememberOrder(o.id)
     setDetail(o)
     setDetailData(null)
     setDetailLoading(true)
@@ -1413,6 +1481,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      Records one payment_collections row on an order and recomputes the order's
      payment_status / collected totals — same effect as the form's Payments section. */
   async function openPay(o) {
+    rememberOrder(o.id)
     if (isRowLocked(o)) return   // closed or deactivated orders are locked
     if (!isConfirmed(o)) return  // payment can't be recorded until the order is confirmed
     setPayModal(o)
@@ -1428,6 +1497,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   async function savePayment() {
     const o = payModal
     if (!o) return
+    rememberOrder(o.id)
     const amt = round2(payForm.amount)
     if (!(amt > 0)) { setPayError('Enter an amount greater than 0.'); return }
     setPaySaving(true); setPayError('')
@@ -1651,9 +1721,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       orderId = data.id
       orderCompanyId = data.company_id || orderCompanyId   // inherit company from the saved order
       savedOrderIdRef.current = orderId
+      rememberOrder(orderId)   // return to the new order after a refresh
     } else {
       const { error: e } = await supabase.from('delivery_orders').update(payload).eq('id', orderId)
       if (e) { setError(e.message); setSaving(false); return }
+      // Return to this order after a refresh (new or edited).
+      rememberOrder(orderId)
       // Soft-delete existing items
       await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', orderId).eq('is_deleted', false)
       // Retail invoices have no soft-delete flag — replace the set outright.
@@ -1806,6 +1879,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── quick actions (driver / status popovers) ────────────── */
 
   function openPopover(type, order, e) {
+    rememberOrder(order.id)
     if (isRowLocked(order)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const width = type === 'driver' ? 240 : type === 'fee' ? 220 : 176
@@ -1820,6 +1894,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   async function quickAssignDriver(order, driverId) {
+    rememberOrder(order.id)
     setQuickBusy(true)
     await supabase.from('delivery_orders').update({ driver_id: driverId || null }).eq('id', order.id)
     await fetchOrders()
@@ -1827,6 +1902,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   async function quickSetStatus(order, uiStatus) {
+    rememberOrder(order.id)
     if (!isConfirmed(order)) { setPopover(null); return }   // status is locked until the order is confirmed
     setQuickBusy(true)
     const patch = { status: toDbStatus(uiStatus) }
@@ -1847,6 +1923,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // recomputes total_amount (in the order's primary currency) so list totals and
   // the Amount(s) sort stay in sync.
   async function quickSaveFee(order, amount, currency) {
+    rememberOrder(order.id)
     setQuickBusy(true)
     const fee = Math.max(0, Number(amount) || 0)
     const totals = orderTotalsByCurrency({ ...order, delivery_fee: fee, currency })
@@ -1861,6 +1938,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   // Online order confirmation — sets the order_confirmed flag (not the status).
   async function quickConfirmOrder(order, confirmed = true) {
+    rememberOrder(order.id)
     setQuickBusy(true)
     await supabase.from('delivery_orders')
       .update({
@@ -1876,6 +1954,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Toggle the manual flag on an order (delivery_orders.is_flagged). A flag is a
   // user marker independent of status, so it stays available even on locked rows.
   async function toggleFlag(o) {
+    rememberOrder(o.id)
     setToggling(o.id)
     await supabase.from('delivery_orders').update({ is_flagged: !isFlagged(o) }).eq('id', o.id)
     await fetchOrders()
@@ -1886,6 +1965,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // an active one opens a confirmation modal that warns about — and then deletes —
   // every transaction on the order (see confirmCancel).
   async function toggleCancel(o) {
+    rememberOrder(o.id)
     if (o.isclosed) return                            // closed orders are locked
     if (['cancelled', 'failed'].includes(o.status)) {
       setToggling(o.id)
@@ -1951,12 +2031,28 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Delivered), then locks the order via the isclosed flag — same columns the
   // edit modal's "Mark Closed" sets.
   async function markClosed(o) {
+    rememberOrder(o.id)
     if (!canQuickClose(o)) return
     setToggling(o.id)
     await supabase.from('delivery_orders').update({
       isclosed:  true,
       closed_at: new Date().toISOString(),
       closed_by: currentUser?.user_id || null,
+    }).eq('id', o.id)
+    await fetchOrders()
+    setToggling(null)
+  }
+
+  // Super-admin only: reopen a closed order — clears the isclosed lock (and its
+  // closed_at/closed_by stamps) so the order can be edited/settled again.
+  async function reopenClosed(o) {
+    rememberOrder(o.id)
+    if (!isSuperAdmin || !o.isclosed) return
+    setToggling(o.id)
+    await supabase.from('delivery_orders').update({
+      isclosed:  false,
+      closed_at: null,
+      closed_by: null,
     }).eq('id', o.id)
     await fetchOrders()
     setToggling(null)
@@ -2162,15 +2258,40 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {customers.map(c => <option key={c.id} value={c.id}>{c.company_name || `${c.first_name} ${c.last_name}`}</option>)}
             </select>
           </div>
-          <div>
+          <div className="relative">
             <label className="label flex items-center gap-1"><UserCheck className="w-3 h-3" /> Customer type</label>
-            <select className="input py-1.5 text-xs w-40" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
-              <option value="">All types</option>
-              <option value="credit">Credit customers</option>
-              <option value="regular">Regular customers</option>
-              <option value="partner">Partners</option>
-              <option value="supplier">Suppliers</option>
-            </select>
+            <button type="button" onClick={() => setCatMenuOpen(o => !o)}
+              className="input py-1.5 text-xs w-40 flex items-center justify-between gap-1 text-left">
+              <span className="truncate">
+                {categoryFilter.length === 0
+                  ? 'All types'
+                  : categoryFilter.length === 1
+                    ? (CATEGORY_OPTIONS.find(o => o.value === categoryFilter[0])?.label || '1 selected')
+                    : `${categoryFilter.length} types`}
+              </span>
+              <ChevronDown className="w-3 h-3 flex-shrink-0 text-slate-500" />
+            </button>
+            {catMenuOpen && (<>
+              <div className="fixed inset-0 z-40" onClick={() => setCatMenuOpen(false)} />
+              <div className="absolute z-50 mt-1 w-44 rounded-lg border border-surface-border bg-surface-card shadow-xl p-1">
+                {CATEGORY_OPTIONS.map(opt => {
+                  const on = categoryFilter.includes(opt.value)
+                  return (
+                    <button key={opt.value} type="button" onClick={() => toggleCategory(opt.value)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-300 hover:bg-surface-hover">
+                      {on ? <CheckCircle2 className="w-3.5 h-3.5 text-brand-400" /> : <Circle className="w-3.5 h-3.5 text-slate-600" />}
+                      <span>{opt.label}</span>
+                    </button>
+                  )
+                })}
+                {categoryFilter.length > 0 && (
+                  <button type="button" onClick={() => setCategoryFilter([])}
+                    className="w-full text-left px-2 py-1.5 mt-1 border-t border-surface-border text-[11px] text-slate-500 hover:text-slate-300">
+                    Clear (show all)
+                  </button>
+                )}
+              </div>
+            </>)}
           </div>
           <div>
             <label className="label flex items-center gap-1"><Package className="w-3 h-3" /> Order source</label>
@@ -2236,15 +2357,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             </tr>
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
-            {loading.orders ? (
+            {loading.orders && orders.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : sorted.map(o => (
-              <tr key={o.id}
+              <tr key={o.id} id={`order-row-${o.id}`}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
                 onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
                 className={`border-b border-surface-border/50 transition-colors ${
+                flashOrderId === o.id ? '!bg-brand-500/20 ' : ''}${
                 isDeactivated(o)            ? 'opacity-50 hover:bg-surface-hover/40'
                 : isActiveInProgress(o, now) ? 'hover:bg-surface-hover/40'
                 : isOverdue(o)              ? 'bg-red-500/10 hover:bg-red-500/20'
@@ -2466,6 +2588,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           : (isCreditCustomerOrder(o) ? 'Can close once delivery status is Delivered' : 'Can close only when fully collected and delivery status is Delivered')}
                         className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
                         <Lock className="w-4 h-4" />
+                      </button>
+                    )}
+                    {o.isclosed && isSuperAdmin && (
+                      <button onClick={() => reopenClosed(o)} disabled={toggling === o.id}
+                        title="Reopen — unmark as closed (super admin)"
+                        className="btn-ghost p-1.5 text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Unlock className="w-4 h-4" />
                       </button>
                     )}
                     <button onClick={() => toggleCancel(o)} disabled={toggling === o.id || o.isclosed}
@@ -2944,7 +3073,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </div>
                   <div>
                     <label className="label">Order Status</label>
-                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.status} onChange={e => fld('status', e.target.value)}
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.status} onChange={e => setOrderStatus(e.target.value)}
                       disabled={!!partyContactId}>
                       {!ORDER_STATUS_OPTIONS.some(o => o.value === form.status) && form.status && (
                         <option value={form.status}>{form.status.replace(/_/g, ' ')}</option>
