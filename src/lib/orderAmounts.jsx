@@ -60,6 +60,21 @@ export function orderDriverCollectedByCurrency(o) {
   return c
 }
 
+/* Per-currency amount paid DIRECTLY to the office = payments stamped with a
+   collector name (an office user took the cash). The mirror of
+   orderDriverCollectedByCurrency: this money never passed through the driver, so
+   there's nothing to collect from them for it — it's shown separately on the
+   Driver Settlements screen. */
+export function orderOfficeCollectedByCurrency(o) {
+  const c = {}
+  for (const p of (o.payment_collections ?? [])) {
+    if (!p.collected_by_name) continue   // no collector name = driver-collected
+    const cur = p.currency || 'USD'
+    c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
+  }
+  return c
+}
+
 /* Distinct names of office users who collected payments on an order (those with a
    collected_by_name), for showing "Collected by <name>" in the amounts summary. */
 export function orderCollectorNames(o) {
