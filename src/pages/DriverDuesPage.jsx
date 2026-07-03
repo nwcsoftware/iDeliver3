@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock } from 'lucide-react'
+import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderOfficeCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
+import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderOfficeCollectedByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -35,6 +35,23 @@ function fmtMoney(value, currency) {
 function driverName(d) {
   if (!d) return '—'
   return `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim() || (d.name ?? '—')
+}
+
+// Display name for an order's customer (company first, else person).
+function customerLabel(c) {
+  if (!c) return '—'
+  return (c.company_name?.trim()) || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || '—'
+}
+
+// Type markers for a customer contact — partner / supplier / credit — as icons.
+function customerBadges(c) {
+  if (!c) return []
+  const types = Array.isArray(c.contact_types) ? c.contact_types : []
+  const b = []
+  if (types.includes('partner'))       b.push({ Icon: Handshake,  label: 'Partner',         cls: 'text-purple-400' })
+  if (types.includes('supplier'))      b.push({ Icon: Store,      label: 'Supplier',        cls: 'text-amber-400' })
+  if (c.credit_debit_allowed === true) b.push({ Icon: CreditCard, label: 'Credit customer', cls: 'text-cyan-400' })
+  return b
 }
 
 /* Delivery completed — the driver has handed the goods to the customer. */
@@ -163,6 +180,11 @@ export default function DriverDuesPage() {
   // order_id → order_number, for showing readable order refs in the history lines.
   const orderNumById = useMemo(
     () => Object.fromEntries(orders.map(o => [o.id, o.order_number])),
+    [orders],
+  )
+  // order_id → order, for the customer name + type icons in the history lines.
+  const orderById = useMemo(
+    () => Object.fromEntries(orders.map(o => [o.id, o])),
     [orders],
   )
 
@@ -833,6 +855,26 @@ export default function DriverDuesPage() {
                 const isOpen  = expanded.has(s.id)
                 const totals  = s.driver_settlement_currency_totals ?? []
                 const lines   = s.driver_settlement_orders ?? []
+                // Settlements that recorded no driver cash (paid-to-office / cashless
+                // orders) have no stored currency totals. Fall back to what the
+                // customers actually paid on the referenced orders so every settlement
+                // still shows its collected amount.
+                const hasStored = totals.some(t => Number(t.total_collected) || Number(t.amount_paid) || Number(t.difference))
+                const fallback = {}
+                if (!hasStored) {
+                  for (const oid of [...new Set(lines.map(l => l.order_id))]) {
+                    const o = orderById[oid]; if (!o) continue
+                    for (const [cur, amt] of Object.entries(orderCollectedByCurrency(o))) fallback[cur] = round2((fallback[cur] || 0) + amt)
+                  }
+                }
+                const fallbackEntries = Object.entries(fallback).filter(([, amt]) => amt)
+                const collectedRows = hasStored
+                  ? totals.filter(t => Number(t.total_collected)).map(t => [t.currency, Number(t.total_collected)])
+                  : fallbackEntries
+                const receivedRows = hasStored
+                  ? totals.filter(t => Number(t.amount_paid)).map(t => [t.currency, Number(t.amount_paid)])
+                  : fallbackEntries   // paid to office = money already accounted for
+                const diffRows = hasStored ? totals.filter(t => Number(t.difference)).map(t => [t.currency, Number(t.difference)]) : []
                 return (
                   <React.Fragment key={s.id}>
                     <tr onClick={() => toggleExpand(s.id)}
@@ -844,24 +886,24 @@ export default function DriverDuesPage() {
                       <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(s.driver || drivers.find(d => d.id === s.driver_id))}</td>
                       <td className="px-4 py-3 text-slate-300 text-xs">{s.total_orders}</td>
                       <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                        {totals.filter(t => Number(t.total_collected)).map(t => (
-                          <div key={t.currency} className="text-green-400">{fmtMoney(t.total_collected, t.currency)}</div>
+                        {collectedRows.map(([cur, amt]) => (
+                          <div key={cur} className="text-green-400">{fmtMoney(amt, cur)}</div>
                         ))}
-                        {!totals.some(t => Number(t.total_collected)) && <span className="text-slate-600">—</span>}
+                        {collectedRows.length === 0 && <span className="text-slate-600">—</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                        {totals.filter(t => Number(t.amount_paid)).map(t => (
-                          <div key={t.currency} className="text-slate-100">{fmtMoney(t.amount_paid, t.currency)}</div>
+                        {receivedRows.map(([cur, amt]) => (
+                          <div key={cur} className="text-slate-100">{fmtMoney(amt, cur)}</div>
                         ))}
-                        {!totals.some(t => Number(t.amount_paid)) && <span className="text-slate-600">—</span>}
+                        {receivedRows.length === 0 && <span className="text-slate-600">—</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                        {totals.filter(t => Number(t.difference)).map(t => (
-                          <div key={t.currency} className={Number(t.difference) < 0 ? 'text-red-400' : 'text-green-400'}>
-                            {Number(t.difference) < 0 ? 'Short ' : 'Over '}{fmtMoney(Math.abs(Number(t.difference)), t.currency)}
+                        {diffRows.map(([cur, diff]) => (
+                          <div key={cur} className={diff < 0 ? 'text-red-400' : 'text-green-400'}>
+                            {diff < 0 ? 'Short ' : 'Over '}{fmtMoney(Math.abs(diff), cur)}
                           </div>
                         ))}
-                        {!totals.some(t => Number(t.difference)) && <span className="text-slate-500">Exact</span>}
+                        {diffRows.length === 0 && <span className="text-slate-500">Exact</span>}
                       </td>
                       <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
                         {s.received_at ? new Date(s.received_at).toLocaleString() : '—'}
@@ -876,6 +918,7 @@ export default function DriverDuesPage() {
                               <thead>
                                 <tr className="bg-surface-card/60 text-slate-500">
                                   <th className="text-left px-3 py-2 font-medium">Order #</th>
+                                  <th className="text-left px-3 py-2 font-medium">Customer</th>
                                   <th className="text-left px-3 py-2 font-medium">Currency</th>
                                   <th className="text-right px-3 py-2 font-medium">Collected</th>
                                   <th className="text-right px-3 py-2 font-medium">Petty cash (retail)</th>
@@ -883,15 +926,29 @@ export default function DriverDuesPage() {
                               </thead>
                               <tbody>
                                 {lines.length === 0 ? (
-                                  <tr><td colSpan={4} className="px-3 py-3 text-center text-slate-500">No order lines</td></tr>
-                                ) : lines.map((l, i) => (
+                                  <tr><td colSpan={5} className="px-3 py-3 text-center text-slate-500">No order lines</td></tr>
+                                ) : lines.map((l, i) => {
+                                  const ord    = orderById[l.order_id]
+                                  const cust   = ord?.customer
+                                  const badges = customerBadges(cust)
+                                  // Show the order's actual collected for this currency when the
+                                  // stored line has none (paid-to-office / cashless settlements).
+                                  const lineCollected = Number(l.collected) || (ord ? orderCollectedByCurrency(ord)[l.currency] || 0 : 0)
+                                  return (
                                   <tr key={i} className="border-t border-surface-border/50">
                                     <td className="px-3 py-2 font-mono text-brand-400">{orderNumById[l.order_id] ?? '—'}</td>
+                                    <td className="px-3 py-2 text-slate-300">
+                                      <span className="inline-flex items-center gap-1.5">
+                                        {badges.map((b, bi) => { const I = b.Icon; return <I key={bi} className={`w-3.5 h-3.5 flex-shrink-0 ${b.cls}`} title={b.label} /> })}
+                                        <span>{customerLabel(cust)}</span>
+                                      </span>
+                                    </td>
                                     <td className="px-3 py-2 text-slate-400">{l.currency}</td>
-                                    <td className="px-3 py-2 text-right text-green-400">{fmtMoney(l.collected, l.currency)}</td>
+                                    <td className="px-3 py-2 text-right text-green-400">{fmtMoney(lineCollected, l.currency)}</td>
                                     <td className="px-3 py-2 text-right text-amber-400">{fmtMoney(l.retail, l.currency)}</td>
                                   </tr>
-                                ))}
+                                  )
+                                })}
                               </tbody>
                             </table>
                           </div>

@@ -69,12 +69,31 @@ export default function TrackingPage() {
   const { drivers, orders } = useApp()
   const [mapReady,  setMapReady]  = useState(false)
   const [MapCmp,    setMapCmp]    = useState(null)
+  const [map,       setMap]       = useState(null)   // Leaflet map instance
   const [selected,  setSelected]  = useState(null)
   const [latestVehicle, setLatestVehicle] = useState({})  // driver_id -> "code | make | model | color"
+  const [positions, setPositions] = useState({})     // driver_id -> { pos:[lat,lng], at }
 
   useEffect(() => {
     loadLeaflet().then(() => { setMapCmp(() => MapContainer); setMapReady(true) })
   }, [])
+
+  // Latest recorded GPS position per driver (driver_locations, newest first).
+  useEffect(() => {
+    supabase
+      .from('driver_locations')
+      .select('driver_id, latitude, longitude, recorded_at')
+      .order('recorded_at', { ascending: false })
+      .then(({ data }) => {
+        const m = {}
+        for (const r of (data ?? [])) {
+          if (!m[r.driver_id] && r.latitude != null && r.longitude != null) {
+            m[r.driver_id] = { pos: [Number(r.latitude), Number(r.longitude)], at: r.recorded_at }
+          }
+        }
+        setPositions(m)
+      })
+  }, [drivers])
 
   // Latest assigned vehicle per driver (most recent assignment).
   useEffect(() => {
@@ -101,6 +120,25 @@ export default function TrackingPage() {
   const selectedOrders   = selectedDriver
     ? orders.filter(o => o.driver_id === selectedDriver.id && ['assigned', 'picked_up', 'in_transit'].includes(o.status))
     : []
+
+  // A driver's map position: real GPS if we have it, else the demo fallback.
+  const positionOf = (d) => positions[d.id]?.pos || simulatePosition(d.id)
+
+  // Clicking a driver flies the map to that driver's coordinates.
+  useEffect(() => {
+    if (!map || !selectedDriver) return
+    map.flyTo(positionOf(selectedDriver), 15, { duration: 0.8 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, selected, positions])
+
+  // With no driver selected, frame all active drivers so their markers are visible.
+  useEffect(() => {
+    if (!map || selected) return
+    const pts = activeDrivers.map(positionOf)
+    if (pts.length === 0) return
+    try { map.fitBounds(pts, { padding: [60, 60], maxZoom: 14 }) } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, positions])
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -170,13 +208,13 @@ export default function TrackingPage() {
       {/* Map */}
       <div className="flex-1 relative overflow-hidden">
         {mapReady && MapCmp ? (
-          <MapCmp center={[40.7128, -74.006]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl>
+          <MapCmp ref={setMap} center={[40.7128, -74.006]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             {activeDrivers.map(driver => (
-              <DriverMarker key={driver.id} driver={driver} position={simulatePosition(driver.id)} />
+              <DriverMarker key={driver.id} driver={driver} position={positionOf(driver)} />
             ))}
           </MapCmp>
         ) : (
@@ -196,6 +234,22 @@ export default function TrackingPage() {
             <p className="text-slate-400 text-sm">{formatMobile(selectedDriver.mobile)}</p>
             {selectedDriver.driver_license && (
               <p className="text-slate-500 text-xs">License: {selectedDriver.driver_license}</p>
+            )}
+            {(() => {
+              const p    = positionOf(selectedDriver)
+              const meta = positions[selectedDriver.id]
+              return (
+                <button type="button"
+                  onClick={() => map && map.flyTo(p, 16, { duration: 0.6 })}
+                  className="mt-1 flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200">
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span className="font-mono">{p[0].toFixed(5)}, {p[1].toFixed(5)}</span>
+                  {!meta && <span className="text-slate-600">(demo)</span>}
+                </button>
+              )
+            })()}
+            {positions[selectedDriver.id]?.at && (
+              <p className="text-slate-600 text-[11px]">Updated {new Date(positions[selectedDriver.id].at).toLocaleString()}</p>
             )}
             {selectedOrders.length > 0 ? (
               <div className="mt-3 pt-3 border-t border-surface-border space-y-2">
