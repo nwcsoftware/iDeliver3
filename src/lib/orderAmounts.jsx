@@ -115,7 +115,7 @@ export function fmtAmount(n, cur) {
      balance        Total All − collected
      fromDriver     to collect from the driver = what the driver collected (= collected)
      pending        Order Pending = localRetail + fees                         */
-export function orderAmountBreakdown(o) {
+export function orderAmountBreakdown(o, filterContactId = null) {
   const feeCur      = o.currency || 'USD'
   const discountCur = o.discount_currency || o.currency || 'USD'
 
@@ -127,30 +127,43 @@ export function orderAmountBreakdown(o) {
     packageLines: [], serviceLines: [], externalLines: [],
   })
 
-  // Paid packages / invoices are still listed (so they're visible) but flagged
-  // paid — the popup crosses them out and they don't add to the category sum.
-  for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) bucket(it.currency || 'USD').localRetail += Number(it.line_total) || 0
+  // 2nd-party (supplier/partner) scoping: when a contact id is passed, only the
+  // delivery packages they provide (provider_id) and the external retail invoices
+  // for their shop/warehouse (contact_id) are counted — the order-level figures
+  // (local retail, services, fees, discount, vat) belong to the whole order, not
+  // to a single 2nd party, so they're skipped entirely.
+  if (!filterContactId) {
+    // Paid packages / invoices are still listed (so they're visible) but flagged
+    // paid — the popup crosses them out and they don't add to the category sum.
+    for (const it of (o.order_items ?? []).filter(i => !i.is_deleted)) bucket(it.currency || 'USD').localRetail += Number(it.line_total) || 0
+  }
   for (const p of (o.delivery_packages ?? [])) {
+    if (filterContactId && p.provider_id !== filterContactId) continue
     const amt = Number(p.package_price) || 0
     const b = bucket(p.currency || o.currency || 'USD')
     if (!p.paid) b.packages += amt
     b.packageLines.push({ name: contactName(p.provider), amount: amt, paid: !!p.paid })
   }
-  for (const s of (o.order_services ?? [])) {
-    const amt = Number(s.service_fees) || 0
-    const b = bucket(s.service_fees_currency || 'USD')
-    b.services += amt
-    b.serviceLines.push({ name: contactName(s.provider), amount: amt, paid: false })
+  if (!filterContactId) {
+    for (const s of (o.order_services ?? [])) {
+      const amt = Number(s.service_fees) || 0
+      const b = bucket(s.service_fees_currency || 'USD')
+      b.services += amt
+      b.serviceLines.push({ name: contactName(s.provider), amount: amt, paid: false })
+    }
   }
   for (const r of (o.retail_goods_invoices ?? [])) {
+    if (filterContactId && r.contact_id !== filterContactId) continue
     const amt = Number(r.invoice_value) || 0
     const b = bucket(r.currency || 'USD')
     if (!r.paid) b.externalRetail += amt
     b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.paid })
   }
-  if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
-  if (Number(o.discount_amount)) bucket(discountCur).discount += Math.abs(Number(o.discount_amount))
-  if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
+  if (!filterContactId) {
+    if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
+    if (Number(o.discount_amount)) bucket(discountCur).discount += Math.abs(Number(o.discount_amount))
+    if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
+  }
 
   const collected       = orderCollectedByCurrency(o)
   const driverCollected = orderDriverCollectedByCurrency(o)
@@ -190,7 +203,7 @@ export function orderAmountBreakdown(o) {
    shop); with one it shows a single labelled line, still naming the source; with
    none it shows the plain category total. Paid lines are crossed out in gray
    ("switched off") and don't count toward the total. Emits bare grid cells. */
-function CategoryRows({ groupLabel, itemLabel, lines, sum, cur }) {
+function CategoryRows({ groupLabel, itemLabel, lines, sum, cur, hideName = false }) {
   if (lines.length === 0) {
     return (
       <>
@@ -207,7 +220,7 @@ function CategoryRows({ groupLabel, itemLabel, lines, sum, cur }) {
     return (
       <React.Fragment key={i}>
         <span className={`truncate ${labelCls}`}>
-          {label}{ln.name ? <span className={ln.paid ? '' : 'text-slate-400'}> · {ln.name}</span> : ''}
+          {label}{!hideName && ln.name ? <span className={ln.paid ? '' : 'text-slate-400'}> · {ln.name}</span> : ''}
         </span>
         <span className={`text-right ${amountCls}`}>{fmtAmount(ln.amount, cur)}</span>
       </React.Fragment>
@@ -218,8 +231,11 @@ function CategoryRows({ groupLabel, itemLabel, lines, sum, cur }) {
 /* Order amounts summary card body (header + per-currency breakdown). Shared by
    the click popover and the cursor-following hover preview; each caller supplies
    its own outer chrome (border / shadow / width). */
-export function AmountSummaryContent({ order }) {
-  const rows = orderAmountBreakdown(order)
+export function AmountSummaryContent({ order, filterContactId = null }) {
+  const rows = orderAmountBreakdown(order, filterContactId)
+  // 2nd-party (supplier/partner) view: show only their own packages + external
+  // retail invoice totals. Hide the order-level / driver / collection rows.
+  const partyView = !!filterContactId
   const driverName = `${order.driver?.first_name ?? ''} ${order.driver?.last_name ?? ''}`.trim()
   // Office users who took payment directly (paid to office). When present, the
   // money was collected by them rather than the driver.
@@ -244,15 +260,21 @@ export function AmountSummaryContent({ order }) {
               {rows.length > 1 && <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1">{r.cur}</div>}
               <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 tabular-nums">
                 <CategoryRows groupLabel="Delivery Packages" itemLabel="Delivery Package"
-                  lines={r.packageLines} sum={r.packages} cur={r.cur} />
-                <CategoryRows groupLabel="Order Services" itemLabel="Order Service"
-                  lines={r.serviceLines} sum={r.services} cur={r.cur} />
-                <span className="text-slate-500">Local retail items</span>
-                <span className="text-right">{fmtAmount(r.localRetail, r.cur)}</span>
+                  lines={r.packageLines} sum={r.packages} cur={r.cur} hideName={partyView} />
+                {!partyView && (
+                  <CategoryRows groupLabel="Order Services" itemLabel="Order Service"
+                    lines={r.serviceLines} sum={r.services} cur={r.cur} />
+                )}
+                {!partyView && (<>
+                  <span className="text-slate-500">Local retail items</span>
+                  <span className="text-right">{fmtAmount(r.localRetail, r.cur)}</span>
+                </>)}
                 <CategoryRows groupLabel="External retail invoices" itemLabel="External retail invoice"
-                  lines={r.externalLines} sum={r.externalRetail} cur={r.cur} />
-                <span className="text-slate-500">Delivery fees</span>
-                <span className="text-right">{fmtAmount(r.fees, r.cur)}</span>
+                  lines={r.externalLines} sum={r.externalRetail} cur={r.cur} hideName={partyView} />
+                {!partyView && (<>
+                  <span className="text-slate-500">Delivery fees</span>
+                  <span className="text-right">{fmtAmount(r.fees, r.cur)}</span>
+                </>)}
                 {r.discount > 0 && (<>
                   <span className="text-slate-500">Discount</span>
                   <span className="text-right text-rose-300/90">−{fmtAmount(r.discount, r.cur)}</span>
@@ -263,14 +285,16 @@ export function AmountSummaryContent({ order }) {
                 </>)}
                 <span className="text-slate-200 font-medium border-t border-surface-border/60 pt-1">Total All</span>
                 <span className="text-right text-slate-100 font-medium border-t border-surface-border/60 pt-1">{fmtAmount(r.total, r.cur)}</span>
-                <span className="text-slate-500">{collectedLabel}</span>
-                <span className="text-right text-emerald-300/90">{fmtAmount(r.collected, r.cur)}</span>
-                <span className="text-slate-500">Balance</span>
-                <span className={`text-right ${r.balance > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.balance, r.cur)}</span>
-                <span className="text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fromDriverLabel}</span>
-                <span className="text-right text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fmtAmount(r.fromDriver, r.cur)}</span>
-                <span className="text-slate-500">Order Pending</span>
-                <span className={`text-right ${r.pending > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.pending, r.cur)}</span>
+                {!partyView && (<>
+                  <span className="text-slate-500">{collectedLabel}</span>
+                  <span className="text-right text-emerald-300/90">{fmtAmount(r.collected, r.cur)}</span>
+                  <span className="text-slate-500">Balance</span>
+                  <span className={`text-right ${r.balance > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.balance, r.cur)}</span>
+                  <span className="text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fromDriverLabel}</span>
+                  <span className="text-right text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.75)] border-t border-surface-border/60 pt-1">{fmtAmount(r.fromDriver, r.cur)}</span>
+                  <span className="text-slate-500">Order Pending</span>
+                  <span className={`text-right ${r.pending > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{fmtAmount(r.pending, r.cur)}</span>
+                </>)}
               </div>
             </div>
           ))}

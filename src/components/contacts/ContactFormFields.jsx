@@ -81,12 +81,17 @@ export const ENTRY_FIELDS = [
  *   mode        - 'add' | 'edit'
  *   extraFields - type-specific extra fields ([] for none)
  *   showRoles   - render the multi-role (Customer/Partner/Supplier) tag selector
+ *   lockTypeOnEntry - when true (default), the Individual/Company toggle locks as
+ *                 soon as data entry begins. Pass false to keep it freely
+ *                 switchable throughout the add flow (still locked in edit mode).
+ *   showCreditDebit - render the "Credit / Debit allowed" checkbox (default true).
  */
-export default function ContactFormFields({ type, form, setField, mode, extraFields = [], showRoles = false }) {
+export default function ContactFormFields({ type, form, setField, mode, extraFields = [], showRoles = false, lockTypeOnEntry = true, showCreditDebit = true }) {
   const isCompany    = form.entity_type === 'company'
-  // Toggle locks once data entry begins, or whenever editing an existing contact.
+  // Toggle locks whenever editing an existing contact, and (unless disabled) once
+  // data entry begins on a new contact.
   const hasEntryData = ENTRY_FIELDS.some(k => String(form[k] ?? '').trim() !== '')
-  const typeLocked   = mode !== 'add' || hasEntryData
+  const typeLocked   = mode !== 'add' || (lockTypeOnEntry && hasEntryData)
 
   // Roles this contact holds. Falls back to the single primary type so the
   // selector still reflects reality even before contact_types has been set.
@@ -263,12 +268,14 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       )}
 
       {/* Credit/Debit allowed — lets this contact close orders with an unpaid balance. */}
-      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
-        <input type="checkbox" className="accent-brand-500 w-4 h-4"
-          checked={!!form.credit_debit_allowed}
-          onChange={e => setField('credit_debit_allowed', e.target.checked)} />
-        Credit / Debit allowed (may owe a balance)
-      </label>
+      {showCreditDebit && (
+        <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+          <input type="checkbox" className="accent-brand-500 w-4 h-4"
+            checked={!!form.credit_debit_allowed}
+            onChange={e => setField('credit_debit_allowed', e.target.checked)} />
+          Credit / Debit allowed (may owe a balance)
+        </label>
+      )}
 
       <div>
         <label className="label">Notes</label>

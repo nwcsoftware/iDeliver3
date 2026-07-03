@@ -119,6 +119,7 @@ function isCreditCustomerOrder(o) { return o?.customer?.credit_debit_allowed ===
 // page. The row must not already be closed/deactivated. The edit modal keeps the
 // fuller close flow (status Completed); this is the one-click shortcut.
 function canQuickClose(o) {
+  if (!isConfirmed(o)) return false                 // must be confirmed before it can be worked/closed
   if (isRowLocked(o) || o?.delivery_status !== 'Delivered') return false
   return isCreditCustomerOrder(o) || isFullyPaid(o)
 }
@@ -939,7 +940,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const totalsBreakdown = (() => {
     const acc = {}   // cur -> category sums
     for (const o of filtered) {
-      for (const r of orderAmountBreakdown(o)) {
+      // 2nd-party view: only this contact's packages / external invoices count.
+      for (const r of orderAmountBreakdown(o, partyContactId)) {
         const b = (acc[r.cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, total: 0, collected: 0, balance: 0, fromDriver: 0, pending: 0 })
         for (const row of TOTALS_BREAKDOWN_ROWS) b[row.key] += (r[row.key] || 0)
       }
@@ -951,6 +953,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       return out
     })
   })()
+
+  // Rows shown in the "Totals breakdown" popup. For 2nd-party (supplier/partner)
+  // logins we only surface their own packages + external retail invoices totals;
+  // the other categories (fees, local retail, services, discount, vat, collected,
+  // balance, driver, pending, total) are hidden.
+  const breakdownRows = partyContactId
+    ? TOTALS_BREAKDOWN_ROWS.filter(row => row.key === 'packages' || row.key === 'externalRetail')
+    : TOTALS_BREAKDOWN_ROWS
 
   /* ── modal handlers ──────────────────────────────────────── */
 
@@ -1014,6 +1024,25 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   function handleCustomerChange(id) {
     const c = customers.find(x => x.id === id)
     if (c) applyCustomer(c)
+  }
+
+  /* Clear button inside the Customer box: reset the customer selection along with
+     the recipient mobile / whatsapp (which get auto-filled from the customer).
+     For a 2nd-party (supplier/partner) login the customer is locked to their own
+     account, so only the recipient mobile / whatsapp are cleared. */
+  function resetCustomer() {
+    setCustomerInput('')
+    setForm(f => ({ ...f, customer_id: '', main_account: '', recipient_mobile: '', recipient_whatsapp: '' }))
+    setCustomerDropdownOpen(false)
+    setError('')
+  }
+
+  /* Clear button inside the Recipient box: reset the recipient name along with
+     the recipient mobile / whatsapp. */
+  function resetRecipient() {
+    setForm(f => ({ ...f, recipient_name: '', recipient_mobile: '', recipient_whatsapp: '' }))
+    setRecipientDropdownOpen(false)
+    setError('')
   }
 
   /* Recipient box behaves like the Customer box: pick an existing contact from
@@ -1092,6 +1121,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     addBusinessType:    n => addLookup('business_types',     businessTypes,     setBusinessTypes,     n),
     addContactCategory: n => addLookup('contact_categories', contactCategories, setContactCategories, n),
   })
+    // The quick "Add Customer" form (from the order forms) hides the Commission %
+    // field — commission is a partner/supplier concern, not a customer one.
+    .filter(ef => !(newContactType === 'customer' && ef.key === 'partner_percentage'))
+    // 2nd-party (sold orders) quick-add also hides the Contact Category and
+    // Business Type fields.
+    .filter(ef => !(partyContactId && (ef.key === 'contact_category' || ef.key === 'shop_type')))
 
   async function saveNewCustomer() {
     const isCompany = newCustomer.entity_type === 'company'
@@ -1170,10 +1205,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setServices([]); setOrigServiceIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
     setCustomerInput(''); setError(''); setModal('add')
-    // No default customer — the user picks one (was previously auto-set to "GENERAL CUSTOMER").
+    // 2nd-party (supplier/partner) users: the customer is always their own linked
+    // contact — auto-fill it (and the field is locked in the form below).
+    // Everyone else picks a customer manually.
+    if (partyContactId) {
+      const self = customers.find(c => c.id === partyContactId) || partyContact
+      if (self) applyCustomer(self)
+      // Recipient (the actual delivery recipient) and the delivery address are
+      // entered manually — never seeded from the 2nd-party's own contact.
+      setForm(f => ({ ...f, recipient_name: '', recipient_mobile: '', recipient_whatsapp: '', delivery_address: '', delivery_lat: '', delivery_lng: '' }))
+    }
   }
 
   async function openEdit(o) {
+    // 2nd-party (supplier/partner) users can't edit a confirmed order — it's
+    // locked. Open the read-only detail drawer instead so they can still view it.
+    if (partyContactId && isConfirmed(o)) { openDetail(o); return }
     savedOrderIdRef.current = null
     setForm({
       ...BASE_FORM, ...o,
@@ -1367,6 +1414,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      payment_status / collected totals — same effect as the form's Payments section. */
   async function openPay(o) {
     if (isRowLocked(o)) return   // closed or deactivated orders are locked
+    if (!isConfirmed(o)) return  // payment can't be recorded until the order is confirmed
     setPayModal(o)
     setPayForm({ ...EMPTY_PAYMENT, paid_at: new Date().toISOString().slice(0, 10) })
     setPayPaid({})
@@ -1475,6 +1523,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   async function handleSave(opts = {}) {
     const close = opts?.close === true
+    // 2nd-party users can't save changes to a confirmed order (defensive guard —
+    // the UI already blocks opening a confirmed order for editing).
+    if (partyContactId && modal && isConfirmed(modal)) {
+      return setError('This order is confirmed and can no longer be edited.')
+    }
     if (!form.recipient_name.trim())   return setError('Recipient name is required.')
     if (!form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
     if (!form.delivery_address.trim()) return setError('Delivery address is required.')
@@ -1529,14 +1582,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       ? { isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null }
       : {}
 
-    // New-order source: when a 2nd-party (supplier/partner) user creates it, the
-    // source is THEIR role; otherwise it's the customer's contact type, else
-    // "Call center". Partner & supplier orders are treated like online orders:
-    // they arrive UNCONFIRMED so the call center reviews them.
+    // New-order source: an order counts as an "outside" partner/supplier order
+    // ONLY when a 2nd-party (supplier/partner) user is signed in and creates it —
+    // then the source is THEIR role and it arrives UNCONFIRMED for the call center
+    // to review. Anything the call center adds is a "Call center" order that is
+    // confirmed on creation, regardless of whether the customer contact happens to
+    // be a partner or supplier type.
     const addSource = partyContactId
       ? (currentUser?.role === 'supplier' ? 'supplier' : 'partner')
-      : ((customers.find(c => c.id === form.customer_id)?.contact_type) || 'Call center')
-    const addNeedsConfirm = !!partyContactId || addSource === 'partner' || addSource === 'supplier'
+      : 'Call center'
+    const addNeedsConfirm = !!partyContactId
 
     const payload = {
       recipient_name:       form.recipient_name.trim(),
@@ -1772,6 +1827,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   async function quickSetStatus(order, uiStatus) {
+    if (!isConfirmed(order)) { setPopover(null); return }   // status is locked until the order is confirmed
     setQuickBusy(true)
     const patch = { status: toDbStatus(uiStatus) }
     // Selecting "Completed" implies the materials reached the customer — move the
@@ -2342,10 +2398,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     /* 2nd-party users can't change order/delivery status — view only. */
                     <Badge status={normalizeStatus(o.status)} />
                   ) : (
-                    <button type="button" disabled={isRowLocked(o)}
+                    <button type="button" disabled={isRowLocked(o) || !isConfirmed(o)}
                       onClick={(e) => openPopover('status', o, e)}
-                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Change status'}
-                      className="disabled:cursor-not-allowed hover:opacity-80 transition-opacity">
+                      title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to change its status' : 'Change status'}
+                      className="disabled:cursor-not-allowed disabled:opacity-60 hover:opacity-80 transition-opacity">
                       <Badge status={normalizeStatus(o.status)} />
                     </button>
                   )}
@@ -2360,11 +2416,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
                     {partyContactId ? (
-                      /* 2nd-party users: edit only — no flag/pay/detail/close/cancel. */
-                      <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
-                        title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                      /* 2nd-party users: a confirmed order is locked (view-only);
+                         otherwise edit. No flag/pay/close/cancel. */
+                      isConfirmed(o) ? (
+                        <button onClick={() => openDetail(o)} className="btn-ghost p-1.5 text-slate-500 hover:text-brand-300 hover:bg-brand-500/10"
+                          title="Confirmed — locked (view only)">
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
+                          title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      )
                     ) : (
                     <>
                     <button onClick={() => toggleFlag(o)} disabled={toggling === o.id}
@@ -2381,8 +2445,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         <CheckCircle2 className="w-4 h-4" />
                       </span>
                     ) : (
-                      <button onClick={() => openPay(o)} disabled={isRowLocked(o)}
-                        title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Record payment'}
+                      <button onClick={() => openPay(o)} disabled={isRowLocked(o) || !isConfirmed(o)}
+                        title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to record payment' : 'Record payment'}
                         className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
                         <Banknote className="w-4 h-4" />
                       </button>
@@ -2445,7 +2509,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     </tr>
                   </thead>
                   <tbody>
-                    {TOTALS_BREAKDOWN_ROWS.map(row => (
+                    {breakdownRows.map(row => (
                       <tr key={row.key} className={row.strong ? 'border-t border-surface-border/60' : ''}>
                         <td className={`py-1 pr-4 ${row.strong ? 'text-slate-200 font-medium pt-1.5' : 'text-slate-500'}`}>{row.label}</td>
                         {totalsBreakdown.map(r => {
@@ -2610,24 +2674,40 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <div className="flex items-center gap-2">
                       <div className="relative flex-1 min-w-0">
                         <input
-                          className="input w-full pr-8"
+                          className={`input w-full pr-14 ${partyContactId ? 'cursor-not-allowed opacity-90' : ''}`}
                           placeholder="Type a customer name…"
                           value={customerInput}
+                          readOnly={!!partyContactId}
+                          title={partyContactId ? 'Your account is the customer for these orders and cannot be changed' : undefined}
                           onChange={e => {
+                            if (partyContactId) return   // 2nd-party: customer is locked to their own account
                             setCustomerInput(e.target.value)
                             setCustomerDropdownOpen(true)
                             if (form.customer_id) setForm(f => ({ ...f, customer_id: '', main_account: '' }))
                             setError('')
                           }}
-                          onFocus={() => setCustomerDropdownOpen(true)}
+                          onFocus={() => { if (!partyContactId) setCustomerDropdownOpen(true) }}
                           onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
                         />
-                        {form.customer_id && (
-                          <Check className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-green-400 pointer-events-none" />
+                        {/* Status indicator (lock when 2nd-party, check when a customer is selected) */}
+                        {partyContactId
+                          ? <Lock className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+                          : form.customer_id && (
+                              <Check className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 text-green-400 pointer-events-none" />
+                            )}
+                        {/* Clear button — resets the customer and the auto-filled mobile / whatsapp.
+                            Hidden for 2nd-party (sold orders) logins where the customer is locked. */}
+                        {!partyContactId && (customerInput.trim() || form.customer_id || form.recipient_mobile || form.recipient_whatsapp) && (
+                          <button type="button"
+                            onMouseDown={e => { e.preventDefault(); resetCustomer() }}
+                            title="Clear customer, mobile & WhatsApp"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-surface-hover transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         )}
 
                         {/* Inline matches dropdown */}
-                        {customerDropdownOpen && trimmedCustomer !== '' && (() => {
+                        {!partyContactId && customerDropdownOpen && trimmedCustomer !== '' && (() => {
                           const q = trimmedCustomer.toLowerCase()
                           const list = pickCustomers.filter(c =>
                             customerName(c).toLowerCase().includes(q) ||
@@ -2656,12 +2736,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         })()}
                       </div>
 
-                      {/* Picker button — full search modal */}
-                      <button type="button" title="Search customers"
-                        onClick={() => { setCustomerSearch(trimmedCustomer); setCustomerPickerOpen(true) }}
-                        className="btn-ghost px-3 py-2 border border-surface-border flex-shrink-0 hover:border-brand-600/50">
-                        <Search className="w-4 h-4" />
-                      </button>
+                      {/* Picker button — full search modal (hidden for 2nd-party: customer is locked) */}
+                      {!partyContactId && (
+                        <button type="button" title="Search customers"
+                          onClick={() => { setCustomerSearch(trimmedCustomer); setCustomerPickerOpen(true) }}
+                          className="btn-ghost px-3 py-2 border border-surface-border flex-shrink-0 hover:border-brand-600/50">
+                          <Search className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
 
                     {/* Main account — auto-filled from the contact, read-only */}
@@ -2672,7 +2754,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     )}
 
                     {/* New-customer hint */}
-                    {isNewCustomer && (
+                    {isNewCustomer && !partyContactId && (
                       <button type="button" onClick={() => openNewCustomer()}
                         className="mt-1.5 w-full flex items-center gap-2 text-left text-xs text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 rounded-lg px-3 py-2 hover:bg-cyan-500/15 transition-colors">
                         <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
@@ -2688,13 +2770,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     {/* Same behaviour as Customer: search dropdown + add-new contact. */}
                     <div className="relative">
                       <input
-                        className="input w-full"
+                        className="input w-full pr-8"
                         placeholder="Type a recipient name…"
                         value={form.recipient_name}
                         onChange={e => { fld('recipient_name', e.target.value); setRecipientDropdownOpen(true) }}
                         onFocus={() => setRecipientDropdownOpen(true)}
                         onBlur={() => setTimeout(() => setRecipientDropdownOpen(false), 150)}
                       />
+                      {/* Clear button — resets the recipient name, mobile & whatsapp */}
+                      {(form.recipient_name?.trim() || form.recipient_mobile || form.recipient_whatsapp) && (
+                        <button type="button"
+                          onMouseDown={e => { e.preventDefault(); resetRecipient() }}
+                          title="Clear recipient name, mobile & WhatsApp"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-surface-hover transition-colors">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {recipientDropdownOpen && trimmedRecipient !== '' && (() => {
                         const q = trimmedRecipient.toLowerCase()
                         const list = customers.filter(c =>
@@ -3464,6 +3555,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               setField={setNewCust}
               mode="add"
               extraFields={newContactExtraFields}
+              lockTypeOnEntry={false}
+              showCreditDebit={!partyContactId}
             />
 
             <ContactAddresses addresses={custAddresses} setAddresses={setCustAddresses} />
@@ -3648,7 +3741,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         <div ref={hoverPanelRef}
           className="fixed z-[55] pointer-events-none card border border-surface-border rounded-lg shadow-xl overflow-hidden"
           style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 340 }}>
-          <AmountSummaryContent order={hoverSummary.order} />
+          <AmountSummaryContent order={hoverSummary.order} filterContactId={partyContactId} />
         </div>
       )}
 
@@ -3963,7 +4056,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
               <DetailSection icon={Wallet} title="Delivery Fees & Payments">
                 <div className="-mx-3 -my-3">
-                  <AmountSummaryContent order={detail} />
+                  <AmountSummaryContent order={detail} filterContactId={partyContactId} />
                 </div>
               </DetailSection>
 
