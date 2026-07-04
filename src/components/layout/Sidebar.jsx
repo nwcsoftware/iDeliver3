@@ -8,6 +8,7 @@ import {
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import logo from '../../assets/Logo.png'
+import AboutPopup from '../about/AboutPopup'
 
 // Main sidebar: the everyday driver-dispatch screens only.
 const mainNav = [
@@ -118,6 +119,7 @@ export default function Sidebar() {
 
   const [collapsed,     setCollapsed]     = useState(true)
   const [secondaryOpen, setSecondaryOpen] = useState(false)   // hamburger fly-out menu
+  const [aboutOpen,     setAboutOpen]     = useState(false)   // "About _NXCORE" popup
   const [tip,           setTip]           = useState({ label: '', y: 0, visible: false })
 
   function showTip(e, label) {
@@ -219,6 +221,19 @@ export default function Sidebar() {
             </div>
           </div>
         )}
+
+        {/* ── Powered by _NXCORE — opens the About popup ──────────── */}
+        <button
+          onClick={() => setAboutOpen(true)}
+          onMouseEnter={collapsed ? (e) => showTip(e, 'About _NXCORE') : undefined}
+          onMouseLeave={collapsed ? hideTip : undefined}
+          className={`border-t border-surface-border py-2.5 text-slate-500 hover:text-slate-200 hover:bg-surface-hover transition-colors ${collapsed ? 'flex justify-center' : 'w-full text-center'}`}
+          title="About _NXCORE"
+        >
+          {collapsed
+            ? <span className="text-[10px] font-bold tracking-widest">NX</span>
+            : <span className="text-[10px] tracking-widest">POWERED BY <span className="font-bold text-slate-300">_NXCORE</span></span>}
+        </button>
       </aside>
 
       {/* ── Secondary fly-out menu — sits right next to the sidebar and moves
@@ -240,6 +255,8 @@ export default function Sidebar() {
               ...contactsSubItems,
               ...(isAdmin ? [{ _section: 'Settings' }, ...settingsSubItems,
                               ...(isSuperAdmin ? superAdminSettingsItems : [])] : []),
+              { _section: 'About' },
+              { _action: 'about', icon: Building2, label: 'About _NXCORE' },
             ].map((item, idx) => {
               if (item._section) {
                 return (
@@ -249,6 +266,15 @@ export default function Sidebar() {
                 )
               }
               const Icon = item.icon
+              if (item._action === 'about') {
+                return (
+                  <button key="about" onClick={() => { setSecondaryOpen(false); setAboutOpen(true) }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 border border-transparent text-slate-400 hover:text-slate-100 hover:bg-surface-hover">
+                    <Icon className="w-[18px] h-[18px] flex-shrink-0" />
+                    <span>{item.label}</span>
+                  </button>
+                )
+              }
               return (
                 <NavLink key={item.to} to={item.to} end={item.to === '/'}
                   onClick={() => setSecondaryOpen(false)}
@@ -276,6 +302,9 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      {/* ── About _NXCORE popup ─────────────────────────────────── */}
+      <AboutPopup open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   )
 }
