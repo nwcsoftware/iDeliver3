@@ -48,6 +48,10 @@ export default function DriverCollectionsPage() {
   const isSuperAdmin = hasRole('super_admin')
 
   const [date,      setDate]      = useState(todayStr())
+  // "As of" date the collection is recorded / the order is closed on. Defaults to
+  // the scheduled date, but the super admin can back- or forward-date it so the
+  // payment_collections row lands on a specific day regardless of when it's run.
+  const [asOfDate,  setAsOfDate]  = useState(todayStr())
   const [selected,  setSelected]  = useState(() => new Set())
   const [busy,      setBusy]      = useState(false)
   const [error,     setError]     = useState('')
@@ -55,7 +59,9 @@ export default function DriverCollectionsPage() {
 
   /* Orders eligible to be "collected by the driver" on the chosen day:
      scheduled that date, confirmed, still open, not cancelled/failed, with an
-     assigned driver, and still carrying an outstanding balance. */
+     assigned driver, and still carrying an outstanding balance. Credit-customer
+     orders are excluded — the driver collects no cash on them (the customer
+     settles their account later on the Credit Customers page). */
   const eligible = useMemo(() => {
     if (!isSuperAdmin) return []
     return orders
@@ -65,6 +71,7 @@ export default function DriverCollectionsPage() {
         String(o.scheduled_date || '').slice(0, 10) === date &&
         o.order_confirmed === true &&
         o.isclosed !== true &&
+        o.customer?.credit_debit_allowed !== true &&
         !['cancelled', 'failed'].includes(o.status) &&
         !!o.driver_id &&
         Object.keys(remainingByCurrency(o)).length > 0)
@@ -82,7 +89,15 @@ export default function DriverCollectionsPage() {
     setSelected(allSelected ? new Set() : new Set(eligible.map(({ order }) => order.id)))
   }
   function onDateChange(v) {
-    setDate(v); setSelected(new Set()); setResult(null); setError('')
+    // Keep the "as of" date in step with the scheduled date until the admin
+    // overrides it, so the common case (collect on the scheduled day) needs no
+    // second click.
+    setDate(v)
+    setAsOfDate(prev => (prev === date ? v : prev))
+    setSelected(new Set()); setResult(null); setError('')
+  }
+  function onAsOfChange(v) {
+    setAsOfDate(v); setResult(null); setError('')
   }
 
   async function process() {
@@ -91,7 +106,7 @@ export default function DriverCollectionsPage() {
     if (rows.length === 0) { setError('Select at least one order to collect.'); return }
     setBusy(true); setError(''); setResult(null)
 
-    const collectedAt = `${date}T12:00:00`
+    const collectedAt = `${asOfDate}T12:00:00`
     const totalsByCur = {}
     let paymentsInserted = 0
 
@@ -128,7 +143,7 @@ export default function DriverCollectionsPage() {
 
     await fetchOrders()
     setSelected(new Set())
-    setResult({ orders: rows.length, payments: paymentsInserted, totals: totalsByCur })
+    setResult({ orders: rows.length, payments: paymentsInserted, totals: totalsByCur, asOf: asOfDate })
     setBusy(false)
   }
 
@@ -173,16 +188,22 @@ export default function DriverCollectionsPage() {
           </div>
         </div>
 
-        {/* Date picker */}
+        {/* Date pickers */}
         <div className="card p-4 flex flex-wrap items-end gap-4">
           <div>
-            <label className="label flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Collection date</label>
+            <label className="label flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Scheduled date</label>
             <input type="date" className="input" value={date} onChange={e => onDateChange(e.target.value)} disabled={busy} />
+            <p className="text-[11px] text-slate-500 mt-1">Picks which orders to collect.</p>
           </div>
-          <div className="text-xs text-slate-500">
+          <div>
+            <label className="label flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> Collect / close as of</label>
+            <input type="date" className="input" value={asOfDate} onChange={e => onAsOfChange(e.target.value)} disabled={busy} />
+            <p className="text-[11px] text-slate-500 mt-1">Date the payment is recorded on.</p>
+          </div>
+          <div className="text-xs text-slate-500 pb-1">
             {loading?.orders
               ? 'Loading orders…'
-              : `${eligible.length} order${eligible.length === 1 ? '' : 's'} with a balance scheduled on this date.`}
+              : `${eligible.length} order${eligible.length === 1 ? '' : 's'} with a balance scheduled on ${date}.`}
           </div>
         </div>
 
@@ -249,7 +270,7 @@ export default function DriverCollectionsPage() {
           <div className="card p-4 border-green-600/30 space-y-1">
             <p className="text-sm text-green-300 flex items-center gap-1.5">
               <CheckCircle2 className="w-4 h-4" />
-              {result.orders} order{result.orders === 1 ? '' : 's'} marked as collected by drivers ({result.payments} payment{result.payments === 1 ? '' : 's'} recorded).
+              {result.orders} order{result.orders === 1 ? '' : 's'} marked as collected by drivers as of {result.asOf} ({result.payments} payment{result.payments === 1 ? '' : 's'} recorded).
             </p>
             <p className="text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">
               <Wallet className="w-3.5 h-3.5" /> Collected:

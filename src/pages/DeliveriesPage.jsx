@@ -249,6 +249,8 @@ const BASE_FORM = {
   scheduled_date: '', scheduled_time_from: '', scheduled_time_to: '',
   // "We purchased the goods" → the order earns a month-end commission from the shop.
   is_procurement: false,
+  // "It is a free order" → total waived to zero, closable with no payment.
+  is_free_order: false,
 }
 
 function fmt2(n) { return String(n).padStart(2, '0') }
@@ -695,6 +697,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [copied,    setCopied]    = useState(null)
+  const [freeConfirm, setFreeConfirm] = useState(false)  // "make this order free?" warning modal
   const [toggling,  setToggling]  = useState(null)
   // Deactivate-order confirmation: { order, reason, counts, loading, busy }
   const [cancelModal, setCancelModal] = useState(null)
@@ -1118,12 +1121,20 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   function applyRecipient(c) {
     const isCompany = c.entity_type === 'company' || contactHasType(c, 'partner')
     const name = (isCompany && c.company_name) ? c.company_name : customerName(c)
-    setForm(f => ({
-      ...f,
-      recipient_name:     name || f.recipient_name,
-      recipient_mobile:   c.mobile ?? f.recipient_mobile,
-      recipient_whatsapp: c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp,
-    }))
+    setForm(f => {
+      // The goods go to the recipient, so the delivery location follows the
+      // recipient's address — UNLESS the recipient is the same contact as the
+      // customer, whose address already populated the delivery location.
+      const sameAsCustomer = c.id === f.customer_id
+      return {
+        ...f,
+        recipient_name:     name || f.recipient_name,
+        recipient_mobile:   c.mobile ?? f.recipient_mobile,
+        recipient_whatsapp: c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp,
+        ...(sameAsCustomer ? {} : { delivery_address: mergeLoc(f.delivery_address, c.address) }),
+      }
+    })
+    if (c.id !== form.customer_id && c.address?.trim()) rememberDelivery(c.address.trim())
     setRecipientDropdownOpen(false)
     setError('')
   }
@@ -1637,16 +1648,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
     setSaving(true); setError('')
 
-    const totals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+    const isFree = !!form.is_free_order
+    const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+    // A free order is stored at zero total regardless of the items it carries.
+    const totals = isFree ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
     const itemsInPrimary = items.filter(it => it.currency === form.currency).reduce((s, it) => s + lineTotal(it), 0)
 
     // Derive payment status from the payments list vs the order totals, per currency.
+    // A free order owes nothing, so it's stored as fully settled.
     const paidCur = paidByCurrency(payments)
-    const derivedPaymentStatus = ['closed', 'refunded'].includes(form.payment_status)
-      ? form.payment_status                         // preserve terminal states on edit
-      : derivePaymentStatus(paidCur, totals)
+    const derivedPaymentStatus = isFree
+      ? 'paid_to_office'
+      : ['closed', 'refunded'].includes(form.payment_status)
+        ? form.payment_status                       // preserve terminal states on edit
+        : derivePaymentStatus(paidCur, totals)
     // Money collection state, derived from payments (driver-collected cash recorded as payments).
-    const collectionStatus = collectionFromPayStatus(derivePaymentStatus(paidCur, totals))
+    const collectionStatus = isFree ? COLLECTION_FULL : collectionFromPayStatus(derivePaymentStatus(paidCur, totals))
     // "Mark Closed" locks the order via the isclosed flag.
     const closeCols = close
       ? { isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null }
@@ -1688,6 +1705,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       discount_currency:    form.discount_currency || form.currency,
       vat_amount:           Number(form.vat_amount)      || 0,
       total_amount:         Math.max(0, totals[form.currency] || 0),
+      // Free order: total is 0. Stamp who set it free + when — preserving the
+      // original stamp if it was already free (only the first setter is recorded).
+      is_free_order:        isFree,
+      free_marked_by:       isFree ? ((modal !== 'add' && modal?.free_marked_by) || currentUser?.user_id || null) : null,
+      free_marked_at:       isFree ? ((modal !== 'add' && modal?.free_marked_at) || new Date().toISOString())    : null,
       order_type:            (partyContactId && partyContact?.shop_type) ? partyContact.shop_type : (form.order_type || null),
       // Procurement = we bought the goods → the order earns shop commission.
       // Never set for shop-sent (2nd-party) orders.
@@ -2092,7 +2114,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   /* ── totals (live) ───────────────────────────────────────── */
 
-  const totals   = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+  const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+  // A free order is waived to zero even when it carries items. rawTotals keeps the
+  // real value so we can warn before flipping the toggle on a non-zero order.
+  const totals    = form.is_free_order ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
+  const rawHasValue = CURRENCIES.some(c => round2(rawTotals[c] || 0) > 0)
   const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || Number(form.delivery_fee) > 0
 
   // Every order uses the same full form regardless of the customer; the picker
@@ -2139,19 +2165,29 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       (c.company_name || '').toLowerCase() === trimmedRecipient.toLowerCase())
 
   const paidByCur     = paidByCurrency(payments)
-  const paymentStatus = derivePaymentStatus(paidByCur, totals)
+  // A free order owes nothing, so it reads as fully settled ("ready to close").
+  const paymentStatus = form.is_free_order ? 'paid_to_office' : derivePaymentStatus(paidByCur, totals)
   const collectionFromCustomer = collectionFromPayStatus(paymentStatus)
 
   // A closed OR deactivated (cancelled/failed) order is locked: view-only, no edits.
   const orderLocked   = modal && modal !== 'add' && (modal.isclosed === true || isDeactivated(modal))
   const alreadyClosed = modal && modal !== 'add' && modal.isclosed === true
-  // Credit customers may close an order with an unpaid balance (it becomes a receivable).
-  const customerAllowsCredit = customers.find(c => c.id === form.customer_id)?.credit_debit_allowed === true
+  // Credit customers may close an order with an unpaid balance (it becomes a
+  // receivable). Detect credit from the picker list AND, as a fallback, from the
+  // order's own joined customer — the credit contact may not be in the picker list
+  // (it only holds customer/partner/supplier types), but the order still carries
+  // its customer record, and "Mark Closed" only shows while editing an order.
+  const customerAllowsCredit =
+    customers.find(c => c.id === form.customer_id)?.credit_debit_allowed === true ||
+    (modal && modal !== 'add' && modal.customer?.credit_debit_allowed === true)
+  // A zero-total order has nothing to collect, so payment can never gate its close.
+  const zeroTotal = !CURRENCIES.some(c => round2(totals[c] || 0) > 0)
   // "Mark Closed" eligibility: order status Completed + delivery Delivered, and
-  // fully paid — except a credit-allowed customer may close with an unpaid
-  // balance (it becomes a receivable settled later on the Credit Customers page).
+  // fully paid — except a credit-allowed customer (or a zero-total order) may close
+  // with an unpaid balance (it becomes a receivable settled later on the Credit
+  // Customers page).
   const closeRequirements = []
-  if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit) {
+  if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit && !zeroTotal) {
     closeRequirements.push('fully paid (no pending dues)')
   }
   if (form.status !== 'completed')          closeRequirements.push('order status Completed')
@@ -3391,6 +3427,32 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     })}
                   </div>
                 )}
+
+                {/* Free-order toggle — staff only. Waives the total to zero so the
+                    order can be closed with no payment; warns first if it currently
+                    carries a value, and records who set it free. */}
+                {!partyContactId && (
+                  <label className={`flex items-start gap-2 mt-3 px-3 py-2 rounded-lg border cursor-pointer select-none ${
+                    form.is_free_order ? 'border-emerald-600/40 bg-emerald-600/10' : 'border-surface-border bg-surface-hover/40'}`}>
+                    <input type="checkbox" className="mt-0.5 accent-emerald-600"
+                      checked={!!form.is_free_order}
+                      onChange={e => {
+                        const next = e.target.checked
+                        // Warn before waiving an order that currently has a value.
+                        if (next && rawHasValue) { setFreeConfirm(true); return }
+                        fld('is_free_order', next)
+                      }} />
+                    <span className="text-xs">
+                      <span className={`font-medium ${form.is_free_order ? 'text-emerald-300' : 'text-slate-200'}`}>It is a free order (no charge)</span>
+                      <span className="block text-[11px] text-slate-500">
+                        The order total becomes <span className="font-medium">zero</span> even if it has items, and it can be closed with no payment.
+                        {form.is_free_order && rawHasValue && (
+                          <span className="text-amber-400"> Waived value: {CURRENCIES.filter(c => round2(rawTotals[c] || 0) > 0).map(c => `${rawTotals[c].toFixed(c === 'LBP' ? 0 : 2)} ${c}`).join(', ')}.</span>
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                )}
               </CollapsibleSection>
 
               {/* ── Payments ──────────────────────────────────── */}
@@ -3702,6 +3764,45 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 disabled={savingCustomer || (newCustomer.entity_type === 'company' && !newCustomer.company_name.trim()) || !newCustomer.first_name.trim() || !newCustomer.last_name.trim() || !newCustomer.mobile.trim()}>
                 <Check className="w-4 h-4" />
                 {savingCustomer ? 'Saving…' : 'Save & Use'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── "Make this order free?" warning ────────────────────── */}
+      {freeConfirm && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setFreeConfirm(false)}>
+          <div className="card w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 p-4 border-b border-surface-border bg-amber-500/10">
+              <AlertCircle className="w-6 h-6 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-slate-100 font-semibold">Make this a free order?</h3>
+                <p className="text-slate-400 text-xs mt-1">This order currently has a value that will be waived to zero.</p>
+              </div>
+            </div>
+            <div className="p-4 space-y-3 text-sm text-slate-300">
+              <p>Current total to be waived:</p>
+              <ul className="space-y-1">
+                {CURRENCIES.filter(c => round2(rawTotals[c] || 0) > 0).map(c => (
+                  <li key={c} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">{c}</span>
+                    <span className="font-mono text-amber-300">{rawTotals[c].toFixed(c === 'LBP' ? 0 : 2)} {c}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-slate-400">
+                The order will be recorded as <span className="text-emerald-300 font-medium">free of charge</span> (total $0) and can be
+                closed with no payment. This is logged against your user account.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-surface-border">
+              <button type="button" onClick={() => setFreeConfirm(false)} className="btn-ghost">Cancel</button>
+              <button type="button"
+                onClick={() => { fld('is_free_order', true); setFreeConfirm(false) }}
+                className="btn-primary !bg-emerald-600 hover:!bg-emerald-700">
+                Yes, make it free
               </button>
             </div>
           </div>

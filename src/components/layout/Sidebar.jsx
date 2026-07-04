@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -52,6 +52,7 @@ const superAdminSettingsItems = [
   { to: '/settings/driver-collections', icon: Truck, label: 'Driver App (Collect)' },
   { to: '/settings/messages',     icon: Megaphone,   label: 'Broadcast Messages' },
   { to: '/settings/delete-order', icon: PackageX,    label: 'Delete Order' },
+  { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
   { to: '/settings/reset',        icon: Trash2,      label: 'Reset Data' },
 ]
 

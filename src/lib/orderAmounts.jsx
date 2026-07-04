@@ -17,6 +17,9 @@ function contactName(c) {
 
 /* Per-currency total of a saved order, from its line items + fee/discount/vat. */
 export function orderTotalsByCurrency(o) {
+  // A free order is waived to zero regardless of the items it carries, so it
+  // reads as $0 everywhere (lists, settlements, payment popups).
+  if (o?.is_free_order === true) return {}
   const t = {}
   const add = (cur, n) => { if (n) t[cur] = (t[cur] || 0) + n }
   const active = (o.order_items ?? []).filter(it => !it.is_deleted)

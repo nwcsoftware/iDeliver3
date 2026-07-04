@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard } from 'lucide-react'
+import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard, Calendar } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -23,6 +23,8 @@ const EMPTY_FILTERS = {
 }
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
+
+const todayStr = () => new Date().toISOString().slice(0, 10)
 
 function fmtMoney(value, currency) {
   const n = Number(value) || 0
@@ -106,10 +108,15 @@ export default function DriverDuesPage() {
   const [paidInput,   setPaidInput]   = useState(() => Object.fromEntries(CURRENCIES.map(c => [c, ''])))  // actual cash handed over
   const [posting,     setPosting]     = useState(false)
   const [postError,   setPostError]   = useState('')
+  // "As of" date the collection is recorded and the orders are closed on. Super
+  // admin can back-/forward-date the settlement; everyone else settles as of today.
+  const [settleAsOf,  setSettleAsOf]  = useState(todayStr())
 
   const confirm = collectRows.length > 0   // settlement confirm modal open
   const [duesInfo, setDuesInfo] = useState(null)   // "no dues to collect" info modal (order)
-  function openCollect(rows) { setPostError(''); setCollectRows(rows) }
+  // Default the "as of" date to the "Date From" filter (the day being settled),
+  // falling back to today when that filter isn't set.
+  function openCollect(rows) { setPostError(''); setSettleAsOf(filters.date_from || todayStr()); setCollectRows(rows) }
   function closeCollect() { if (!posting) setCollectRows([]) }
   // Guarded collect: an order (or selection) with no driver dues AND no money paid
   // to the office has nothing to settle, so explain that instead of opening the
@@ -270,17 +277,23 @@ export default function DriverDuesPage() {
     const matchDriver = !filters.driver_id || o.driver_id === filters.driver_id
     const matchFrom   = !filters.date_from || (d && d >= filters.date_from)
     const matchTo     = !filters.date_to   || (d && d <= filters.date_to)
+    // "Outstanding" = still to collect: not yet settled AND not already closed.
+    // Orders closed/settled in a previous session are done, so they drop off the
+    // To Collect list (they remain visible under Settled / All and in History).
     const matchSettled =
       filters.settled === 'all'        ? true :
-      filters.settled === 'settled'    ? settled :
-      /* outstanding */                  !settled
+      filters.settled === 'settled'    ? (settled || o.isclosed) :
+      /* outstanding */                  (!settled && !o.isclosed)
 
     return matchSearch && matchDriver && matchFrom && matchTo && matchSettled
   }), [allRows, search, filters])
 
   /* ── selection (outstanding rows only) ───────────────────── */
 
-  const outstandingVisible = visible.filter(r => !r.settled)
+  // Rows that can still be collected & closed: not settled and not already closed.
+  // (Under the "All" filter a closed order can be visible — it must never be
+  // selectable or counted toward a new collection.)
+  const outstandingVisible = visible.filter(r => !r.settled && !r.order.isclosed)
   // A driver must be picked before cash can be collected (you settle one driver
   // at a time), and there must be outstanding orders in view.
   const canCollect = !!filters.driver_id && outstandingVisible.length > 0
@@ -364,7 +377,10 @@ export default function DriverDuesPage() {
     if (collectRows.length === 0) return
     setPosting(true); setPostError('')
 
-    const settleDate = new Date().toISOString().slice(0, 10)
+    // Effective date of this settlement — chosen "as of" date (super admin) or today.
+    // Timestamps derived from it use midday to avoid timezone date-shifting.
+    const settleDate = settleAsOf || todayStr()
+    const settleAt   = `${settleDate}T12:00:00`
 
     // Group the rows by driver — each driver gets one daily settlement header.
     const byDriver = new Map()
@@ -397,7 +413,7 @@ export default function DriverDuesPage() {
           settlement_date: settleDate,
           total_orders:    rows.length,
           received_by:     currentUser?.user_id || null,
-          received_at:     new Date().toISOString(),
+          received_at:     settleAt,
           status:          'completed',
         }])
         .select('id')
@@ -453,7 +469,7 @@ export default function DriverDuesPage() {
         .from('delivery_orders')
         .update({
           isclosed:       true,
-          closed_at:      new Date().toISOString(),
+          closed_at:      settleAt,
           closed_by:      currentUser?.user_id || null,
           payment_status: 'paid_to_office',
         })
@@ -704,7 +720,7 @@ export default function DriverDuesPage() {
               <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
             ) : visible.map(r => {
               const o = r.order
-              const selectable = !r.settled && !!filters.driver_id
+              const selectable = !r.settled && !o.isclosed && !!filters.driver_id
               return (
                 <tr key={o.id}
                   onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
@@ -1110,6 +1126,28 @@ export default function DriverDuesPage() {
             )}
               </>)
             })()}
+
+            {/* "As of" date — super admin can back-/forward-date the settlement and
+                the order closing. Everyone else settles as of today. */}
+            {isSuperAdmin ? (
+              <div className="rounded-lg border border-surface-border px-3 py-2.5 flex items-center justify-between gap-3">
+                <label htmlFor="settle-as-of" className="text-xs text-slate-400 flex items-center gap-1.5 whitespace-nowrap">
+                  <Calendar className="w-3.5 h-3.5" /> Collect &amp; close as of
+                </label>
+                <input
+                  id="settle-as-of"
+                  type="date"
+                  className="input py-1 px-2 text-sm w-40"
+                  value={settleAsOf}
+                  onChange={e => setSettleAsOf(e.target.value)}
+                  disabled={posting}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> Settled as of {settleAsOf}.
+              </p>
+            )}
 
             <div className="flex items-center gap-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-xs text-amber-300">
               <Lock className="w-3.5 h-3.5 flex-shrink-0" />
