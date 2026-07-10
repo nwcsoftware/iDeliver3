@@ -29,14 +29,16 @@ async function loadLeaflet() {
   })
 }
 
-function DriverMarker({ driver, position }) {
+function DriverMarker({ driver, position, at }) {
   const initials = `${driver.first_name?.[0] ?? ''}${driver.last_name?.[0] ?? ''}`.toUpperCase()
+  const fresh = at ? Date.now() - new Date(at).getTime() < FRESH_MS : false
   const icon = L?.divIcon({
     className: '',
     html: `<div style="
-      background:#4f46e5;border:2px solid #818cf8;border-radius:50%;
+      background:${fresh ? '#4f46e5' : '#475569'};border:2px solid ${fresh ? '#818cf8' : '#64748b'};border-radius:50%;
       width:34px;height:34px;display:flex;align-items:center;justify-content:center;
-      color:white;font-size:11px;font-weight:700;box-shadow:0 0 14px #6366f180;
+      color:white;font-size:11px;font-weight:700;box-shadow:0 0 14px ${fresh ? '#6366f180' : 'transparent'};
+      opacity:${fresh ? 1 : 0.75};
     ">${initials}</div>`,
     iconSize:   [34, 34],
     iconAnchor: [17, 17],
@@ -45,24 +47,28 @@ function DriverMarker({ driver, position }) {
   return (
     <Marker position={position} icon={icon}>
       <Popup>
-        <div style={{ color: '#f1f5f9', minWidth: 150 }}>
+        <div style={{ color: '#f1f5f9', minWidth: 160 }}>
           <p style={{ fontWeight: 600, marginBottom: 4 }}>{driver.first_name} {driver.last_name}</p>
           <p style={{ color: '#94a3b8', fontSize: 12 }}>{driver.driver_status?.replace('_', ' ')}</p>
           {driver.mobile && <p style={{ color: '#94a3b8', fontSize: 12 }}>{formatMobile(driver.mobile)}</p>}
           {driver.driver_license && <p style={{ color: '#94a3b8', fontSize: 12 }}>License: {driver.driver_license}</p>}
+          {at && (
+            <p style={{ color: fresh ? '#4ade80' : '#f59e0b', fontSize: 12, marginTop: 4 }}>
+              {fresh ? '● live' : '● last seen'} — {minutesAgo(at)} min ago
+            </p>
+          )}
         </div>
       </Popup>
     </Marker>
   )
 }
 
-// Simulate lat/lng for demo — replace with real driver_locations rows from Supabase
-function simulatePosition(id) {
-  const seed = (id?.charCodeAt(0) ?? 0) + (id?.charCodeAt(4) ?? 0)
-  return [
-    40.7128 + Math.sin(seed * 137.508) * 0.06,
-    -74.006 + Math.cos(seed * 137.508) * 0.06,
-  ]
+const LOCATION_POLL_MS = 10_000       // live positions refresh every 10s
+const FRESH_MS         = 10 * 60_000  // GPS younger than 10 min counts as live
+const FALLBACK_CENTER  = [34.30, 35.83] // Koura, Lebanon — before any GPS arrives
+
+function minutesAgo(ts) {
+  return Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000))
 }
 
 export default function TrackingPage() {
@@ -78,21 +84,31 @@ export default function TrackingPage() {
     loadLeaflet().then(() => { setMapCmp(() => MapContainer); setMapReady(true) })
   }, [])
 
-  // Latest recorded GPS position per driver (driver_locations, newest first).
+  // Latest recorded GPS position per driver (driver_locations, newest first),
+  // polled so the map is near-real-time — the driver PWA overwrites its row
+  // every ~20s while on the road.
   useEffect(() => {
-    supabase
-      .from('driver_locations')
-      .select('driver_id, latitude, longitude, recorded_at')
-      .order('recorded_at', { ascending: false })
-      .then(({ data }) => {
-        const m = {}
-        for (const r of (data ?? [])) {
-          if (!m[r.driver_id] && r.latitude != null && r.longitude != null) {
-            m[r.driver_id] = { pos: [Number(r.latitude), Number(r.longitude)], at: r.recorded_at }
+    let cancelled = false
+    function fetchPositions() {
+      supabase
+        .from('driver_locations')
+        .select('driver_id, latitude, longitude, recorded_at')
+        .order('recorded_at', { ascending: false })
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) { console.error('[tracking] driver_locations:', error.message); return }
+          const m = {}
+          for (const r of (data ?? [])) {
+            if (!m[r.driver_id] && r.latitude != null && r.longitude != null) {
+              m[r.driver_id] = { pos: [Number(r.latitude), Number(r.longitude)], at: r.recorded_at }
+            }
           }
-        }
-        setPositions(m)
-      })
+          setPositions(m)
+        })
+    }
+    fetchPositions()
+    const id = setInterval(fetchPositions, LOCATION_POLL_MS)
+    return () => { cancelled = true; clearInterval(id) }
   }, [drivers])
 
   // Latest assigned vehicle per driver (most recent assignment).
@@ -121,20 +137,22 @@ export default function TrackingPage() {
     ? orders.filter(o => o.driver_id === selectedDriver.id && ['assigned', 'picked_up', 'in_transit'].includes(o.status))
     : []
 
-  // A driver's map position: real GPS if we have it, else the demo fallback.
-  const positionOf = (d) => positions[d.id]?.pos || simulatePosition(d.id)
+  // A driver's map position: real GPS only — drivers without a reported
+  // position simply don't appear on the map (no fake/demo coordinates).
+  const positionOf = (d) => positions[d.id]?.pos || null
 
   // Clicking a driver flies the map to that driver's coordinates.
   useEffect(() => {
     if (!map || !selectedDriver) return
-    map.flyTo(positionOf(selectedDriver), 15, { duration: 0.8 })
+    const p = positionOf(selectedDriver)
+    if (p) map.flyTo(p, 15, { duration: 0.8 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, selected, positions])
 
-  // With no driver selected, frame all active drivers so their markers are visible.
+  // With no driver selected, frame all drivers that have a real position.
   useEffect(() => {
     if (!map || selected) return
-    const pts = activeDrivers.map(positionOf)
+    const pts = drivers.map(positionOf).filter(Boolean)
     if (pts.length === 0) return
     try { map.fitBounds(pts, { padding: [60, 60], maxZoom: 14 }) } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,13 +226,14 @@ export default function TrackingPage() {
       {/* Map */}
       <div className="flex-1 relative overflow-hidden">
         {mapReady && MapCmp ? (
-          <MapCmp ref={setMap} center={[40.7128, -74.006]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl>
+          <MapCmp ref={setMap} center={FALLBACK_CENTER} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            {activeDrivers.map(driver => (
-              <DriverMarker key={driver.id} driver={driver} position={positionOf(driver)} />
+            {drivers.filter(d => positions[d.id]).map(driver => (
+              <DriverMarker key={driver.id} driver={driver}
+                position={positions[driver.id].pos} at={positions[driver.id].at} />
             ))}
           </MapCmp>
         ) : (
@@ -236,15 +255,14 @@ export default function TrackingPage() {
               <p className="text-slate-500 text-xs">License: {selectedDriver.driver_license}</p>
             )}
             {(() => {
-              const p    = positionOf(selectedDriver)
-              const meta = positions[selectedDriver.id]
+              const p = positionOf(selectedDriver)
+              if (!p) return <p className="mt-1 text-xs text-slate-500">No GPS reported yet</p>
               return (
                 <button type="button"
                   onClick={() => map && map.flyTo(p, 16, { duration: 0.6 })}
                   className="mt-1 flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200">
                   <MapPin className="w-3.5 h-3.5" />
                   <span className="font-mono">{p[0].toFixed(5)}, {p[1].toFixed(5)}</span>
-                  {!meta && <span className="text-slate-600">(demo)</span>}
                 </button>
               )
             })()}
@@ -268,10 +286,19 @@ export default function TrackingPage() {
           </div>
         )}
 
+        {/* No GPS yet */}
+        {Object.keys(positions).length === 0 && (
+          <div className="absolute inset-x-0 top-4 flex justify-center pointer-events-none">
+            <div className="card px-4 py-2 text-sm text-slate-300 shadow-xl">
+              No live GPS yet — drivers appear here once they open the driver app.
+            </div>
+          </div>
+        )}
+
         {/* Legend */}
         <div className="absolute top-4 right-4 card px-3 py-2 text-xs text-slate-400 space-y-1">
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-brand-500 inline-block" /> On Duty</div>
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> Available</div>
+          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-brand-500 inline-block" /> Live GPS (&lt;10 min)</div>
+          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-500 inline-block" /> Last known</div>
         </div>
       </div>
     </div>
