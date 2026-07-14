@@ -7,7 +7,7 @@ import {
   Eye, Pin, PinOff, User, Building, Handshake,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
@@ -776,18 +776,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
       return q
     }
+    // The two contact pickers are paged: both are past PostgREST's 1000-row cap, and
+    // a plain select would drop customers from the picker with no visible error.
     const [{ data: custs }, { data: allc }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
-      supabase.from('contacts')
+      fetchAllRows(() => supabase.from('contacts')
         .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type,partner_percentage')
         // Membership is by role tags, so a multi-role contact (e.g. Customer +
         // Partner) shows up here regardless of which type is its primary.
-        .overlaps('contact_types', ['customer', 'partner', 'supplier']),
+        .overlaps('contact_types', ['customer', 'partner', 'supplier'])
+        .order('id')),
       // Every contact, any role — the Order Services "Service provider" picker is
       // not restricted to suppliers; it lists all contacts (search by name /
       // mobile / contact code).
-      supabase.from('contacts')
+      fetchAllRows(() => supabase.from('contacts')
         .select('id,first_name,last_name,mobile,company_name,contact_type,contact_types,entity_type,code,account_number')
-        .order('first_name'),
+        .order('first_name')
+        .order('id')),
       supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
       typesQ,
       // Package providers — contacts categorised as "Online".
@@ -947,6 +951,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Sortable column header → value extractor. Headers not listed here aren't sortable.
   const SORT_GETTERS = {
     'Order #':   o => o.order_number ?? '',
+    'Schedule':  o => { const d = orderScheduledStart(o); return d ? d.getTime() : Number.POSITIVE_INFINITY },
     'Recipient': o => o.recipient_name ?? '',
     'Customer':  o => o.customer ? customerListName(o.customer) : '',
     'Driver':    o => o.driver ? `${o.driver.first_name ?? ''} ${o.driver.last_name ?? ''}`.trim() : '',

@@ -1,5 +1,6 @@
 import React from 'react'
 import { X, Cpu, Globe, Sparkles, ShieldCheck, Mail } from 'lucide-react'
+import nxcoreLogo from '../../assets/nxcore-logo.png'
 
 /*
   About _NXCORE — the company that builds this software.
@@ -27,20 +28,6 @@ export default function AboutPopup({ open, onClose }) {
           background: #ffffff;
           color: #0a0a0a;
         }
-        /* Dot-matrix wordmark: fill the glyphs with a tight grid of dots. */
-        .nx-wordmark {
-          font-family: 'Courier New', ui-monospace, monospace;
-          font-weight: 800;
-          letter-spacing: 0.18em;
-          line-height: 1;
-          color: transparent;
-          background-color: #0a0a0a;
-          background-image: radial-gradient(circle, transparent 38%, #ffffff 41%);
-          background-size: 5px 5px;
-          -webkit-background-clip: text;
-          background-clip: text;
-          -webkit-text-fill-color: transparent;
-        }
         @keyframes nx-scan {
           from { transform: translateY(-100%); }
           to   { transform: translateY(100%); }
@@ -65,10 +52,11 @@ export default function AboutPopup({ open, onClose }) {
 
         <div className="px-8 pt-12 pb-8">
 
-          {/* Wordmark */}
+          {/* Wordmark — the real _NXCORE dot-matrix logo */}
           <div className="flex flex-col items-center text-center">
-            <div className="nx-wordmark text-[3.4rem] sm:text-[4rem] select-none">_NXCORE</div>
-            <div className="mt-2 h-px w-40 bg-black/80" />
+            <img src={nxcoreLogo} alt="_NXCORE"
+              className="w-full max-w-[380px] h-auto object-contain select-none" draggable="false" />
+            <div className="mt-1 h-px w-40 bg-black/80" />
           </div>
 
           {/* Tagline */}

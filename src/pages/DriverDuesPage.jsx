@@ -189,6 +189,19 @@ export default function DriverDuesPage() {
     () => Object.fromEntries(orders.map(o => [o.id, o.order_number])),
     [orders],
   )
+  // order_id → its settlement date, so closing an already-settled order (via the
+  // Lock button) stamps closed_at with the day the cash was actually settled — the
+  // date the money reaches the Cashier Box — not the day the button is clicked.
+  // Settlements are fetched newest-first, so the first hit is the latest one.
+  const settlementDateByOrder = useMemo(() => {
+    const m = {}
+    for (const s of settlements) {
+      for (const l of (s.driver_settlement_orders ?? [])) {
+        if (!(l.order_id in m)) m[l.order_id] = s.settlement_date
+      }
+    }
+    return m
+  }, [settlements])
   // order_id → order, for the customer name + type icons in the history lines.
   const orderById = useMemo(
     () => Object.fromEntries(orders.map(o => [o.id, o])),
@@ -491,9 +504,13 @@ export default function DriverDuesPage() {
 
   async function markClosed(orderId) {
     setClosingId(orderId)
+    // Close as of the settlement date (money-in-box date), not the click date, so
+    // the order surfaces in the Cashier Box on the day it was actually settled.
+    const day      = settlementDateByOrder[orderId] || todayStr()
+    const closedAt = `${day}T12:00:00`
     const { error } = await supabase
       .from('delivery_orders')
-      .update({ isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null })
+      .update({ isclosed: true, closed_at: closedAt, closed_by: currentUser?.user_id || null })
       .eq('id', orderId)
     setClosingId(null)
     if (!error) await fetchOrders()

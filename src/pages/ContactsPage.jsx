@@ -4,7 +4,7 @@ import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
   Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus,
 } from 'lucide-react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
@@ -95,13 +95,17 @@ export default function ContactsPage({ type }) {
     setLoading(true)
     // A contact appears here if this page's type is among its roles (contact_types),
     // so multi-role contacts (e.g. Customer + Partner) show on every matching page.
-    let q = supabase
-      .from('contacts')
-      .select('*')
-      .contains('contact_types', [cfg.contactType])
-      .order('first_name')
-    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
-    const { data } = await q
+    // Paged — the customer list is past PostgREST's 1000-row cap.
+    const { data } = await fetchAllRows(() => {
+      let q = supabase
+        .from('contacts')
+        .select('*')
+        .contains('contact_types', [cfg.contactType])
+        .order('first_name')
+        .order('id')
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      return q
+    })
     setContacts(data ?? [])
     setLoading(false)
   }, [cfg.contactType, COMPANY_ID])

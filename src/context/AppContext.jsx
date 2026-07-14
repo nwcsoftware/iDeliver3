@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 
 const AppContext = createContext(null)
@@ -221,24 +221,30 @@ export function AppProvider({ children }) {
     setLoading(l => ({ ...l, drivers: false }))
   }, [])
 
+  // Paged — the order table is well past PostgREST's 1000-row response cap, and a
+  // plain select would silently drop the oldest orders from every page that reads
+  // `orders` (Deliveries, Cashier Box, driver settlements).
   const fetchOrders = useCallback(async () => {
     setLoading(l => ({ ...l, orders: true }))
-    let q = supabase
-      .from('delivery_orders')
-      .select(`
-        *,
-        driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
-        customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
-        zone:delivery_zones(id, name),
-        order_items(currency, line_total, is_deleted),
-        delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(company_name, first_name, last_name)),
-        order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
-        retail_goods_invoices(invoice_value, currency, paid, shop_name, contact_id),
-        payment_collections(amount, currency, collected_by_name, collected_by)
-      `)
-      .order('created_at', { ascending: false })
-    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
-    const { data, error } = await q
+    const { data, error } = await fetchAllRows(() => {
+      let q = supabase
+        .from('delivery_orders')
+        .select(`
+          *,
+          driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
+          customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
+          zone:delivery_zones(id, name),
+          order_items(currency, line_total, is_deleted),
+          delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(company_name, first_name, last_name)),
+          order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
+          retail_goods_invoices(invoice_value, currency, paid, shop_name, contact_id),
+          payment_collections(amount, currency, collected_by_name, collected_by)
+        `)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      return q
+    })
     if (!error && data) setOrders(data)
     setLoading(l => ({ ...l, orders: false }))
   }, [])
