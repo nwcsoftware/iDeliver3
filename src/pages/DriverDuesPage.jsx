@@ -69,9 +69,12 @@ function isReconcilable(o) { return ['collected_by_driver', 'paid_to_office'].in
    i.e. every order the driver can hand cash over for. Already-closed orders stay
    (historical). Credit-customer orders are excluded entirely — the driver collects
    no cash on them; the customer settles their account later on the Credit
-   Customers page. */
+   Customers page. Free orders are excluded too — they're waived to zero, so the
+   driver carries no cash for them and they must not show under a driver or add to
+   the driver's order count. */
 function isSettlementEligible(o) {
   if (o?.customer?.credit_debit_allowed === true) return false
+  if (o?.is_free_order === true) return false
   return o?.isclosed === true
     || (isDelivered(o) && isCompleted(o) && isReconcilable(o))
 }

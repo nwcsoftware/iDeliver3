@@ -628,6 +628,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }, [])
   const { currentUser, hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
+  // Only admins may set the delivery status by hand; a normal (call-center) user
+  // can't — it's driven by the driver app / order lifecycle instead.
+  const canEditDeliveryStatus = hasRole('super_admin', 'admin')
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
@@ -3125,9 +3128,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   <div>
                     <label className="label">Delivery Status</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.delivery_status} onChange={e => fld('delivery_status', e.target.value)}
-                      disabled={!!partyContactId}>
+                      disabled={!!partyContactId || !canEditDeliveryStatus}>
                       {DELIVERY_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
+                    {!partyContactId && !canEditDeliveryStatus && (
+                      <p className="text-[11px] text-slate-500 mt-1">Set automatically — only an admin can change it.</p>
+                    )}
                   </div>
                   {/* Hidden for 2nd-party (supplier/partner) users. */}
                   {!partyContactId && (
