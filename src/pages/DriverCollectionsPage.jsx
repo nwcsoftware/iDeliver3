@@ -24,6 +24,13 @@ import { orderTotalsByCurrency, orderCollectedByCurrency, fmtAmount } from '../l
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
+/* Postgres reports "current transaction is aborted" for every statement that follows
+   a failure on the same connection, so the message alone hides the original cause —
+   that lives in the code/details/hint fields. Show all of them. */
+function describeError(e) {
+  return [e.message, e.details, e.hint, e.code && `[${e.code}]`].filter(Boolean).join(' · ')
+}
+
 /* Per-currency amount still owed on an order = total − already collected (>0 only). */
 function remainingByCurrency(o) {
   const totals    = orderTotalsByCurrency(o)
@@ -127,7 +134,10 @@ export default function DriverCollectionsPage() {
         collected_by_name: driverName(order),
       }))
       const { error: pe } = await supabase.from('payment_collections').insert(payments)
-      if (pe) { setError(`Order ${order.order_number}: ${pe.message}`); setBusy(false); return }
+      if (pe) {
+        console.error('payment_collections insert failed', { order: order.order_number, payments, error: pe })
+        setError(`Order ${order.order_number} (payment): ${describeError(pe)}`); setBusy(false); return
+      }
 
       // 2. Flag the order as collected by the driver (money is with the driver,
       //    not yet in the office) and mark the customer collection complete.
@@ -135,7 +145,10 @@ export default function DriverCollectionsPage() {
         payment_status:           'collected_by_driver',
         collection_from_customer: 'Money Fully collected',
       }).eq('id', order.id)
-      if (ue) { setError(`Order ${order.order_number}: ${ue.message}`); setBusy(false); return }
+      if (ue) {
+        console.error('delivery_orders update failed', { order: order.order_number, error: ue })
+        setError(`Order ${order.order_number} (order update): ${describeError(ue)}`); setBusy(false); return
+      }
 
       paymentsInserted += payments.length
       for (const [cur, amt] of Object.entries(remaining)) totalsByCur[cur] = round2((totalsByCur[cur] || 0) + amt)

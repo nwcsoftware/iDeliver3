@@ -108,6 +108,11 @@ export default function DriverDuesPage() {
   const [paidInput,   setPaidInput]   = useState(() => Object.fromEntries(CURRENCIES.map(c => [c, ''])))  // actual cash handed over
   const [posting,     setPosting]     = useState(false)
   const [postError,   setPostError]   = useState('')
+  // Full-page progress overlay while collecting/closing + refreshing. Keeping it
+  // up (opaquely) through the post-settlement refetches stops the list behind
+  // from flickering as loading states toggle. null = hidden.
+  // { pct: 0-100, label: string, phase: 'run' | 'done' }
+  const [progress,    setProgress]    = useState(null)
   // "As of" date the collection is recorded and the orders are closed on. Super
   // admin can back-/forward-date the settlement; everyone else settles as of today.
   const [settleAsOf,  setSettleAsOf]  = useState(todayStr())
@@ -256,17 +261,23 @@ export default function DriverDuesPage() {
 
   // Orders still ready to collect (outstanding: not yet settled and not closed),
   // per driver — shown next to each driver in the picker. '' key = grand total.
+  // The counts honour the Date From / Date To filters so each driver's number
+  // matches the orders scheduled/closed in the selected date (or date range),
+  // not their all-time outstanding total.
   const readyByDriver = useMemo(() => {
     const m = { '': 0 }
     for (const r of allRows) {
       if (r.settled || r.order.isclosed) continue
       const id = r.order.driver_id
       if (!id) continue
+      const d = orderDate(r.order)
+      if (filters.date_from && (!d || d < filters.date_from)) continue
+      if (filters.date_to   && (!d || d > filters.date_to))   continue
       m[id] = (m[id] || 0) + 1
       m[''] += 1
     }
     return m
-  }, [allRows])
+  }, [allRows, filters.date_from, filters.date_to])
 
   /* ── filtering ───────────────────────────────────────────── */
 
@@ -389,6 +400,10 @@ export default function DriverDuesPage() {
   async function recordCollection() {
     if (collectRows.length === 0) return
     setPosting(true); setPostError('')
+    // Clearing the overlay on failure reveals the modal (which keeps its own
+    // error message) so the user sees exactly what went wrong.
+    const fail = (msg) => { setPostError(msg); setProgress(null); setPosting(false) }
+    setProgress({ pct: 4, label: 'Preparing settlement…', phase: 'run' })
 
     // Effective date of this settlement — chosen "as of" date (super admin) or today.
     // Timestamps derived from it use midday to avoid timezone date-shifting.
@@ -404,14 +419,24 @@ export default function DriverDuesPage() {
       byDriver.get(id).push(r)
     }
     if (byDriver.size === 0) {
-      setPostError('Selected orders have no driver assigned.'); setPosting(false); return
+      fail('Selected orders have no driver assigned.'); return
     }
 
     // The actual amount handed over (modal inputs) only applies when settling a
     // single driver; if several drivers are batched, fall back to expected net.
     const singleDriver = byDriver.size === 1
 
-    for (const [driverId, rows] of byDriver) {
+    // Recording the settlements spans 5% → 55% of the bar, one slice per driver.
+    const driverEntries = [...byDriver]
+    for (let i = 0; i < driverEntries.length; i++) {
+      const [driverId, rows] = driverEntries[i]
+      setProgress({
+        pct:   5 + Math.round((i / driverEntries.length) * 50),
+        label: driverEntries.length === 1
+          ? 'Recording settlement…'
+          : `Recording settlement ${i + 1} of ${driverEntries.length}…`,
+        phase: 'run',
+      })
       const totals = sumRows(rows)   // { collected, retail, net } per currency
       const paid = {}
       for (const c of CURRENCIES) {
@@ -431,7 +456,7 @@ export default function DriverDuesPage() {
         }])
         .select('id')
         .single()
-      if (he) { setPostError(he.message); setPosting(false); return }
+      if (he) { fail(he.message); return }
 
       // 2. Header money — one row per currency that has any activity.
       const currencyTotals = CURRENCIES
@@ -445,7 +470,7 @@ export default function DriverDuesPage() {
         }))
       if (currencyTotals.length > 0) {
         const { error: ce } = await supabase.from('driver_settlement_currency_totals').insert(currencyTotals)
-        if (ce) { setPostError(ce.message); setPosting(false); return }
+        if (ce) { fail(ce.message); return }
       }
 
       // 3. Per-order lines — one row per (order, currency) with any activity.
@@ -468,7 +493,7 @@ export default function DriverDuesPage() {
       }
       if (lines.length > 0) {
         const { error: le } = await supabase.from('driver_settlement_orders').insert(lines)
-        if (le) { setPostError(le.message); setPosting(false); return }
+        if (le) { fail(le.message); return }
       }
     }
 
@@ -476,6 +501,7 @@ export default function DriverDuesPage() {
     // money is now in the call center, so each order is locked via isclosed and
     // can no longer be edited (same flag the Deliveries list uses). The cash has
     // moved from the driver to the office, so payment_status becomes paid_to_office.
+    setProgress({ pct: 60, label: 'Closing orders…', phase: 'run' })
     const closedIds = collectRows.map(r => r.order.id)
     if (closedIds.length > 0) {
       const { error: ue } = await supabase
@@ -487,13 +513,23 @@ export default function DriverDuesPage() {
           payment_status: 'paid_to_office',
         })
         .in('id', closedIds)
-      if (ue) { setPostError(ue.message); setPosting(false); return }
+      if (ue) { fail(ue.message); return }
     }
 
+    // Refresh in place while the overlay stays up, so the underlying list's
+    // loading toggles never flash on screen.
+    setProgress({ pct: 72, label: 'Refreshing settlements…', phase: 'run' })
     await fetchSupplementary()   // refresh settled state → rows drop off "outstanding"
+    setProgress({ pct: 86, label: 'Refreshing orders…', phase: 'run' })
     await fetchOrders()          // closed flag reflects in the list immediately
+    setProgress({ pct: 95, label: 'Updating history…', phase: 'run' })
     await fetchHistory()         // new settlement appears in the History tab
-    setCollectRows([]); setPosting(false)
+
+    // Hold the completed bar briefly so the user registers success, then tear
+    // down the modal and overlay together.
+    setProgress({ pct: 100, label: 'Done', phase: 'done' })
+    await new Promise(r => setTimeout(r, 650))
+    setCollectRows([]); setPosting(false); setProgress(null)
   }
 
   /* ── mark an order as closed ─────────────────────────────────
@@ -1040,6 +1076,33 @@ export default function DriverDuesPage() {
           className="fixed z-[55] pointer-events-none card border border-surface-border rounded-lg shadow-xl overflow-hidden"
           style={{ left: hoverSummary.x + 16, top: hoverSummary.y + 16, width: 340 }}>
           <AmountSummaryContent order={hoverSummary.order} />
+        </div>
+      )}
+
+      {/* Progress overlay — covers the page while collecting/closing + refreshing.
+          Opaque enough to hide the list re-rendering behind it (no flicker) and
+          pointer-events block every other control until it's done. */}
+      {progress && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="card w-full max-w-sm p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              {progress.phase === 'done'
+                ? <CheckCircle2 className="w-5 h-5 text-green-400" />
+                : <Banknote className="w-5 h-5 text-brand-400 animate-pulse" />}
+              <h3 className="text-sm font-semibold text-slate-100">
+                {progress.phase === 'done' ? 'Settlement complete' : 'Collecting & closing…'}
+              </h3>
+              <span className="ml-auto text-xs tabular-nums text-slate-400">{progress.pct}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-surface-border overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ease-out ${
+                  progress.phase === 'done' ? 'bg-green-500' : 'bg-brand-500'}`}
+                style={{ width: `${progress.pct}%` }}
+              />
+            </div>
+            <p className="text-xs text-slate-400">{progress.label}</p>
+          </div>
         </div>
       )}
 
