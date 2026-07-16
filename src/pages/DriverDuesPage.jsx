@@ -92,6 +92,9 @@ export default function DriverDuesPage() {
   const { orders, drivers, loading, fetchOrders, showSummary } = useApp()
   const { currentUser, hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
+  // Who may back-/forward-date the "Collect & close as of" settlement date.
+  // Admins get this alongside super admins; everyone else settles as of today.
+  const canBackdateSettlement = hasRole('super_admin', 'admin')
 
   const [tab,     setTab]     = useState('collect')   // 'collect' (dues to collect) | 'history'
   const [filters, setFilters] = useState(EMPTY_FILTERS)
@@ -408,7 +411,7 @@ export default function DriverDuesPage() {
     const fail = (msg) => { setPostError(msg); setProgress(null); setPosting(false) }
     setProgress({ pct: 4, label: 'Preparing settlement…', phase: 'run' })
 
-    // Effective date of this settlement — chosen "as of" date (super admin) or today.
+    // Effective date of this settlement — chosen "as of" date (super admin / admin) or today.
     // Timestamps derived from it use midday to avoid timezone date-shifting.
     const settleDate = settleAsOf || todayStr()
     const settleAt   = `${settleDate}T12:00:00`
@@ -1210,9 +1213,9 @@ export default function DriverDuesPage() {
               </>)
             })()}
 
-            {/* "As of" date — super admin can back-/forward-date the settlement and
-                the order closing. Everyone else settles as of today. */}
-            {isSuperAdmin ? (
+            {/* "As of" date — super admin & admin can back-/forward-date the
+                settlement and the order closing. Everyone else settles as of today. */}
+            {canBackdateSettlement ? (
               <div className="rounded-lg border border-surface-border px-3 py-2.5 flex items-center justify-between gap-3">
                 <label htmlFor="settle-as-of" className="text-xs text-slate-400 flex items-center gap-1.5 whitespace-nowrap">
                   <Calendar className="w-3.5 h-3.5" /> Collect &amp; close as of
