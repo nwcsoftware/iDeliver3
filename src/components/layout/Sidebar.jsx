@@ -55,6 +55,7 @@ const superAdminSettingsItems = [
   { to: '/settings/messages',     icon: Megaphone,   label: 'Broadcast Messages' },
   { to: '/settings/delete-order', icon: PackageX,    label: 'Delete Order' },
   { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
+  { to: '/settings/reset-cashier-box', icon: Wallet,  label: 'Reset Cashier Box' },
   { to: '/settings/reset',        icon: Trash2,      label: 'Reset Data' },
 ]
 

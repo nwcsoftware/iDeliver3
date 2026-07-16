@@ -34,6 +34,7 @@ import BroadcastPopup         from './components/messages/BroadcastPopup'
 import ResetOrdersPage        from './pages/ResetOrdersPage'
 import DeleteOrderPage         from './pages/DeleteOrderPage'
 import DeleteOrdersRangePage   from './pages/DeleteOrdersRangePage'
+import CashierBoxResetPage      from './pages/CashierBoxResetPage'
 import DriverCollectionsPage   from './pages/DriverCollectionsPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import logo             from './assets/Logo.png'
@@ -118,6 +119,7 @@ function AppShell() {
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />
                 <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/delete-orders-range" element={<DeleteOrdersRangePage />} />
+                <Route path="/settings/reset-cashier-box" element={<CashierBoxResetPage />} />
                 <Route path="/settings/driver-collections" element={<DriverCollectionsPage />} />
                 <Route path="/settings/reset"      element={<ResetOrdersPage />} />
               </Routes>
