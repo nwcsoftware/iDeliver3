@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import { Wallet, ArrowDownCircle, ArrowUpCircle, Scale, Download, Calendar, RefreshCw, UserCheck, Handshake, Store, ChevronDown, ChevronRight } from 'lucide-react'
+import { Wallet, ArrowDownCircle, ArrowUpCircle, Scale, Download, Calendar, RefreshCw, UserCheck, Handshake, Store, ChevronDown, ChevronRight, EyeOff } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { fmtAmount } from '../lib/orderAmounts'
@@ -48,14 +49,30 @@ const PARTY_CATS = [
          delivery packages and order services.
    Only closed orders count, dated by when the order was closed (closed_at). */
 export default function CashierBoxPage() {
-  const { orders, loading } = useApp()
+  const { orders, loading, COMPANY_ID } = useApp()
   const { currentUser } = useAuth()
 
   const [from, setFrom] = useState(todayStr())
   const [to,   setTo]   = useState(todayStr())
+  // Active "reset as of" checkpoint (latest reset_through) — movements dated on or
+  // before it are hidden from the box (set via the Reset Cashier Box tool).
+  const [resetThrough, setResetThrough] = useState(null)
   // Which detailed-breakdown categories are expanded (all collapsed by default).
   const [openCats, setOpenCats] = useState(() => new Set())
   const toggleCat = (key) => setOpenCats(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
+
+  // Load the active reset checkpoint. Remounting the page (navigating back after a
+  // reset) refetches it, so a fresh reset is reflected immediately.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      let q = supabase.from('cashier_box_resets').select('reset_through').order('reset_through', { ascending: false }).limit(1)
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data } = await q
+      if (alive) setResetThrough(data?.[0]?.reset_through ? String(data[0].reset_through).slice(0, 10) : null)
+    })()
+    return () => { alive = false }
+  }, [COMPANY_ID])
 
   // Build the statement lines (one row per money movement) from closed orders
   // whose close date falls inside the selected range.
@@ -65,6 +82,8 @@ export default function CashierBoxPage() {
       if (!o.isclosed) continue
       const day = o.closed_at ? String(o.closed_at).slice(0, 10) : null
       if (!day) continue
+      // Hidden by an active reset checkpoint (movements on/before reset_through).
+      if (resetThrough && day <= resetThrough) continue
       if (from && day < from) continue
       if (to   && day > to)   continue
 
@@ -117,7 +136,7 @@ export default function CashierBoxPage() {
     // Newest first, then IN before OUT within the same day for readability.
     out.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.dir === b.dir ? 0 : a.dir === 'in' ? -1 : 1))
     return out
-  }, [orders, from, to])
+  }, [orders, from, to, resetThrough])
 
   // Per-currency totals: collected (in), spent (out), net (in box).
   const totals = useMemo(() => {
@@ -282,6 +301,17 @@ export default function CashierBoxPage() {
       {busy && (
         <div className="flex items-center gap-2 text-slate-500 text-sm">
           <RefreshCw className="w-4 h-4 animate-spin" /> Loading orders…
+        </div>
+      )}
+
+      {resetThrough && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-xs text-amber-300">
+          <EyeOff className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>
+            Cashier Box reset is active — movements on or before{' '}
+            <span className="font-semibold">{resetThrough}</span> are hidden. Nothing was deleted; remove the reset in
+            Settings → Reset Cashier Box to bring them back.
+          </span>
         </div>
       )}
 
