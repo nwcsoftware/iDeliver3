@@ -6,7 +6,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateAccountNumber, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, formatAccountNumber, insertContactWithUniqueCode } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 
@@ -380,10 +380,11 @@ export default function DriversPage() {
     }
     try {
       if (modal === 'add') {
-        // The DB trigger generates contacts.code (e.g. DRV-000123) on insert; read it back to show the user.
+        // Generates a unique contacts.code (e.g. DRV-000123), retrying on
+        // duplicate-code collisions; read it back to show the user.
         const { data, error } = await withTimeout(
-          supabase.from('contacts').insert([payload]).select('id,code,account_number,first_name,last_name').single(),
-          15000, 'Saving the driver',
+          insertContactWithUniqueCode(payload, 'driver', 'id,code,account_number,first_name,last_name'),
+          30000, 'Saving the driver',
         )
         if (error) throw error
         await syncPettyCash(data.id)

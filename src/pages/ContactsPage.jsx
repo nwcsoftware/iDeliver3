@@ -7,7 +7,7 @@ import {
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
@@ -277,12 +277,6 @@ export default function ContactsPage({ type }) {
     if (modal === 'add' && usesAccountNumber) {
       try { accountNumber = await ensureUniqueAccountNumber(accountNumber, cfg.contactType) } catch { /* leave as-is */ }
     }
-    // Generate a unique contact code on the client for new contacts (bypasses the
-    // DB trigger and its historical duplicate-key collisions).
-    let contactCode = null
-    if (modal === 'add') {
-      try { contactCode = await generateContactCode(cfg.contactType) } catch { /* fall back to the trigger */ }
-    }
 
     // Roles (tags) chosen on the form; always keep at least the page's own type.
     const selectedTypes = (Array.isArray(form.contact_types) && form.contact_types.length)
@@ -324,7 +318,6 @@ export default function ContactsPage({ type }) {
             branch_id:  currentUser?.branch_id || null,
             created_by: currentUser?.user_id   || null,
             ...(usesAccountNumber ? { account_number: accountNumber || null } : {}),
-            ...(contactCode ? { code: contactCode } : {}),
           }
         : {
             updated_by: currentUser?.user_id   || null,
@@ -334,7 +327,8 @@ export default function ContactsPage({ type }) {
 
     let contactId = modal === 'add' ? null : modal.id
     if (modal === 'add') {
-      const { data, error: err } = await supabase.from('contacts').insert([payload]).select('id').single()
+      // Generates a unique contact code and retries on duplicate-code collisions.
+      const { data, error: err } = await insertContactWithUniqueCode(payload, primaryType, 'id')
       if (err) { setError(err.message); setSaving(false); return }
       contactId = data.id
     } else {

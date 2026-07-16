@@ -10,7 +10,7 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { generateAccountNumber, ensureUniqueAccountNumber, generateContactCode, formatAccountNumber } from '../lib/accountNumber'
+import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
@@ -1227,11 +1227,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     let accountNumber = newCustomer.account_number
     try { accountNumber = await ensureUniqueAccountNumber(accountNumber, newContactType) } catch { /* leave as-is */ }
 
-    // Generate a unique contact code on the client (bypasses the DB trigger and
-    // its historical duplicate-key collisions).
-    let contactCode = null
-    try { contactCode = await generateContactCode(newContactType) } catch { /* fall back to the trigger */ }
-
     const payload = {
       contact_type:    newContactType,
       // Company-only columns are sent only for companies, so individuals don't
@@ -1256,13 +1251,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       branch_id:      currentUser?.branch_id || null,
       created_by:     currentUser?.user_id   || null,
       account_number: accountNumber || null,
-      ...(contactCode ? { code: contactCode } : {}),
     }
-    const { data, error: e } = await supabase
-      .from('contacts')
-      .insert([payload])
-      .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,entity_type,company_name,credit_debit_allowed')
-      .single()
+    // Generates a unique contact code and retries on duplicate-code collisions.
+    const { data, error: e } = await insertContactWithUniqueCode(
+      payload, newContactType,
+      'id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,entity_type,company_name,credit_debit_allowed',
+    )
     if (e) { setCustomerError(e.message); setSavingCustomer(false); return }
 
     const addrErr = await saveContactAddresses({

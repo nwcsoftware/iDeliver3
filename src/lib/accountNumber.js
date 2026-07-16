@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, fetchAllRows } from './supabase'
 
 /** How many digits every generated account number has (3 groups of 4 → "5821 6547 5917"). */
 const ACCOUNT_NUMBER_LENGTH = 12
@@ -152,12 +152,14 @@ export const CONTACT_CODE_PREFIXES = {
  * the historical COUNT-based duplicate-key collisions. Uniqueness is verified
  * against the contacts table, incrementing until an unused code is found.
  */
-export async function generateContactCode(contactType) {
+export async function generateContactCode(contactType, minSeq = 0) {
   const prefix = CONTACT_CODE_PREFIXES[contactType] || 'OTH'
-  // Highest numeric suffix currently used for this prefix.
-  const { data, error } = await supabase.from('contacts').select('code').like('code', `${prefix}-%`)
+  // Highest numeric suffix currently used for this prefix. Paged, because a plain
+  // select silently truncates at 1000 rows and would restart the sequence low.
+  const { data, error } = await fetchAllRows(() =>
+    supabase.from('contacts').select('code').like('code', `${prefix}-%`))
   if (error) throw error
-  let max = 0
+  let max = minSeq
   for (const r of (data || [])) {
     const m = String(r.code || '').match(/(\d+)$/)
     if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n) && n > max) max = n }
@@ -171,4 +173,40 @@ export async function generateContactCode(contactType) {
     seq++
   }
   return `${prefix}-${String(seq).padStart(6, '0')}`
+}
+
+/** True when a Supabase error is a duplicate-key violation on contacts.code. */
+function isDuplicateContactCode(err) {
+  if (!err) return false
+  const text = `${err.code ?? ''} ${err.message ?? ''} ${err.details ?? ''}`
+  return err.code === '23505' || /contacts_code_key/i.test(text)
+}
+
+/**
+ * Insert a NEW contact, guaranteeing a unique `code`. A code generated moments
+ * before the insert can still be taken by a concurrent save (or by the DB's
+ * COUNT-based trigger), which surfaces as a "duplicate key value violates unique
+ * constraint contacts_code_key" error. So on that specific error we generate a
+ * fresh code — starting above the one that just collided — and retry, repeating
+ * until the insert succeeds or MAX_GENERATION_ATTEMPTS is exhausted.
+ *
+ * Any other error is returned to the caller untouched.
+ * Returns Supabase's { data, error } for the inserted row.
+ */
+export async function insertContactWithUniqueCode(payload, contactType, selectCols = 'id') {
+  let body = { ...payload }
+  let lastResult = null
+  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
+    if (!body.code) {
+      try { body = { ...body, code: await generateContactCode(contactType) } } catch { /* let the trigger try */ }
+    }
+    lastResult = await supabase.from('contacts').insert([body]).select(selectCols).single()
+    if (!isDuplicateContactCode(lastResult.error)) return lastResult
+    // Collided → drop the code so the next pass regenerates one past the clash.
+    const clashed = String(body.code || '').match(/(\d+)$/)
+    const minSeq = clashed ? parseInt(clashed[1], 10) : 0
+    body = { ...body, code: null }
+    try { body.code = await generateContactCode(contactType, minSeq) } catch { /* retry generates it above */ }
+  }
+  return lastResult
 }
