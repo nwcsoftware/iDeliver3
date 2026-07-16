@@ -30,6 +30,7 @@ const secondaryNav = [
   { to: '/returnable-items',     icon: RotateCcw,       label: 'Returnable Items' },
   { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
   { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
+  { to: '/account-statements',   icon: BookText,        label: 'Account Statements' },
   { to: '/account-transactions', icon: BookText,        label: 'Account Transactions' },
   { to: '/supplier-settlements', icon: Store,           label: 'Supplier Settlements' },
   { to: '/vehicles',             icon: Car,             label: 'Vehicles'  },

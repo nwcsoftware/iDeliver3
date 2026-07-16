@@ -52,7 +52,11 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true }
   }, [])
 
-  const login = useCallback(async (identifier, password) => {
+  // `mode` gates which tab the sign-in came from:
+  //   'partner' → only partner/supplier (2nd-party) accounts may sign in
+  //   'staff'   → only Call Center / office accounts may sign in
+  //   null      → no restriction (legacy callers)
+  const login = useCallback(async (identifier, password, mode = null) => {
     const { data, error } = await supabase.rpc('verify_login', {
       p_login:    identifier.trim(),
       p_password: password,
@@ -77,6 +81,16 @@ export function AuthProvider({ children }) {
     const user = {
       ...data[0],
       logged_in_at: new Date().toISOString(),
+    }
+
+    // Enforce the selected login tab against the account's role. The 2nd-party
+    // roles are exactly partner/supplier; everything else is an office account.
+    const isSecondParty = user.role === 'partner' || user.role === 'supplier'
+    if (mode === 'partner' && !isSecondParty) {
+      return { success: false, error: 'This is not a partner or supplier account. Use the Call Center tab.' }
+    }
+    if (mode === 'staff' && isSecondParty) {
+      return { success: false, error: 'This is a partner/supplier account. Use the Partner / Supplier tab.' }
     }
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(user))
