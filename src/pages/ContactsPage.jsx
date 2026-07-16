@@ -11,7 +11,9 @@ import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniq
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
+import ContactSubAccounts from '../components/contacts/ContactSubAccounts'
 import { saveContactAddresses } from '../lib/contactAddresses'
+import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount } from '../lib/subAccounts'
 
 /* ── type config ─────────────────────────────────────────── */
 
@@ -26,6 +28,13 @@ const GENERAL_EXTRA_FIELDS = [
   { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
   { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
   { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
+]
+
+// Panes of the add/edit contact modal.
+const CONTACT_TABS = [
+  { value: 'details',   label: 'Details',         Icon: UserCheck },
+  { value: 'addresses', label: 'Addresses',       Icon: MapPin },
+  { value: 'accounts',  label: 'Account Numbers', Icon: CreditCard },
 ]
 
 const TYPE_CONFIG = {
@@ -77,6 +86,9 @@ export default function ContactsPage({ type }) {
   const [contactCategories, setContactCategories] = useState([])   // custom contact_categories
   const [addresses,      setAddresses]      = useState([])
   const [origAddressIds, setOrigAddressIds] = useState([])
+  const [accounts,       setAccounts]       = useState([])   // sub_accounts rows
+  const [origAccountIds, setOrigAccountIds] = useState([])
+  const [tab,            setTab]            = useState('details')
   // Customer "User Account & Security" collapsible section (admin only).
   const [credOpen,     setCredOpen]     = useState(false)
   const [resetting,    setResetting]    = useState(false)
@@ -181,7 +193,8 @@ export default function ContactsPage({ type }) {
   function fld(k, v) { setForm(f => ({ ...f, [k]: v })); setError('') }
 
   function openAdd() {
-    setForm({ ...BASE_FORM, contact_types: [cfg.contactType] }); setAddresses([]); setOrigAddressIds([]); setError(''); setModal('add')
+    setForm({ ...BASE_FORM, contact_types: [cfg.contactType] }); setAddresses([]); setOrigAddressIds([])
+    setAccounts([]); setOrigAccountIds([]); setTab('details'); setError(''); setModal('add')
     if (ACCOUNT_NUMBER_TYPES.includes(type)) {
       generateAccountNumber(cfg.contactType)
         .then(acct => setForm(f => ({ ...f, account_number: acct })))
@@ -197,7 +210,8 @@ export default function ContactsPage({ type }) {
         ? c.contact_types
         : [c.contact_type].filter(Boolean),
     })
-    setAddresses([]); setOrigAddressIds([]); setError(''); setModal(c)
+    setAddresses([]); setOrigAddressIds([]); setAccounts([]); setOrigAccountIds([])
+    setTab('details'); setError(''); setModal(c)
     setCredOpen(false); setUsernameInput(c.username || ''); setPwInput(''); setShowPw(false); setEditingPw(false); setNewPassword(''); setCredError('')
     const { data } = await supabase
       .from('contact_addresses')
@@ -214,9 +228,14 @@ export default function ContactsPage({ type }) {
     }))
     setAddresses(rows)
     setOrigAddressIds(rows.map(r => r._id))
+
+    const { rows: acctRows } = await loadSubAccounts(c.id)
+    setAccounts(acctRows)
+    setOrigAccountIds(acctRows.map(r => r._id))
   }
   function closeModal() {
-    setModal(null); setForm(BASE_FORM); setAddresses([]); setOrigAddressIds([]); setError('')
+    setModal(null); setForm(BASE_FORM); setAddresses([]); setOrigAddressIds([])
+    setAccounts([]); setOrigAccountIds([]); setTab('details'); setError('')
     setCredOpen(false); setUsernameInput(''); setPwInput(''); setShowPw(false); setEditingPw(false); setNewPassword(''); setCredError(''); setResetting(false)
   }
 
@@ -341,6 +360,24 @@ export default function ContactsPage({ type }) {
       companyId: COMPANY_ID, userId: currentUser?.user_id || null,
     })
     if (addrErr) { setError(addrErr); setSaving(false); return }
+
+    const acctErr = await saveSubAccounts({
+      contactId, accounts, origIds: origAccountIds,
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+    })
+    if (acctErr) { setError(acctErr); setSaving(false); return }
+
+    // New contact that wasn't given accounts by hand → seed the primary one, so
+    // it starts out like every contact the fix81 backfill touched.
+    if (modal === 'add' && accounts.length === 0) {
+      await ensurePrimarySubAccount({
+        contactId,
+        accountNumber: accountNumber,
+        creditAllowed: !!form.credit_debit_allowed,
+        companyId: COMPANY_ID,
+        userId: currentUser?.user_id || null,
+      })
+    }
 
     // Saved successfully → close immediately, then refresh the list in the background.
     setSaving(false); closeModal()
@@ -542,19 +579,49 @@ export default function ContactsPage({ type }) {
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
 
-            <ContactFormFields
-              type={type}
-              form={form}
-              setField={fld}
-              mode={modal === 'add' ? 'add' : 'edit'}
-              extraFields={formExtraFields}
-              showRoles
-            />
+            {/* Tabs — the form is long enough that details, addresses and account
+                numbers each deserve their own pane. Validation errors and the
+                Save button live outside the tabs, so they're always reachable. */}
+            <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6">
+              {CONTACT_TABS.map(t => (
+                <button key={t.value} type="button" onClick={() => setTab(t.value)}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
+                    tab === t.value
+                      ? 'text-brand-300 border-brand-500'
+                      : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
+                  <t.Icon className="w-3.5 h-3.5" /> {t.label}
+                  {t.value === 'accounts' && accounts.length > 0 && (
+                    <span className="text-[10px] text-slate-500">({accounts.length})</span>
+                  )}
+                </button>
+              ))}
+            </div>
 
-            <ContactAddresses addresses={addresses} setAddresses={setAddresses} />
+            {tab === 'details' && (
+              <ContactFormFields
+                type={type}
+                form={form}
+                setField={fld}
+                mode={modal === 'add' ? 'add' : 'edit'}
+                extraFields={formExtraFields}
+                showRoles
+              />
+            )}
+
+            {tab === 'addresses' && (
+              <ContactAddresses addresses={addresses} setAddresses={setAddresses} />
+            )}
+
+            {tab === 'accounts' && (
+              <ContactSubAccounts
+                accounts={accounts}
+                setAccounts={setAccounts}
+                contactType={cfg.contactType}
+              />
+            )}
 
             {/* Login access — suppliers & partners may be given a user account. */}
-            {isAdmin && loginRole && (
+            {tab === 'details' && isAdmin && loginRole && (
               <div className="border border-surface-border rounded-lg p-3 flex items-start gap-3 bg-surface-hover/30">
                 <div className="flex-1 min-w-0">
                   <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-300 flex items-center gap-1.5">
@@ -576,7 +643,7 @@ export default function ContactsPage({ type }) {
             )}
 
             {/* Customer user account & security — collapsible, admin only */}
-            {type === 'customer' && modal !== 'add' && isAdmin && (
+            {tab === 'details' && type === 'customer' && modal !== 'add' && isAdmin && (
               <div className="border border-surface-border rounded-lg overflow-hidden">
                 <button type="button" onClick={() => setCredOpen(o => !o)}
                   className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">

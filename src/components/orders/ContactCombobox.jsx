@@ -12,6 +12,19 @@ function personName(c) {
 }
 
 /**
+ * Every role a contact holds, for the badges in the dropdown. Multi-role contacts
+ * carry each role in contact_types[]; legacy rows that predate the array only have
+ * the single primary contact_type. The primary is listed first, then the rest in
+ * their stored order, so the badge that identifies the contact stays leftmost.
+ */
+function contactRoles(c) {
+  const all = Array.isArray(c?.contact_types) ? c.contact_types.filter(Boolean) : []
+  const primary = c?.contact_type || null
+  const ordered = primary ? [primary, ...all.filter(t => t !== primary)] : all
+  return [...new Set(ordered)]
+}
+
+/**
  * Typeahead contact picker that behaves like the order form's customer box:
  * type to search the given contacts; pick a match, or — when what you typed
  * isn't a valid contact — choose "Add new …" to create one (the parent opens the
@@ -145,7 +158,9 @@ export default function ContactCombobox({
                     {sub && <span className="block text-[10px] text-slate-500 truncate">{sub}</span>}
                   </span>
                   {c.code && <span className="text-[10px] font-mono text-slate-500 flex-shrink-0">{c.code}</span>}
-                  {c.contact_type && <span className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{c.contact_type}</span>}
+                  {contactRoles(c).map(role => (
+                    <span key={role} className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{role}</span>
+                  ))}
                 </button>
               )
             })}

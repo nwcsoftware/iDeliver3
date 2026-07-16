@@ -12,6 +12,10 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
+import {
+  resolveSubAccount, subAccountBalance, checkSubAccountCharge,
+  isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
+} from '../lib/subAccounts'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../components/ui/Badge'
@@ -239,7 +243,7 @@ function collectionFromPayStatus(payStatus) {
 
 const BASE_FORM = {
   recipient_name: '', recipient_mobile: '', recipient_whatsapp: '',
-  customer_id: '', main_account: '', pickup_address: '', delivery_address: '',
+  customer_id: '', main_account: '', sub_account_id: '', pickup_address: '', delivery_address: '',
   delivery_lat: '', delivery_lng: '',
   delivery_zone_id: '', driver_id: '',
   status: 'scheduled', delivery_status: 'Awaiting Pickup', payment_status: 'unpaid',
@@ -706,6 +710,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [cancelModal, setCancelModal] = useState(null)
   const [customers,          setCustomers]          = useState([])
   const [allContacts,        setAllContacts]        = useState([])   // every contact, any role — for the service-provider picker
+  const [subAccounts,        setSubAccounts]        = useState([])   // sub_accounts rows, all contacts
+  const [creditPayments,     setCreditPayments]     = useState([])   // credit_customer_payments — pay down an account's balance
   const [products,           setProducts]           = useState([])
   const [providers,          setProviders]          = useState([])   // "Online" contacts → package providers
   const [orderTypes,         setOrderTypes]         = useState([])   // custom order types (DB)
@@ -806,6 +812,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     ])
     setCustomers(custs ?? [])
     setAllContacts(allc ?? [])
+    // Account numbers + credit settlements, needed to enforce each account's
+    // limit and expiry when an order is closed. Paged for the same reason the
+    // contact pickers are: both are past PostgREST's 1000-row cap.
+    const [{ data: subs }, { data: pays }] = await Promise.all([
+      // Contact accounts only — sub_accounts is the whole Chart of Accounts, and
+      // its other rows (ledger accounts with no contact) mean nothing here.
+      fetchAllRows(() => supabase.from('sub_accounts').select('*')
+        .not('contact_id', 'is', null).order('id')),
+      fetchAllRows(() => supabase.from('credit_customer_payments').select('customer_id,sub_account_id,amount,currency').order('id')),
+    ])
+    setSubAccounts(subs ?? [])
+    setCreditPayments(pays ?? [])
     setProducts(prods  ?? [])
     setOrderTypes(types ?? [])
     setProviders(provs ?? [])
@@ -1078,13 +1096,20 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      the order on its behalf), the company name goes in the customer box and the
      recipient (the end customer) is left blank to be entered manually. The
      main_account is always taken from the contact's account_number (read-only). */
-  function applyCustomer(c) {
+  /* `knownAccounts` lets a caller that just created accounts pass them in: state
+     updates don't flush synchronously, so a caller in the same tick as
+     setSubAccounts would otherwise resolve against the pre-insert list. */
+  function applyCustomer(c, knownAccounts = null) {
     const isCompany   = c.entity_type === 'company' || contactHasType(c, 'partner')
     const displayName = (isCompany && c.company_name) ? c.company_name : customerName(c)
+    // Default to the contact's primary account; the picker below can change it.
+    const pool = knownAccounts ?? subAccounts
+    const primary = resolveSubAccount(null, pool.filter(s => s.contact_id === c.id))
     setForm(f => ({
       ...f,
       customer_id:        c.id,
-      main_account:       c.account_number ?? '',
+      sub_account_id:     primary?.id ?? '',
+      main_account:       primary?.code ?? c.account_number ?? '',
       recipient_name:     isCompany ? '' : (customerName(c) || f.recipient_name),
       recipient_mobile:   isCompany ? '' : (c.mobile ?? f.recipient_mobile),
       recipient_whatsapp: isCompany ? '' : (c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp),
@@ -1109,7 +1134,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      account, so only the recipient mobile / whatsapp are cleared. */
   function resetCustomer() {
     setCustomerInput('')
-    setForm(f => ({ ...f, customer_id: '', main_account: '', recipient_mobile: '', recipient_whatsapp: '' }))
+    setForm(f => ({ ...f, customer_id: '', main_account: '', sub_account_id: '', recipient_mobile: '', recipient_whatsapp: '' }))
     setCustomerDropdownOpen(false)
     setError('')
   }
@@ -1255,7 +1280,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // Generates a unique contact code and retries on duplicate-code collisions.
     const { data, error: e } = await insertContactWithUniqueCode(
       payload, newContactType,
-      'id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,entity_type,company_name,credit_debit_allowed',
+      'id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,contact_types,entity_type,company_name,credit_debit_allowed',
     )
     if (e) { setCustomerError(e.message); setSavingCustomer(false); return }
 
@@ -1265,11 +1290,24 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
     if (addrErr) { setCustomerError(addrErr); setSavingCustomer(false); return }
 
+    // Seed the contact's primary account number, like the fix81 backfill did for
+    // existing contacts. It must land in state before applyCustomer runs below,
+    // or the order would resolve to no account at all.
+    const seeded = await ensurePrimarySubAccount({
+      contactId: data.id,
+      accountNumber: data.account_number,
+      creditAllowed: data.credit_debit_allowed === true,
+      companyId: COMPANY_ID,
+      userId: currentUser?.user_id || null,
+    })
+    const nextAccounts = seeded ? [...subAccounts, seeded] : subAccounts
+    if (seeded) setSubAccounts(nextAccounts)
+
     setCustomers(prev => [...prev, data])
     setAllContacts(prev => [...prev, data])
     // Select the new contact back into whichever field opened the modal.
     const onCreated = newContactCreatedRef.current
-    if (onCreated) onCreated(data); else applyCustomer(data)
+    if (onCreated) onCreated(data); else applyCustomer(data, nextAccounts)
     newContactCreatedRef.current = null
     setNewCustomerOpen(false)
     setSavingCustomer(false)
@@ -1309,6 +1347,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       driver_id:        o.driver_id        ?? '',
       delivery_zone_id: o.delivery_zone_id ?? '',
       customer_id:      o.customer_id      ?? '',
+      sub_account_id:   o.sub_account_id   ?? '',
       delivery_fee:     o.delivery_fee     ?? '',
       discount_amount:  o.discount_amount  ?? '0',
       discount_currency: o.discount_currency || o.currency || 'USD',
@@ -1615,6 +1654,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     if (!form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
     if (!form.delivery_address.trim()) return setError('Delivery address is required.')
     if (!form.customer_id)             return setError('Please select a customer.')
+    // Closing is what puts a charge on the account, so the account's terms (cash
+    // vs credit, limit, expiry) are enforced here rather than on every save. The
+    // Mark Closed button is already disabled in this case — this is the guard
+    // behind it, since the button isn't the only way to reach a close.
+    if (close && !accountCheck.ok) return setError(accountCheck.reason)
 
     // 2nd-party (supplier/partner) users: force their own linked contact as the
     // package provider and the retail-invoice shop, so the order always
@@ -1688,6 +1732,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       recipient_whatsapp:   form.recipient_whatsapp?.trim() || null,
       customer_id:          form.customer_id,
       main_account:         form.main_account || null,
+      sub_account_id:       form.sub_account_id || null,
       is_credit_order:      modal !== 'add' && modal?.is_credit_order === true,   // preserved on edit; credit handling now keys off the customer
       pickup_address:       form.pickup_address?.trim()  || null,
       delivery_address:     form.delivery_address.trim(),
@@ -2184,12 +2229,50 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     (modal && modal !== 'add' && modal.customer?.credit_debit_allowed === true)
   // A zero-total order has nothing to collect, so payment can never gate its close.
   const zeroTotal = !CURRENCIES.some(c => round2(totals[c] || 0) > 0)
+
+  /* ── the account this order bills to (fix81) ──────────────────
+     Every contact's account numbers, the one this order is charged to, and what
+     that account already owes. A contact with no sub_accounts rows yet (e.g. the
+     migration hasn't run) yields null, and every check below no-ops — so the old
+     credit_debit_allowed behaviour stands until accounts actually exist. */
+  const customerAccounts = subAccounts.filter(s => s.contact_id === form.customer_id)
+  const selectedAccount  = resolveSubAccount(form.sub_account_id || null, customerAccounts)
+  // What the account owes BEFORE this order. The current order is excluded so
+  // that reopening an already-closed order doesn't count its own charge twice.
+  const accountOutstanding = selectedAccount
+    ? subAccountBalance({
+        account:  selectedAccount,
+        orders:   orders.filter(o =>
+          o.customer_id === form.customer_id && o.isclosed === true &&
+          !(modal && modal !== 'add' && o.id === modal.id)),
+        payments: creditPayments.filter(p => p.customer_id === form.customer_id),
+        accounts: customerAccounts,
+        orderTotal: orderTotalsByCurrency,
+      })
+    : 0
+  // The unpaid balance this order would leave on that account, in its currency.
+  const orderOwing = round2((totals[form.currency] || 0) - (paidByCur[form.currency] || 0))
+  const accountCheck = checkSubAccountCharge({
+    account: selectedAccount,
+    amount: orderOwing,
+    currency: form.currency,
+    outstanding: accountOutstanding,
+  })
+
   // "Mark Closed" eligibility: order status Completed + delivery Delivered, and
   // fully paid — except a credit-allowed customer (or a zero-total order) may close
   // with an unpaid balance (it becomes a receivable settled later on the Credit
   // Customers page).
   const closeRequirements = []
-  if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit && !zeroTotal) {
+  // Once a contact has account numbers, THEY decide whether an unpaid balance may
+  // close: a cash account must be settled, a credit account must stay inside its
+  // limit and expiry. credit_debit_allowed only still governs contacts that have
+  // no accounts yet.
+  if (selectedAccount) {
+    // Terse here because this list renders as "must be: a, b" — the full
+    // explanation is on the form under the account, and in the save guard.
+    if (!accountCheck.ok) closeRequirements.push('within the account’s terms')
+  } else if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit && !zeroTotal) {
     closeRequirements.push('fully paid (no pending dues)')
   }
   if (form.status !== 'completed')          closeRequirements.push('order status Completed')
@@ -2850,7 +2933,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             if (partyContactId) return   // 2nd-party: customer is locked to their own account
                             setCustomerInput(e.target.value)
                             setCustomerDropdownOpen(true)
-                            if (form.customer_id) setForm(f => ({ ...f, customer_id: '', main_account: '' }))
+                            if (form.customer_id) setForm(f => ({ ...f, customer_id: '', main_account: '', sub_account_id: '' }))
                             setError('')
                           }}
                           onFocus={() => { if (!partyContactId) setCustomerDropdownOpen(true) }}
@@ -2913,11 +2996,56 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       )}
                     </div>
 
-                    {/* Main account — auto-filled from the contact, read-only */}
-                    {form.main_account && (
+                    {/* Account — which of the contact's account numbers this order
+                        is billed to. With one account it's the read-only line it
+                        has always been; with several, a picker. */}
+                    {customerAccounts.length > 1 ? (
+                      <div className="mt-1.5">
+                        <label className="label text-[10px]">Account</label>
+                        <select className="input" value={form.sub_account_id || ''}
+                          disabled={orderLocked}
+                          onChange={e => {
+                            const acct = customerAccounts.find(a => a.id === e.target.value)
+                            setForm(f => ({
+                              ...f,
+                              sub_account_id: e.target.value,
+                              main_account: acct?.code ?? f.main_account,
+                            }))
+                            setError('')
+                          }}>
+                          {customerAccounts.map(a => (
+                            <option key={a.id} value={a.id}>
+                              {formatAccountNumber(a.code)}
+                              {a.name ? ` — ${a.name}` : ''}
+                              {` · ${a.account_type === 'credit' ? 'Credit' : 'Cash'}`}
+                              {a.account_type === 'credit' && !isUnlimited(a)
+                                ? ` ${Number(a.credit_limit).toLocaleString()} ${a.currency}` : ''}
+                              {isSubAccountExpired(a) ? ' · EXPIRED' : ''}
+                              {a.is_active === false ? ' · INACTIVE' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : form.main_account && (
                       <p className="mt-1 text-[11px] text-slate-500 font-mono tracking-wider">
                         Main account: {formatAccountNumber(form.main_account)}
                       </p>
+                    )}
+
+                    {/* What the chosen account allows, and what it already owes —
+                        shown before the close is attempted, not after it fails. */}
+                    {selectedAccount && selectedAccount.account_type === 'credit' && (
+                      <p className={`mt-1 text-[11px] flex items-center gap-1.5 ${
+                        accountCheck.ok ? 'text-slate-500' : 'text-red-400'}`}>
+                        <CreditCard className="w-3.5 h-3.5 flex-shrink-0" />
+                        {isUnlimited(selectedAccount)
+                          ? `Unlimited credit · ${round2(accountOutstanding).toLocaleString()} ${selectedAccount.currency} outstanding`
+                          : `${round2(Math.max(0, Number(selectedAccount.credit_limit) - accountOutstanding)).toLocaleString()} ${selectedAccount.currency} of ${Number(selectedAccount.credit_limit).toLocaleString()} still available`}
+                        {selectedAccount.expires_on ? ` · expires ${String(selectedAccount.expires_on).slice(0, 10)}` : ''}
+                      </p>
+                    )}
+                    {selectedAccount && !accountCheck.ok && (
+                      <p className="mt-1 text-[11px] text-red-400">{accountCheck.reason}</p>
                     )}
 
                     {/* New-customer hint */}
