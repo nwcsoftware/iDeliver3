@@ -9,8 +9,22 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { fmtAmount } from '../lib/orderAmounts'
+import { buildPartnerDues, partnerName as partnerDisplayName } from '../lib/partnerDues'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
+
+// Day after a 'YYYY-MM-DD' date. Used to turn the reset checkpoint (which hides
+// movements ON or before it) into an inclusive "from".
+function nextDay(d) {
+  const t = new Date(`${d}T12:00:00`)
+  t.setDate(t.getDate() + 1)
+  return t.toISOString().slice(0, 10)
+}
+function prevDay(d) {
+  const t = new Date(`${d}T12:00:00`)
+  t.setDate(t.getDate() - 1)
+  return t.toISOString().slice(0, 10)
+}
 
 const tooltipStyle = {
   contentStyle: { background: '#1e293b', border: '1px solid #334155', borderRadius: 8 },
@@ -57,6 +71,9 @@ export default function CashierBoxPage() {
   // Active "reset as of" checkpoint (latest reset_through) — movements dated on or
   // before it are hidden from the box (set via the Reset Cashier Box tool).
   const [resetThrough, setResetThrough] = useState(null)
+  // Payouts to partners (fix82). These — not the packages themselves — are the
+  // cash the box actually spends on a partner.
+  const [payouts, setPayouts] = useState([])
   // Which detailed-breakdown categories are expanded (all collapsed by default).
   const [openCats, setOpenCats] = useState(() => new Set())
   const toggleCat = (key) => setOpenCats(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
@@ -74,9 +91,32 @@ export default function CashierBoxPage() {
     return () => { alive = false }
   }, [COMPANY_ID])
 
-  // Build the statement lines (one row per money movement) from closed orders
-  // whose close date falls inside the selected range.
-  const lines = useMemo(() => {
+  // Partner payouts, with the partner's name for the OUT line's description.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      let q = supabase.from('partner_payouts')
+        .select('*, partner:contacts!partner_id(id, code, company_name, first_name, last_name)')
+        .order('paid_at', { ascending: false })
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data } = await q
+      if (alive) setPayouts(data ?? [])
+    })()
+    return () => { alive = false }
+  }, [COMPANY_ID])
+
+  /* Every money movement, WITHOUT the from/to window — the window is applied
+     below. Movements hidden by an active reset checkpoint are dropped for good.
+
+     A partner's delivery package is deliberately NOT a movement here. The office
+     doesn't pay the partner when the order closes; it collects the customer's
+     money and holds it until the partner is actually paid (a partner_payouts row
+     from the Partner Dues page). Booking the package as "spent" on the close date
+     double-counted it: the cash was still in the box. So a package only ever
+     shows up as a DUE, and the payout is the cash OUT. A package flagged
+     "Paid directly to <partner>" never touches the box at all — the customer
+     settled with the partner, so that money was never ours. */
+  const allLines = useMemo(() => {
     const out = []
     for (const o of orders) {
       if (!o.isclosed) continue
@@ -84,8 +124,6 @@ export default function CashierBoxPage() {
       if (!day) continue
       // Hidden by an active reset checkpoint (movements on/before reset_through).
       if (resetThrough && day <= resetThrough) continue
-      if (from && day < from) continue
-      if (to   && day > to)   continue
 
       const cat      = partyCategory(o)   // Customers / Partners / Suppliers
       const partyNm  = partyName(o.customer) || o.main_account || '—'
@@ -110,17 +148,6 @@ export default function CashierBoxPage() {
           cur: norm(r.currency), amount: amt,
         })
       }
-      // OUT — delivery packages (cost paid to the provider).
-      for (const pk of (o.delivery_packages ?? [])) {
-        const amt = round2(pk.package_price)
-        if (!amt) continue
-        const who = partyName(pk.provider)
-        out.push({
-          day, order: o.order_number, recipient: o.recipient_name, cat, partyId, party: partyNm,
-          dir: 'out', desc: `Delivery package${who ? ` · ${who}` : ''}`,
-          cur: norm(pk.currency), amount: amt,
-        })
-      }
       // OUT — order services (cost paid to the provider).
       for (const s of (o.order_services ?? [])) {
         const amt = round2(s.service_fees)
@@ -133,12 +160,85 @@ export default function CashierBoxPage() {
         })
       }
     }
+
+    // OUT — money actually handed to a partner (Partner Dues → Pay). Dated by the
+    // payout, not by any order, since a payout can settle many orders at once.
+    for (const p of payouts) {
+      const day = p.paid_at ? String(p.paid_at).slice(0, 10) : null
+      if (!day) continue
+      if (resetThrough && day <= resetThrough) continue
+      const amt = round2(p.amount)
+      if (!amt) continue
+      const who = partnerDisplayName(p.partner)
+      out.push({
+        day, order: null, recipient: null, cat: 'partner',
+        partyId: p.partner_id, party: who,
+        dir: 'out', desc: `Paid to ${who}${p.method ? ` · ${String(p.method).replace('_', ' ')}` : ''}`,
+        cur: norm(p.currency), amount: amt,
+      })
+    }
+
     // Newest first, then IN before OUT within the same day for readability.
     out.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.dir === b.dir ? 0 : a.dir === 'in' ? -1 : 1))
     return out
-  }, [orders, from, to, resetThrough])
+  }, [orders, resetThrough, payouts])
 
-  // Per-currency totals: collected (in), spent (out), net (in box).
+  // The selected window.
+  const lines = useMemo(
+    () => allLines.filter(l => (!from || l.day >= from) && (!to || l.day <= to)),
+    [allLines, from, to],
+  )
+
+  /* The reset checkpoint hides movements on/before it, so partner history starts
+     the day after it (or at the beginning of time when there's no checkpoint).
+     The window itself starts at whichever of `from` / that boundary is later. */
+  const resetStart = resetThrough ? nextDay(resetThrough) : ''
+  const effFrom    = resetStart && (!from || resetStart > from) ? resetStart : from
+
+  /* Partner money brought forward = dues raised BEFORE this window that still
+     haven't been paid out. We collected the customer's cash on an earlier day and
+     never handed it to the partner, so it is still in the box when today opens.
+
+     This is deliberately NOT "every movement ever, summed". The app records only
+     some of the office's outflows (invoices, services, partner payouts) — it has no
+     concept of deposits, wages or drawings — so a cumulative all-time net would
+     claim the box holds far more cash than it really does. What legitimately rolls
+     over is the partner liability, which is fully recorded on both sides. */
+  const carriedIn = useMemo(() => {
+    const t = Object.fromEntries(CURRENCIES.map(c => [c, 0]))
+    if (!from) return t
+    // Everything from the start of partner history up to the day before the window.
+    const prior = buildPartnerDues({ orders, payouts, from: resetStart, to: prevDay(from) })
+    for (const p of prior) for (const c of p.curs) {
+      t[c] += p.cur[c].delivered - p.cur[c].paidDirect - p.cur[c].paidOut
+    }
+    for (const c of CURRENCIES) t[c] = round2(t[c])
+    return t
+  }, [orders, payouts, resetStart, from])
+
+  /* Partner package accounting for the window, keyed by the package's PROVIDER
+     (not the order's customer): the dues belong to whoever supplied the package.
+     Shares buildPartnerDues with the Partner Dues page so the two always agree. */
+  const partnerDues = useMemo(
+    () => buildPartnerDues({ orders, payouts, from: effFrom, to }),
+    [orders, payouts, effFrom, to],
+  )
+  const partnerDuesTotals = useMemo(() => {
+    const t = Object.fromEntries(CURRENCIES.map(c => [c, { delivered: 0, collectedDrivers: 0, paidOut: 0, balance: 0 }]))
+    for (const p of partnerDues) for (const c of p.curs) {
+      t[c].delivered        += p.cur[c].delivered - p.cur[c].paidDirect   // paid-direct never enters the box
+      t[c].collectedDrivers += p.cur[c].collectedDrivers
+      t[c].paidOut          += p.cur[c].paidOut
+    }
+    for (const c of CURRENCIES) {
+      t[c].delivered = round2(t[c].delivered); t[c].paidOut = round2(t[c].paidOut)
+      t[c].collectedDrivers = round2(t[c].collectedDrivers)
+      t[c].balance   = round2(t[c].delivered - t[c].paidOut)
+    }
+    return t
+  }, [partnerDues])
+
+  // Per-currency totals: collected (in), spent (out), net (movement this period).
   const totals = useMemo(() => {
     const t = {}
     for (const c of CURRENCIES) t[c] = { collected: 0, spent: 0, net: 0 }
@@ -150,9 +250,14 @@ export default function CashierBoxPage() {
       t[c].collected = round2(t[c].collected)
       t[c].spent     = round2(t[c].spent)
       t[c].net       = round2(t[c].collected - t[c].spent)
+      /* Partner money the box is sitting on. Brought forward from earlier days,
+         plus what this period raised, less what this period paid out. This is the
+         figure that must still be there at the next close. */
+      t[c].partnerIn  = carriedIn[c]
+      t[c].partnerOut = round2(carriedIn[c] + partnerDuesTotals[c].balance)
     }
     return t
-  }, [lines])
+  }, [lines, carriedIn, partnerDuesTotals])
 
   // Per-party-type totals (Customers / Partners / Suppliers) × currency.
   const byParty = useMemo(() => {
@@ -226,10 +331,11 @@ export default function CashierBoxPage() {
     doc.setFontSize(9); doc.setTextColor(110)
     doc.text(`Period: ${rangeLabel}`, marginX, 23)
     doc.text(`Generated: ${now.toLocaleString()}${currentUser ? `  by ${currentUser.first_name ?? ''} ${currentUser.last_name ?? ''}`.trimEnd() : ''}`, marginX, 28)
-    doc.text('Closed orders only.  IN = office-collected payments.  OUT = retail invoices + packages + services.', marginX, 33)
+    doc.text('Closed orders only.  IN = office-collected payments.  OUT = retail invoices + services + payouts to partners.', marginX, 33)
+    doc.text('Partner packages are a due, not a spend, until the partner is paid; unpaid dues stay in the box and carry forward.', marginX, 36.5)
 
     autoTable(doc, {
-      startY: 38,
+      startY: 41,
       head: [['Date', 'Order #', 'Description', 'Cur', 'In', 'Out']],
       body: lines.map(l => [
         l.day, l.order ?? '—', l.desc, l.cur,
@@ -248,13 +354,14 @@ export default function CashierBoxPage() {
 
     autoTable(doc, {
       startY: y + 2,
-      head: [['Currency', 'Collected (In)', 'Spent (Out)', 'Net in Box']],
+      head: [['Currency', 'Collected (In)', 'Spent (Out)', 'Net in Box', 'Partner Money Held']],
       body: activeCurs.map(c => [
-        c, fmtAmount(totals[c].collected, c), fmtAmount(totals[c].spent, c), fmtAmount(totals[c].net, c),
+        c, fmtAmount(totals[c].collected, c), fmtAmount(totals[c].spent, c),
+        fmtAmount(totals[c].net, c), fmtAmount(totals[c].partnerOut, c),
       ]),
       styles: { fontSize: 9, cellPadding: 1.6 },
       headStyles: { fillColor: [15, 23, 42], textColor: 255 },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold' } },
       margin: { left: marginX },
       tableWidth: 130,
     })
@@ -264,6 +371,9 @@ export default function CashierBoxPage() {
 
   const busy   = loading?.orders
   const hasData = lines.length > 0
+  // Partner packages are no longer cash movements, so a period can carry dues
+  // without a single line. Don't call that "nothing to show".
+  const hasPartnerDues = partnerDues.length > 0
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -316,7 +426,7 @@ export default function CashierBoxPage() {
       )}
 
       {/* ── Summary cards (per currency) ──────────────────────── */}
-      {activeCurs.length === 0 ? (
+      {activeCurs.length === 0 && !hasPartnerDues ? (
         <div className="card p-10 text-center text-slate-500">
           No closed-order money movements for <span className="text-slate-300">{rangeLabel}</span>.
         </div>
@@ -335,7 +445,9 @@ export default function CashierBoxPage() {
                     <span className="font-semibold text-green-300 tabular-nums">{fmtAmount(totals[c].collected, c)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-1.5 text-red-400"><ArrowUpCircle className="w-4 h-4" /> Spent</span>
+                    <span className="flex items-center gap-1.5 text-red-400" title="Cash actually paid out: retail invoices, services, and payouts to partners">
+                      <ArrowUpCircle className="w-4 h-4" /> Spent
+                    </span>
                     <span className="font-semibold text-red-300 tabular-nums">{fmtAmount(totals[c].spent, c)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm border-t border-surface-border pt-2">
@@ -344,6 +456,25 @@ export default function CashierBoxPage() {
                       {fmtAmount(totals[c].net, c)}
                     </span>
                   </div>
+
+                  {/* Partner money the box is holding — brought forward, and what
+                      still has to be there at the next close. */}
+                  {(totals[c].partnerIn || totals[c].partnerOut) ? (
+                    <div className="space-y-1 border-t border-surface-border pt-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500" title="Partner dues raised on earlier days that are still unpaid — this money opened the box today">
+                          Partner money brought forward
+                        </span>
+                        <span className="tabular-nums text-slate-400">{fmtAmount(totals[c].partnerIn, c)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-amber-400/80" title="Brought forward + dues raised this period − paid out. Still in the box at the next close.">
+                          Partner money still held
+                        </span>
+                        <span className="tabular-nums font-semibold text-amber-300">{fmtAmount(totals[c].partnerOut, c)}</span>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -393,14 +524,104 @@ export default function CashierBoxPage() {
           <div className="card p-4 space-y-3">
             <h2 className="text-sm font-semibold text-slate-200">
               Detailed breakdown by party — {rangeLabel}
-              <span className="text-slate-500 text-xs font-normal ml-2">(collected / spent / net · click a row to expand)</span>
+              <span className="text-slate-500 text-xs font-normal ml-2">
+                (customers &amp; suppliers: collected / spent / net · partners: dues / collected by drivers / paid / balance · click a row to expand)
+              </span>
             </h2>
             {PARTY_CATS.map(cat => {
               const Icon = cat.Icon
-              const list = partyBreakdown[cat.key]
-              const curs = activeCurs.filter(c => byParty[cat.key][c].collected || byParty[cat.key][c].spent)
               const single = cat.label.replace(/s$/, '')
               const open = openCats.has(cat.key)
+
+              /* Partners are a balance, not a cash flow: what we owe them for their
+                 packages, what we've paid them, and what's left. Rendered from
+                 partnerDues (keyed by package provider) rather than byParty. */
+              if (cat.key === 'partner') {
+                const pcurs = CURRENCIES.filter(c =>
+                  partnerDuesTotals[c].delivered || partnerDuesTotals[c].paidOut)
+                return (
+                  <div key={cat.key} className="rounded-lg border border-surface-border overflow-hidden">
+                    <button type="button" onClick={() => toggleCat(cat.key)}
+                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-surface-hover/40 transition-colors flex-wrap">
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                        <Icon className={`w-4 h-4 ${cat.cls}`} />
+                        <span className="text-sm font-medium text-slate-200">{cat.label}</span>
+                        <span className="text-xs text-slate-500">· {partnerDues.length}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs ml-auto">
+                        {pcurs.length === 0 ? <span className="text-slate-600">No partner packages</span> : pcurs.map(c => (
+                          <span key={c} className="tabular-nums whitespace-nowrap">
+                            <span className="text-slate-500 mr-1.5">{c}</span>
+                            <span className="text-amber-300" title="Partners dues">{fmtAmount(partnerDuesTotals[c].delivered, c)}</span>
+                            <span className="text-slate-600 mx-1">/</span>
+                            <span className="text-green-300" title="Collected by drivers from the customer">{fmtAmount(partnerDuesTotals[c].collectedDrivers, c)}</span>
+                            <span className="text-slate-600 mx-1">/</span>
+                            <span className="text-purple-300" title="Paid to partner">{fmtAmount(partnerDuesTotals[c].paidOut, c)}</span>
+                            <span className="text-slate-600 mx-1">/</span>
+                            <span className={partnerDuesTotals[c].balance > 0 ? 'text-amber-300' : 'text-[#1dffd5]'} title="Balance still owed">
+                              {fmtAmount(partnerDuesTotals[c].balance, c)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                    {open && (
+                      partnerDues.length === 0 ? (
+                        <p className="text-xs text-slate-600 px-3 py-2 border-t border-surface-border/60">No partner packages</p>
+                      ) : (
+                        <div className="overflow-x-auto border-t border-surface-border/60">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-surface-hover/30">
+                                <th className="px-3 py-1.5 font-medium">Partner</th>
+                                <th className="px-3 py-1.5 font-medium text-right">Partners dues</th>
+                                <th className="px-3 py-1.5 font-medium text-right" title="Package money the driver collected from the customer (packages paid directly to the partner are excluded)">
+                                  Collected by drivers
+                                </th>
+                                <th className="px-3 py-1.5 font-medium text-right">Paid to partner</th>
+                                <th className="px-3 py-1.5 font-medium text-right">Balance</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partnerDues.map(p => {
+                                // Paid-direct packages never entered the box, so they're
+                                // out of the dues here too.
+                                const due = c => round2(p.cur[c].delivered - p.cur[c].paidDirect)
+                                const rows = p.curs.filter(c => due(c) || p.cur[c].paidOut)
+                                if (!rows.length) return null
+                                return (
+                                  <tr key={p.id} className="border-t border-surface-border/40 hover:bg-surface-hover/30">
+                                    <td className="px-3 py-1.5 text-slate-300">{p.name}</td>
+                                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                      {rows.map(c => <div key={c} className="text-amber-300 tabular-nums">{fmtAmount(due(c), c)} <span className="text-slate-600">{c}</span></div>)}
+                                    </td>
+                                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                      {rows.map(c => <div key={c} className="text-green-300 tabular-nums">{fmtAmount(p.cur[c].collectedDrivers, c)} <span className="text-slate-600">{c}</span></div>)}
+                                    </td>
+                                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                      {rows.map(c => <div key={c} className="text-purple-300 tabular-nums">{fmtAmount(p.cur[c].paidOut, c)} <span className="text-slate-600">{c}</span></div>)}
+                                    </td>
+                                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                      {rows.map(c => {
+                                        const bal = round2(due(c) - p.cur[c].paidOut)
+                                        return <div key={c} className={`tabular-nums font-medium ${bal > 0 ? 'text-amber-300' : 'text-[#1dffd5]'}`}>{fmtAmount(bal, c)} <span className="text-slate-600">{c}</span></div>
+                                      })}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )
+              }
+
+              const list = partyBreakdown[cat.key]
+              const curs = activeCurs.filter(c => byParty[cat.key][c].collected || byParty[cat.key][c].spent)
               return (
                 <div key={cat.key} className="rounded-lg border border-surface-border overflow-hidden">
                   {/* Clickable header — totals always visible; body expands below */}

@@ -235,7 +235,7 @@ export function AppProvider({ children }) {
           customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
           zone:delivery_zones(id, name),
           order_items(currency, line_total, is_deleted),
-          delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(company_name, first_name, last_name)),
+          delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(id, code, company_name, first_name, last_name)),
           order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
           retail_goods_invoices(invoice_value, currency, paid, shop_name, contact_id),
           payment_collections(amount, currency, collected_by_name, collected_by)

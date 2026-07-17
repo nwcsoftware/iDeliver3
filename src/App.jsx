@@ -23,6 +23,7 @@ import ContactStatementsPage    from './pages/ContactStatementsPage'
 import DriverDuesPage           from './pages/DriverDuesPage'
 import CreditCustomersPage      from './pages/CreditCustomersPage'
 import SupplierSettlementsPage   from './pages/SupplierSettlementsPage'
+import PartnerDuesPage          from './pages/PartnerDuesPage'
 import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
@@ -108,6 +109,7 @@ function AppShell() {
                 <Route path="/driver-dues"          element={<DriverDuesPage />} />
                 <Route path="/credit-customers"     element={<CreditCustomersPage />} />
                 <Route path="/supplier-settlements" element={<SupplierSettlementsPage />} />
+                <Route path="/partner-dues"         element={<PartnerDuesPage />} />
                 <Route path="/cashier-box"          element={<CashierBoxPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />

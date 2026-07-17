@@ -17,6 +17,7 @@ const mainNav = [
   { to: '/closed-orders',      icon: PackageCheck,    label: 'Closed Orders' },
   { to: '/driver-dues',        icon: HandCoins,       label: 'Driver Settlements' },
   { to: '/credit-customers',   icon: CreditCard,      label: 'Credit Customers' },
+  { to: '/partner-dues',       icon: Handshake,       label: 'Partner Dues' },
   { to: '/cashier-box',        icon: Wallet,          label: 'Cashier Box' },
   { to: '/tracking',           icon: MapPin,          label: 'Tracking'  },
 ]
