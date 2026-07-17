@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
@@ -12,6 +12,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
+import { buildOrderGroups, defaultOpenGroup } from '../lib/orderGroups'
 import {
   resolveSubAccount, subAccountBalance, checkSubAccountCharge,
   isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
@@ -305,7 +306,7 @@ function adjustTime(t, deltaMinutes) {
 
 const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
 
-const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD', paid: true, payment_type: '' }
+const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD', paid: false, payment_type: '' }
 
 /* Pickup / delivery addresses are stored as a single text column but edited as
    multiple location tags — serialised with " | " so existing single-address rows
@@ -744,6 +745,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [orderTypeFilter,      setOrderTypeFilter]      = useState('')   // order_type (string)
   const [dateFrom,             setDateFrom]             = useState('')
   const [dateTo,               setDateTo]               = useState('')
+  // Closed Orders date grouping — null until the first load picks a default.
+  const [openGroups,           setOpenGroups]           = useState(null)
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
   const [totalsExpanded,       setTotalsExpanded]       = useState(false)  // floating-bar breakdown panel
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
@@ -1002,6 +1005,30 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
     return arr
   })()
+
+  /* Closed Orders is grouped by date, Outlook-style. Only the open group renders
+     its rows, which is what keeps the page quick — there are far more closed
+     orders than fit comfortably in one list. */
+  const groups = useMemo(() => (closed ? buildOrderGroups(sorted) : []), [closed, sorted])
+
+  // null until the orders have loaded, so the default lands on a group that
+  // actually has something in it.
+  useEffect(() => {
+    if (!closed || openGroups !== null || loading.orders) return
+    setOpenGroups(new Set([defaultOpenGroup(groups)]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closed, loading.orders, groups, openGroups])
+
+  const openGroupSet = openGroups ?? new Set(['this_week'])
+  const renderGroups = closed
+    ? groups.map(g => ({ ...g, open: openGroupSet.has(g.key) }))
+    : [{ key: 'all', label: null, orders: sorted, open: true }]
+
+  const toggleGroup = key => setOpenGroups(prev => {
+    const next = new Set(prev ?? openGroupSet)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
 
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
   const pendingsSummary = (() => {
@@ -2337,8 +2364,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               })}
             </div>
           )}
-          {!closed && (
-            <div className="flex items-center gap-1 flex-wrap">
+          {/* Flagged / unflagged — useful on closed orders too, for chasing
+              problem deliveries after the fact. */}
+          <div className="flex items-center gap-1 flex-wrap">
               <span className="w-px h-5 bg-surface-border mx-1" />
               <Flag className="w-4 h-4 text-slate-500" />
               {FLAG_FILTERS.map(f => {
@@ -2352,8 +2380,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </button>
                 )
               })}
-            </div>
-          )}
+          </div>
           {!closed && (
             <div className="ml-auto flex items-center gap-2">
               <button className="btn-primary" onClick={openAdd}>
@@ -2482,7 +2509,31 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
-            ) : sorted.map(o => (
+            ) : renderGroups.flatMap(g => [
+              // Group header — click to expand/collapse. Only on Closed Orders.
+              ...(closed ? [(
+                <tr key={`group-${g.key}`} className="bg-surface-hover/40 border-y border-surface-border">
+                  <td colSpan={partyContactId ? 8 : 10} className="px-0 py-0">
+                    <button type="button" onClick={() => toggleGroup(g.key)}
+                      className="w-full flex items-center gap-2 px-4 py-2 hover:bg-surface-hover/60 transition-colors text-left">
+                      {g.open
+                        ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                        : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />}
+                      <span className="text-xs font-semibold text-slate-200">{g.label}</span>
+                      <span className="text-[11px] text-slate-500">
+                        {g.orders.length} order{g.orders.length === 1 ? '' : 's'}
+                      </span>
+                      {!g.open && g.orders.length > 0 && (
+                        <span className="text-[10px] text-slate-600 ml-auto">click to show</span>
+                      )}
+                      {g.orders.length === 0 && (
+                        <span className="text-[10px] text-slate-600 ml-auto">none</span>
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              )] : []),
+              ...(g.open ? g.orders.map(o => (
               <tr key={o.id} id={`order-row-${o.id}`}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
                 onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
@@ -2730,7 +2781,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </div>
                 </td>
               </tr>
-            ))}
+              )) : []),
+            ])}
           </tbody>
         </table>
       </div>
@@ -3289,7 +3341,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {/* ── Order Services ────────────────────────────── */}
               {/* Hidden for 2nd-party (supplier/partner) users. */}
               {!partyContactId && (
-              <CollapsibleSection title={`Order Services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
+              <CollapsibleSection title={`Third party services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
                 right={
                   <button type="button" onClick={() => { openSection('services'); setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }]) }}
                     className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
@@ -3303,80 +3355,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </CollapsibleSection>
               )}
 
-              {/* Pricing sections */}
-              {/* ── Items ─────────────────────────────────────── */}
-              {/* Hidden for 2nd-party (supplier/partner) users. */}
-              <div id="order-section-items" className="scroll-mt-4" />
-              {!partyContactId && (
-              <CollapsibleSection title={`Local retail items (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
-                right={
-                  <button type="button" onClick={() => { openSection('items'); addItem() }}
-                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
-                    <Plus className="w-3 h-3" /> Add Item
-                  </button>
-                }>
-
-                <div className="border border-surface-border rounded-xl overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
-                        <th className="text-left px-3 py-2 w-[34%]">Product</th>
-                        <th className="text-left px-3 py-2 w-[10%]">Qty</th>
-                        <th className="text-left px-3 py-2 w-[15%]">Unit Price</th>
-                        <th className="text-left px-3 py-2 w-[13%]">Currency</th>
-                        <th className="text-left px-3 py-2 w-[12%]">Discount</th>
-                        <th className="text-right px-3 py-2 w-[12%]">Line Total</th>
-                        <th className="w-[4%]"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.length === 0 ? (
-                        <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">No items — click "Add Item"</td></tr>
-                      ) : items.map((it, idx) => (
-                        <tr key={it._id ?? it._key ?? idx} className="border-t border-surface-border/50">
-                          <td className="px-3 py-2">
-                            <select className="input py-1.5 text-xs" value={it.product_id}
-                              onChange={e => setItem(idx, 'product_id', e.target.value)}>
-                              <option value="">— Select —</option>
-                              {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code})</option>)}
-                            </select>
-                          </td>
-                          <td className="px-3 py-2">
-                            <input type="number" min="0.01" step="0.01" className="input py-1.5 text-xs" value={it.quantity}
-                              onChange={e => setItem(idx, 'quantity', e.target.value)} />
-                          </td>
-                          <td className="px-3 py-2">
-                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={it.unit_price}
-                              onChange={e => setItem(idx, 'unit_price', e.target.value)} />
-                          </td>
-                          <td className="px-3 py-2">
-                            <select className="input py-1.5 text-xs" value={it.currency}
-                              onChange={e => setItem(idx, 'currency', e.target.value)}>
-                              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                          </td>
-                          <td className="px-3 py-2">
-                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={it.discount}
-                              onChange={e => setItem(idx, 'discount', e.target.value)} />
-                          </td>
-                          <td className="px-3 py-2 text-right font-semibold text-slate-100">
-                            {lineTotal(it).toFixed(it.currency === 'LBP' ? 0 : 2)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <button onClick={() => removeItem(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CollapsibleSection>
-              )}
-
               {/* ── External Retails Invoices References (retail_goods_invoices) ── */}
-              <CollapsibleSection title={`External retails invoices references (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
+              <CollapsibleSection title={`Local market invoices (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
                 right={
                   <button type="button" onClick={() => { openSection('retail_invoices'); addRetailInvoice() }}
                     className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
@@ -3508,6 +3488,78 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </table>
                 </div>
               </CollapsibleSection>
+
+              {/* Pricing sections */}
+              {/* ── Items ─────────────────────────────────────── */}
+              {/* Hidden for 2nd-party (supplier/partner) users. */}
+              <div id="order-section-items" className="scroll-mt-4" />
+              {!partyContactId && (
+              <CollapsibleSection title={`3asari3 retails and services (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('items'); addItem() }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Item
+                  </button>
+                }>
+
+                <div className="border border-surface-border rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
+                        <th className="text-left px-3 py-2 w-[34%]">Product</th>
+                        <th className="text-left px-3 py-2 w-[10%]">Qty</th>
+                        <th className="text-left px-3 py-2 w-[15%]">Unit Price</th>
+                        <th className="text-left px-3 py-2 w-[13%]">Currency</th>
+                        <th className="text-left px-3 py-2 w-[12%]">Discount</th>
+                        <th className="text-right px-3 py-2 w-[12%]">Line Total</th>
+                        <th className="w-[4%]"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.length === 0 ? (
+                        <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">No items — click "Add Item"</td></tr>
+                      ) : items.map((it, idx) => (
+                        <tr key={it._id ?? it._key ?? idx} className="border-t border-surface-border/50">
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs" value={it.product_id}
+                              onChange={e => setItem(idx, 'product_id', e.target.value)}>
+                              <option value="">— Select —</option>
+                              {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code})</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0.01" step="0.01" className="input py-1.5 text-xs" value={it.quantity}
+                              onChange={e => setItem(idx, 'quantity', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={it.unit_price}
+                              onChange={e => setItem(idx, 'unit_price', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs" value={it.currency}
+                              onChange={e => setItem(idx, 'currency', e.target.value)}>
+                              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={it.discount}
+                              onChange={e => setItem(idx, 'discount', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-100">
+                            {lineTotal(it).toFixed(it.currency === 'LBP' ? 0 : 2)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button onClick={() => removeItem(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+              )}
 
               {/* ── Delivery Fees & Totals ─────────────────────── */}
               <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={true} onToggle={() => {}}>
