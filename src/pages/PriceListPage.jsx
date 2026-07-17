@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { productIsStocked } from '../lib/productCode'
 
 function fmtPrice(value, currency) {
   const n = Number(value) || 0
@@ -31,14 +32,19 @@ export default function PriceListPage() {
     setLoading(true)
     let q = supabase
       .from('products')
-      .select('id, code, name, description, unit_of_measure, unit_cost, unit_price, currency, is_active, inventory(quantity_available)')
+      .select('id, code, name, description, unit_of_measure, unit_cost, unit_price, currency, is_active, is_retail, is_returnable, is_service, is_advertisement, inventory(quantity_available)')
       .eq('is_active', true)
       .order('code')
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data } = await q
     const mapped = (data ?? []).map(p => ({
       ...p,
-      qty_available: (p.inventory ?? []).reduce((s, i) => s + (Number(i.quantity_available) || 0), 0),
+      // Only Retail and Returnable carry stock. A service isn't stored and an
+      // advert isn't goods, so they have no stock figure at all — null reads as
+      // "not applicable" rather than a misleading 0.
+      qty_available: productIsStocked(p)
+        ? (p.inventory ?? []).reduce((s, i) => s + (Number(i.quantity_available) || 0), 0)
+        : null,
     }))
     setRows(mapped)
     setLoading(false)
@@ -74,7 +80,7 @@ export default function PriceListPage() {
         p.unit_of_measure ?? '—',
         fmtPrice(p.unit_cost, p.currency),
         fmtPrice(p.unit_price, p.currency),
-        fmtQty(p.qty_available),
+        p.qty_available === null ? '—' : fmtQty(p.qty_available),   // services aren't stocked
       ]),
       styles: { fontSize: 8, cellPadding: 1.5 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
@@ -150,7 +156,9 @@ export default function PriceListPage() {
                 <td className="px-4 py-3 text-slate-300 text-xs text-right whitespace-nowrap">{fmtPrice(p.unit_cost, p.currency)}</td>
                 <td className="px-4 py-3 text-slate-100 text-xs font-medium text-right whitespace-nowrap">{fmtPrice(p.unit_price, p.currency)}</td>
                 <td className={`px-4 py-3 text-xs font-medium text-right ${p.qty_available > 0 ? 'text-green-400' : 'text-slate-500'}`}>
-                  {fmtQty(p.qty_available)}
+                  {p.qty_available === null
+                    ? <span className="text-slate-600" title="Service — not stocked">—</span>
+                    : fmtQty(p.qty_available)}
                 </td>
               </tr>
             ))}
