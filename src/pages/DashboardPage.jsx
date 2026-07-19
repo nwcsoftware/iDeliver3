@@ -24,7 +24,7 @@ function buildTrend(orders) {
     })
   }
   orders.forEach(o => {
-    const date = o.delivered_at?.slice(0, 10) || o.created_at?.slice(0, 10)
+    const date = o.scheduled_date?.slice(0, 10) || o.delivered_at?.slice(0, 10) || o.created_at?.slice(0, 10)
     const day  = days.find(d => d.date === date)
     if (!day) return
     if (o.status === 'delivered') day.delivered++

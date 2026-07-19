@@ -1,0 +1,246 @@
+<meta charset="utf-8">
+<title>iDeliver III — Change / Feature Request Form</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#475569; --line:#d8dee9; --line2:#e9edf3;
+    --brand:#1d4ed8; --brand-soft:#eff4ff; --accent:#0b1220;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:"Segoe UI", Calibri, Arial, sans-serif;
+    color:var(--ink); font-size:10pt; line-height:1.4;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page{ size:A4; margin:0; }
+  .page{
+    width:210mm; height:297mm; overflow:hidden; padding:14mm 16mm 13mm 16mm;
+    margin:0 auto; background:#fff; position:relative; page-break-after:always;
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  /* Header band */
+  .hdr{ display:flex; justify-content:space-between; align-items:flex-start;
+        border-bottom:2px solid var(--brand); padding-bottom:8px; margin-bottom:12px; }
+  .hdr .word{ font-family:"Consolas",monospace; font-weight:800; font-size:13pt; letter-spacing:1px; color:var(--accent); }
+  .hdr small{ color:var(--muted); }
+  .hdr .right{ text-align:right; }
+  .doc-kicker{ letter-spacing:3px; text-transform:uppercase; color:var(--brand); font-weight:700; font-size:8.5pt; }
+  .doc-title{ font-size:17pt; font-weight:800; color:var(--accent); margin:2px 0 0; }
+
+  .refbar{ display:flex; gap:10px; margin:0 0 12px; }
+  .refbar .cell{ flex:1; border:1px solid var(--line); border-radius:6px; padding:6px 9px; }
+  .refbar .k{ font-size:7.5pt; text-transform:uppercase; letter-spacing:.6px; color:var(--brand); font-weight:700; }
+  .refbar .v{ min-height:15px; border-bottom:1px solid #c7d0dd; margin-top:3px; }
+
+  h2{ font-size:11pt; color:#fff; background:var(--brand); border-radius:5px;
+      padding:5px 10px; margin:14px 0 8px; letter-spacing:.3px; }
+  h2 .n{ opacity:.7; font-weight:600; margin-right:6px; }
+  .note{ font-size:8.5pt; color:var(--muted); margin:-4px 0 8px; }
+
+  .row{ display:flex; gap:10px; margin:7px 0; }
+  .fld{ flex:1; }
+  .fld .lbl{ font-size:8pt; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; }
+  .fld .line{ border-bottom:1px solid #b9c3d2; height:18px; margin-top:2px; }
+
+  .writebox{ border:1px solid var(--line); border-radius:6px; margin-top:4px; background:
+      repeating-linear-gradient(transparent, transparent 25px, #eef2f7 25px, #eef2f7 26px); }
+  .writebox.h3{ height:78px; } .writebox.h4{ height:104px; } .writebox.h5{ height:130px; } .writebox.h6{ height:156px; }
+
+  .checks{ display:flex; flex-wrap:wrap; gap:6px 18px; margin:5px 0; }
+  .chk{ display:flex; align-items:center; gap:7px; font-size:9.5pt; }
+  .box{ width:13px; height:13px; border:1.4px solid var(--accent); border-radius:3px; display:inline-block; flex-shrink:0; }
+  .checks.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; }
+
+  .official{ border:1.6px solid var(--accent); border-radius:8px; padding:0; margin-top:10px; overflow:hidden; }
+  .official .cap{ background:var(--accent); color:#fff; font-weight:700; font-size:9.5pt; letter-spacing:.5px;
+                  padding:6px 12px; display:flex; justify-content:space-between; }
+  .official .cap small{ color:#c7d2fe; font-weight:600; }
+  .official .body{ padding:10px 12px; }
+
+  .sign-wrap{ display:flex; gap:22px; margin-top:16px; }
+  .sign{ flex:1; }
+  .sign .line{ border-bottom:1.4px solid var(--ink); height:38px; }
+  .sign .lbl{ font-size:8pt; color:var(--muted); margin-top:4px; }
+  .sign .who{ font-weight:800; font-size:10pt; }
+
+  table.kv{ width:100%; border-collapse:collapse; margin-top:4px; }
+  table.kv td{ border:1px solid var(--line2); padding:6px 9px; vertical-align:top; }
+  table.kv td.k{ width:34%; background:#f7f9fc; font-weight:600; font-size:9pt; }
+  table.kv td.v{ min-height:18px; }
+
+  .foot{ position:absolute; bottom:8mm; left:16mm; right:16mm; display:flex; justify-content:space-between;
+         font-size:8pt; color:#94a3b8; border-top:1px solid var(--line2); padding-top:5px; }
+  .fill{ display:inline-block; min-width:120px; border-bottom:1px solid #94a3b8; }
+</style>
+
+<!-- ============================= PAGE 1 ============================= -->
+<section class="page">
+  <div class="hdr">
+    <div>
+      <div class="word">iDeliver&nbsp;III</div>
+      <small>Delivery &amp; Logistics Management Suite</small>
+    </div>
+    <div class="right">
+      <div class="doc-kicker">Change / Feature Request</div>
+      <div class="doc-title">Change Request Form</div>
+      <small>Per Section&nbsp;9 — Change Control &amp; Additional Work</small>
+    </div>
+  </div>
+
+  <p class="note">
+    Use this form to request a <b>new feature</b> or a <b>change</b> to the iDeliver&nbsp;III software. One request per form.
+    Complete Sections&nbsp;1&ndash;5 and sign Section&nbsp;6, then send it to _NXCORE. The Developer will return a written
+    impact assessment (effort, price, timeline) in the &ldquo;For _NXCORE Use Only&rdquo; block before any work begins.
+  </p>
+
+  <div class="refbar">
+    <div class="cell"><div class="k">Request No. (office)</div><div class="v"></div></div>
+    <div class="cell"><div class="k">Date submitted</div><div class="v"></div></div>
+    <div class="cell"><div class="k">Requested by</div><div class="v"></div></div>
+  </div>
+
+  <h2><span class="n">1</span>Requester Details</h2>
+  <div class="row">
+    <div class="fld"><div class="lbl">Company</div><div class="line"></div></div>
+    <div class="fld"><div class="lbl">Contact name</div><div class="line"></div></div>
+  </div>
+  <div class="row">
+    <div class="fld"><div class="lbl">Role / position</div><div class="line"></div></div>
+    <div class="fld"><div class="lbl">Phone</div><div class="line"></div></div>
+    <div class="fld"><div class="lbl">Email</div><div class="line"></div></div>
+  </div>
+
+  <h2><span class="n">2</span>Request Type &amp; Scope</h2>
+  <p class="note" style="margin-top:0">Tick the type of request and every module it affects.</p>
+  <div style="display:flex; gap:26px">
+    <div style="flex:1">
+      <div class="lbl" style="font-size:8pt;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700">Type of request</div>
+      <div class="checks" style="flex-direction:column; gap:6px; margin-top:6px">
+        <label class="chk"><span class="box"></span> New feature / capability</label>
+        <label class="chk"><span class="box"></span> Change to an existing feature</label>
+        <label class="chk"><span class="box"></span> New report / document</label>
+        <label class="chk"><span class="box"></span> Report a problem (possible defect)</label>
+        <label class="chk"><span class="box"></span> Other: <span class="fill">&nbsp;</span></label>
+      </div>
+    </div>
+    <div style="flex:1">
+      <div class="lbl" style="font-size:8pt;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700">Module(s) affected</div>
+      <div class="checks grid2" style="margin-top:6px">
+        <label class="chk"><span class="box"></span> Operations Console / Call Center</label>
+        <label class="chk"><span class="box"></span> Partners &amp; Suppliers Portal</label>
+        <label class="chk"><span class="box"></span> Driver Application</label>
+        <label class="chk"><span class="box"></span> Customer Mobile Application</label>
+        <label class="chk"><span class="box"></span> Reports / Accounting</label>
+        <label class="chk"><span class="box"></span> Not sure / other</label>
+      </div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div class="fld"><div class="lbl">Specific screen / page (if known)</div><div class="line"></div></div>
+    <div class="fld" style="max-width:40%">
+      <div class="lbl">Requested priority</div>
+      <div class="checks" style="margin-top:5px">
+        <label class="chk"><span class="box"></span> Low</label>
+        <label class="chk"><span class="box"></span> Medium</label>
+        <label class="chk"><span class="box"></span> High / urgent</label>
+      </div>
+    </div>
+  </div>
+
+  <h2><span class="n">3</span>Request Title</h2>
+  <div class="writebox h3"></div>
+
+  <h2><span class="n">4</span>Description — What do you want, and why?</h2>
+  <p class="note" style="margin-top:0">Describe the request clearly. For a change, state how it works <b>now</b> and how it should work <b>instead</b>.</p>
+  <div class="writebox h6"></div>
+
+  <div class="foot"><span>iDeliver III — Change Request Form &nbsp;·&nbsp; 3asari3 / _NXCORE</span><span>Page 1 of 2</span></div>
+</section>
+
+<!-- ============================= PAGE 2 ============================= -->
+<section class="page">
+  <div class="hdr">
+    <div>
+      <div class="word">iDeliver&nbsp;III</div>
+      <small>Change Request Form (continued)</small>
+    </div>
+    <div class="right">
+      <div class="doc-kicker">Request No. &amp; Date</div>
+      <div style="margin-top:4px"><span class="fill" style="min-width:150px">&nbsp;</span></div>
+    </div>
+  </div>
+
+  <h2><span class="n">5</span>Business Justification &amp; Expected Benefit</h2>
+  <p class="note" style="margin-top:0">What problem does this solve? What is the expected benefit (time saved, revenue, accuracy, customer experience)?</p>
+  <div class="writebox h4"></div>
+
+  <div class="row" style="margin-top:10px">
+    <div class="fld">
+      <div class="lbl">Needed by (target date, if any)</div><div class="line"></div>
+    </div>
+    <div class="fld">
+      <div class="lbl">Attachments provided</div>
+      <div class="checks" style="margin-top:5px">
+        <label class="chk"><span class="box"></span> Screenshot(s)</label>
+        <label class="chk"><span class="box"></span> Example / sketch</label>
+        <label class="chk"><span class="box"></span> None</label>
+      </div>
+    </div>
+  </div>
+
+  <h2><span class="n">6</span>Requester Confirmation</h2>
+  <p class="note" style="margin-top:0">
+    I confirm this request is an addition or change <b>beyond</b> the delivered Scope Baseline and understand it will be
+    handled under the Change Control process: work begins only after I approve _NXCORE's written estimate and price.
+  </p>
+  <div class="sign-wrap">
+    <div class="sign">
+      <div class="line"></div><div class="lbl">Signature — for 3asari3</div>
+      <table class="kv"><tr><td class="k">Name</td><td class="v"></td></tr><tr><td class="k">Date</td><td class="v"></td></tr></table>
+    </div>
+    <div class="sign" style="max-width:45%">
+      <div class="lbl" style="margin-bottom:4px">&nbsp;</div>
+      <div class="note" style="margin:0">Send the completed form to _NXCORE by email. Keep a copy for your records.</div>
+    </div>
+  </div>
+
+  <!-- Developer-only block -->
+  <div class="official">
+    <div class="cap"><span>FOR _NXCORE USE ONLY — IMPACT ASSESSMENT</span><small>Do not complete this section</small></div>
+    <div class="body">
+      <table class="kv">
+        <tr><td class="k">Classification</td>
+            <td class="v">
+              <span class="chk" style="display:inline-flex;margin-right:18px"><span class="box"></span>&nbsp; Enhancement (chargeable)</span>
+              <span class="chk" style="display:inline-flex"><span class="box"></span>&nbsp; Defect (covered — no charge)</span>
+            </td></tr>
+        <tr><td class="k">Assessment summary</td><td class="v" style="height:34px"></td></tr>
+        <tr><td class="k">Effect on other features / risk</td><td class="v" style="height:30px"></td></tr>
+        <tr><td class="k">Estimated effort</td><td class="v"></td></tr>
+        <tr><td class="k">Price quoted</td><td class="v"></td></tr>
+        <tr><td class="k">Target delivery / release</td><td class="v"></td></tr>
+        <tr><td class="k">Assessed by</td><td class="v">Nicolas Chami — _NXCORE &nbsp;&nbsp; Date: <span class="fill">&nbsp;</span></td></tr>
+      </table>
+
+      <div class="sign-wrap" style="margin-top:14px">
+        <div class="sign">
+          <div class="line"></div><div class="lbl">Client approval to proceed — 3asari3 (Elie Khoury)</div>
+        </div>
+        <div class="sign">
+          <div class="line"></div><div class="lbl">Accepted / scheduled — _NXCORE (Nicolas Chami)</div>
+        </div>
+      </div>
+      <p class="note" style="margin:10px 0 0">
+        No work commences until the client signs approval of the quoted price above. Approved changes may be scheduled
+        into a planned release rather than delivered immediately.
+      </p>
+    </div>
+  </div>
+
+  <p style="text-align:center; color:#94a3b8; font-size:8.5pt; margin-top:16px">
+    Designed &amp; Engineered by <b>_NXCORE</b> — Building the Next Core of Intelligent Software
+  </p>
+
+  <div class="foot"><span>iDeliver III — Change Request Form &nbsp;·&nbsp; 3asari3 / _NXCORE</span><span>Page 2 of 2</span></div>
+</section>

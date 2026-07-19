@@ -312,6 +312,11 @@ const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', con
    multiple location tags — serialised with " | " so existing single-address rows
    keep working (they just read back as one tag). */
 const LOC_SEP   = ' | '
+// Local calendar date as YYYY-MM-DD, to match how scheduled_date is stored.
+const localTodayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const splitLocs = s => (s || '').split('|').map(x => x.trim()).filter(Boolean)
 const joinLocs  = arr => arr.join(LOC_SEP)
 /* Add `value` to the serialized location string `s`, de-duped case-insensitively. */
@@ -743,8 +748,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [catMenuOpen,          setCatMenuOpen]          = useState(false)
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
   const [orderTypeFilter,      setOrderTypeFilter]      = useState('')   // order_type (string)
-  const [dateFrom,             setDateFrom]             = useState('')
-  const [dateTo,               setDateTo]               = useState('')
+  // Scheduled-date range filter. Defaults to today so the list opens on
+  // today's scheduled orders; the "Today" toggle sets/clears both boxes.
+  const [dateFrom,             setDateFrom]             = useState(localTodayStr())
+  const [dateTo,               setDateTo]               = useState(localTodayStr())
   // Closed Orders date grouping — null until the first load picks a default.
   const [openGroups,           setOpenGroups]           = useState(null)
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
@@ -881,6 +888,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     if (dateFrom && dateTo) return sd >= dateFrom && sd <= dateTo  // between two dates (inclusive)
     if (dateFrom)           return sd === dateFrom     // single scheduled date
     return sd <= dateTo
+  }
+
+  // Whether the scheduled-date range is currently pinned to just today, and a
+  // handler that toggles it: pressed → both boxes = today, unpressed → cleared.
+  const todayStr    = localTodayStr()
+  const todayActive = dateFrom === todayStr && dateTo === todayStr
+  function toggleToday() {
+    if (todayActive) { setDateFrom(''); setDateTo('') }
+    else             { setDateFrom(todayStr); setDateTo(todayStr) }
   }
 
   // Does a customer contact match one customer-type key?
@@ -2455,6 +2471,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <option value="">All order types</option>
               {orderTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
+          </div>
+          <div className="flex flex-col justify-end">
+            <button type="button" onClick={toggleToday}
+              title={todayActive ? "Showing today's scheduled orders — click to clear" : "Set the scheduled date range to today"}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                todayActive
+                  ? 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+                  : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
+              }`}>
+              <Calendar className="w-3.5 h-3.5" /> Today
+            </button>
           </div>
           <div>
             <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Scheduled date</label>

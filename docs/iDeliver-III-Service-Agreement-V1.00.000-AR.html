@@ -1,0 +1,505 @@
+<meta charset="utf-8">
+<title>iDeliver III — اتفاقية نطاق وخدمة البرمجيات V1.00.000 (نسخة مترجمة)</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#475569; --line:#d8dee9; --line2:#e9edf3;
+    --brand:#1d4ed8; --brand-soft:#eff4ff; --accent:#0b1220; --ok:#0f766e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:"Segoe UI","Tahoma","Arial",sans-serif;
+    color:var(--ink); font-size:10.4pt; line-height:1.6;
+    direction:rtl; text-align:right;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page{ size:A4; margin:0; }
+  .page{
+    width:210mm; min-height:297mm; overflow:hidden; padding:18mm 18mm 22mm 18mm;
+    margin:0 auto; background:#fff; position:relative;
+    page-break-after:always;
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  /* Latin names / technical terms keep LTR flow inside RTL text */
+  .en{ direction:ltr; unicode-bidi:isolate; display:inline-block; }
+
+  h1,h2,h3{ color:var(--accent); margin:0; }
+  h2{ font-size:13.5pt; letter-spacing:.2px; margin:16px 0 6px; padding-bottom:4px; border-bottom:2px solid var(--brand); }
+  h2:first-of-type{ margin-top:2px; }
+  h3{ font-size:11pt; margin:12px 0 3px; color:var(--brand); }
+  p{ margin:6px 0; }
+  ul{ margin:6px 0 9px; padding-right:20px; padding-left:0; }
+  li{ margin:3px 0; }
+  small{ color:var(--muted); }
+  .muted{ color:var(--muted); }
+  .mono{ font-family:"Consolas","Courier New",monospace; }
+  .fill{ display:inline-block; min-width:150px; border-bottom:1px solid #94a3b8; }
+  .tag{ display:inline-block; font-size:8.5pt; font-weight:700; letter-spacing:.4px;
+        color:var(--brand); background:var(--brand-soft); border:1px solid #cfe0ff; border-radius:4px; padding:2px 9px; direction:ltr; }
+
+  .cover{ display:flex; flex-direction:column; height:250mm; }
+  .cover-top{ display:flex; justify-content:space-between; align-items:flex-start; }
+  .logo-box{ text-align:center; }
+  .logo-word{ font-family:"Consolas",monospace; font-weight:800; font-size:15pt; letter-spacing:2px; direction:ltr; }
+  .cover-mid{ margin-top:auto; margin-bottom:auto; }
+  .doc-kicker{ letter-spacing:1px; color:var(--brand); font-weight:700; font-size:10.5pt; }
+  .doc-title{ font-size:30pt; line-height:1.18; font-weight:800; margin:10px 0 6px; }
+  .doc-sub{ font-size:13pt; color:var(--muted); }
+  .parties{ display:flex; gap:14px; margin-top:34px; }
+  .party{ flex:1; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .party .role{ font-size:9pt; letter-spacing:.5px; color:var(--brand); font-weight:700; }
+  .party .name{ font-size:15pt; font-weight:800; margin-top:2px; direction:ltr; text-align:right; }
+  .cover-foot{ margin-top:36px; border-top:1px solid var(--line); padding-top:12px; display:flex; justify-content:space-between; font-size:9pt; color:var(--muted); }
+
+  table.meta{ width:100%; border-collapse:collapse; margin-top:8px; }
+  table.meta td{ padding:6px 9px; border:1px solid var(--line2); vertical-align:top; }
+  table.meta td.k{ width:38%; background:#f7f9fc; font-weight:600; color:var(--accent); }
+
+  .modcard{ border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:9px 0; break-inside:avoid; }
+  .modcard h3{ margin:0 0 4px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 26px; }
+  .feat{ margin:3px 0; padding-right:15px; position:relative; }
+  .feat::before{ content:"▪"; color:var(--brand); position:absolute; right:0; }
+
+  .callout{ border-right:4px solid var(--brand); border-left:0; background:var(--brand-soft); padding:11px 15px; border-radius:6px 0 0 6px; margin:12px 0; }
+  .warn{ border-right:4px solid #b45309; border-left:0; background:#fff7ed; }
+
+  ol.legal{ padding-right:22px; padding-left:0; }
+  ol.legal>li{ margin:9px 0; }
+  ol.legal ol{ padding-right:20px; padding-left:0; margin-top:6px; }
+  ol.legal ol>li{ margin:5px 0; }
+
+  .sign-wrap{ display:flex; gap:20px; margin-top:26px; }
+  .sign{ flex:1; }
+  .sign .line{ border-bottom:1.4px solid var(--ink); height:46px; }
+  .sign .lbl{ font-size:9.5pt; color:var(--muted); margin-top:5px; }
+  .sign .who{ font-weight:800; font-size:11.5pt; margin-top:14px; }
+
+  .foot{ position:absolute; bottom:11mm; left:18mm; right:18mm; display:flex; justify-content:space-between;
+         font-size:8.5pt; color:#94a3b8; border-top:1px solid var(--line2); padding-top:6px; }
+
+  .toc a{ color:var(--ink); text-decoration:none; }
+  .toc .row{ display:flex; justify-content:space-between; border-bottom:1px dotted var(--line); padding:4px 0; }
+  .toc .row b{ font-weight:600; }
+</style>
+
+<!-- ============================== COVER ============================== -->
+<section class="page">
+  <div class="cover">
+    <div class="cover-top">
+      <div class="logo-box">
+        <div class="logo-word">iDeliver&nbsp;III</div>
+        <small>Delivery &amp; Logistics Management Suite</small>
+      </div>
+      <div class="logo-box">
+        <div class="logo-word">_NXCORE</div>
+        <small>Building the Next Core of Intelligent Software</small>
+      </div>
+    </div>
+
+    <div class="cover-mid">
+      <div class="tag">اتفاقية خدمة مترجمة — Translated Service Agreement</div>
+      <div class="doc-kicker" style="margin-top:12px">اتفاقية نطاق وخدمة البرمجيات</div>
+      <div class="doc-title"><span class="en">iDeliver&nbsp;III</span><br>منصّة إدارة التوصيل</div>
+      <div class="doc-sub">مواصفات قدرات النظام وشروط التعاقد</div>
+
+      <div class="parties">
+        <div class="party">
+          <div class="role">العميل / المالك</div>
+          <div class="name">3asari3</div>
+          <small>يمثّله <b>Elie Khoury</b> — المالك</small>
+        </div>
+        <div class="party">
+          <div class="role">المطوّر / المزوّد</div>
+          <div class="name">_NXCORE</div>
+          <small>يمثّله <b>Nicolas Chami</b> — كبير المهندسين</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="cover-foot">
+      <span>رقم الوثيقة: <span class="en">NX-IDL3-SA-001</span></span>
+      <span>الإصدار <span class="en">1.00.000</span> — النظام <span class="en">v3.00.015</span></span>
+      <span>تاريخ النفاذ: <b>01 حزيران/يونيو 2026</b></span>
+    </div>
+  </div>
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>3asari3 &nbsp;·&nbsp; _NXCORE</span></div>
+</section>
+
+<!-- ============================== TOC / PREAMBLE ============================== -->
+<section class="page">
+  <div class="callout"><b>ملاحظة بشأن الترجمة.</b> هذه النسخة العربية مقدّمة للتيسير فقط، وقد أُبقيت أسماء الشركات والمنتجات
+  والمصطلحات التقنية باللغة الإنجليزية حفاظاً على الدقة. في حال أي تعارض بين هذه الترجمة والنسخة الإنجليزية الأصلية،
+  تكون <b>النسخة الإنجليزية</b> هي المرجع المعتمَد والملزِم.</div>
+
+  <h2>المحتويات</h2>
+  <div class="toc">
+    <div class="row"><a href="#p1"><b>1.</b> &nbsp;الأطراف والتمهيد</a><span>2</span></div>
+    <div class="row"><a href="#p2"><b>2.</b> &nbsp;التعريفات</a><span>2</span></div>
+    <div class="row"><a href="#p3"><b>3.</b> &nbsp;النظام المُسلَّم — نظرة عامة والبنية</a><span>3</span></div>
+    <div class="row"><a href="#p4"><b>4.</b> &nbsp;الوحدة A — <span class="en">Operations Console &amp; Call Center</span></a><span>3</span></div>
+    <div class="row"><a href="#p5"><b>5.</b> &nbsp;الوحدة B — <span class="en">Partners &amp; Suppliers Portal</span></a><span>5</span></div>
+    <div class="row"><a href="#p6"><b>6.</b> &nbsp;الوحدة C — <span class="en">Driver Application</span></a><span>6</span></div>
+    <div class="row"><a href="#p7"><b>7.</b> &nbsp;الوحدة D — <span class="en">Customer Mobile Application</span></a><span>6</span></div>
+    <div class="row"><a href="#p8"><b>8.</b> &nbsp;النطاق الأساسي والقبول</a><span>7</span></div>
+    <div class="row"><a href="#p9"><b>9.</b> &nbsp;ضبط التغييرات والأعمال الإضافية</a><span>7</span></div>
+    <div class="row"><a href="#p10"><b>10.</b> الدعم والصيانة والاستضافة</a><span>8</span></div>
+    <div class="row"><a href="#p11"><b>11.</b> الملكية الفكرية والترخيص</a><span>9</span></div>
+    <div class="row"><a href="#p12"><b>12.</b> الضمانات والمسؤولية والأحكام العامة</a><span>9</span></div>
+    <div class="row"><a href="#p13"><b>13.</b> التوقيعات</a><span>10</span></div>
+  </div>
+
+  <h2 id="p1">1. الأطراف والتمهيد</h2>
+  <p>إن اتفاقية نطاق وخدمة البرمجيات هذه («<b>الاتفاقية</b>») مُبرمة اعتباراً من تاريخ النفاذ، <b>01 حزيران/يونيو 2026</b>،
+  المذكور على صفحة الغلاف، بين:</p>
+  <table class="meta">
+    <tr><td class="k">العميل («3asari3»)</td><td>3asari3، ويمثّله <b>Elie Khoury</b>، المالك — الطرف الذي طُوِّر البرنامج له وسُلِّم إليه.</td></tr>
+    <tr><td class="k">المطوّر («_NXCORE»)</td><td>_NXCORE، ويمثّله <b>Nicolas Chami</b> — الطرف الذي صمّم البرنامج وهندسه وسلّمه.</td></tr>
+  </table>
+  <p>قام المطوّر بتصميم وبناء وتسليم منصّة كاملة لإدارة التوصيل واللوجستيات معروفة باسم
+  <b><span class="en">iDeliver&nbsp;III</span></b> («<b>البرنامج</b>» أو «<b>النظام</b>»)، وتتألف من الوحدات الأربع الموصوفة في
+  البنود 4–7. وقد <b>سُلِّم البرنامج ونُصِّب للعميل بتاريخ 01 حزيران/يونيو 2026</b> («<b>تاريخ التسليم</b>»)، وهو نفسه تاريخ
+  نفاذ هذه الاتفاقية. تُسجّل هذه الاتفاقية بالكامل <b>ما يقوم به البرنامج ويسلّمه</b> اعتباراً من تاريخ النفاذ، بحيث يتشارك
+  الطرفان تعريفاً واحداً متّفقاً عليه للنطاق المُسلَّم («<b>النطاق الأساسي</b>»). وأي شيء غير مذكور صراحةً في هذه الاتفاقية
+  يقع خارج النطاق الأساسي ويخضع لعملية ضبط التغييرات في البند 9.</p>
+
+  <h2 id="p2">2. التعريفات</h2>
+  <ul>
+    <li><b>النطاق الأساسي (<span class="en">Scope Baseline</span>)</b> — مجموعة الميزات والقدرات الكاملة الموصوفة في البنود 3–7، وتمثّل النظام المُسلَّم.</li>
+    <li><b>الوحدة (<span class="en">Module</span>)</b> — إحدى التطبيقات الأربعة المُسلَّمة: <span class="en">Operations Console</span> (سطح المكتب)، و<span class="en">Partners &amp; Suppliers Portal</span>، و<span class="en">Driver Application</span>، و<span class="en">Customer Mobile Application</span>.</li>
+    <li><b>طلب التغيير (<span class="en">Change Request — CR</span>)</b> — أي طلب لميزة أو سلوك أو تكامل أو تعديل غير مشمول صراحةً في النطاق الأساسي.</li>
+    <li><b>العيب (<span class="en">Defect</span>)</b> — إخفاق قابل للتحقّق لميزة ضمن النطاق الأساسي في العمل كما هو موصوف في هذه الاتفاقية.</li>
+    <li><b>التحسين (<span class="en">Enhancement</span>)</b> — وظيفة جديدة أو موسَّعة تتجاوز النطاق الأساسي؛ وتُعامَل دائماً كطلب تغيير.</li>
+    <li><b>القبول (<span class="en">Acceptance</span>)</b> — تأكيد العميل (البند 8) أن النظام المُسلَّم مطابق لهذه الاتفاقية.</li>
+  </ul>
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 2</span></div>
+</section>
+
+<!-- ============================== SYSTEM OVERVIEW + MODULE A ============================== -->
+<section class="page">
+  <h2 id="p3">3. النظام المُسلَّم — نظرة عامة والبنية</h2>
+  <p><span class="en">iDeliver&nbsp;III</span> منصّة متكاملة متعددة المستخدمين تدير دورة حياة عمل التوصيل بالكامل: من استلام
+  الطلب، مروراً بالإرسال وإسناد السائق، والتوصيل، وتحصيل النقد، وصولاً إلى التسوية المالية النهائية. وتُسلَّم على هيئة
+  <b>أربعة تطبيقات مترابطة</b> تتشارك قاعدة بيانات آمنة واحدة:</p>
+  <div class="grid2">
+    <div><span class="tag">Module A</span> <b><span class="en">Operations Console &amp; Call Center</span></b> — تطبيق سطح المكتب الخلفي الذي يستخدمه الموظفون.</div>
+    <div><span class="tag">Module B</span> <b><span class="en">Partners &amp; Suppliers Portal</span></b> — واجهة مقيَّدة للشركاء/المورّدين الخارجيين.</div>
+    <div style="margin-top:8px"><span class="tag">Module C</span> <b><span class="en">Driver Application</span></b> — تطبيق السائقين الميداني أثناء التوصيل.</div>
+    <div style="margin-top:8px"><span class="tag">Module D</span> <b><span class="en">Customer Mobile Application</span></b> — تطبيق العملاء للحجز والتتبّع.</div>
+  </div>
+  <h3>الأساس التقني</h3>
+  <ul>
+    <li><b>تطبيق سطح المكتب</b> مُحزَّم لنظام <span class="en">Windows</span> (وقابل للبناء لـ <span class="en">macOS / Linux</span>)، قابل للتثبيت على محطات العمل المكتبية.</li>
+    <li><b>قاعدة بيانات سحابية آمنة و<span class="en">backend</span></b> مع تحكّم بالوصول قائم على الأدوار (<span class="en">role-based access control</span>) وأمان على مستوى الصفوف (<span class="en">row-level security</span>)، بحيث يرى كل مستخدم البيانات التي يسمح بها دوره فقط.</li>
+    <li><b>بيانات مشتركة فورية</b> — الطلبات والسائقون والمدفوعات والرسائل تُزامَن عبر الوحدات الأربع.</li>
+    <li><b>الأدوار المدعومة:</b> <span class="en">Super-Administrator</span> (المطوّر)، و<span class="en">Administrator</span>، ومستخدم المكتب/<span class="en">Call-Center</span>، و<span class="en">Partner</span>، و<span class="en">Supplier</span>، و<span class="en">Driver</span>، و<span class="en">Customer</span>.</li>
+    <li><b>تعدد العملات</b> في مجاميع الطلبات والتحصيلات؛ و<b>خرائط تفاعلية</b> للمواقع والتتبّع؛ وتوليد <b><span class="en">PDF</span>/تقارير</b> مدمج.</li>
+    <li><b>الأمان:</b> حسابات مستخدمين فردية، وفرض تغيير كلمة المرور عند أول تسجيل دخول / بعد إعادة التعيين، وإدارة الحسابات عبر المسؤول.</li>
+  </ul>
+
+  <h2 id="p4">4. الوحدة A — <span class="en">Operations Console &amp; Call Center</span> (سطح المكتب)</h2>
+  <p>تطبيق سطح المكتب هو قلب العمل التشغيلي — <b><span class="en">Call Center</span></b> والمكتب الخلفي. ويشمل القدرات المُسلَّمة التالية:</p>
+
+  <div class="modcard">
+    <h3>الإرسال وإدارة الطلبات (<span class="en">Call Center</span>)</h3>
+    <div class="grid2">
+      <div class="feat"><b><span class="en">Dashboard</span></b> حيّ بإحصاءات فورية: السائقون المتاحون، الطلبات قيد النقل، المعلّقة، الفاشلة/الملغاة.</div>
+      <div class="feat"><b>استلام وإدارة الطلبات</b> — إنشاء وتحرير طلبات التوصيل مع العميل والعناوين والتعليمات.</div>
+      <div class="feat">تركيب الطلب: <b>بضائع/أصناف</b> و<b>خدمات</b> و<b><span class="en">packages</span></b> و<b>أصناف قابلة للإرجاع</b> على طلب واحد.</div>
+      <div class="feat"><b>إسناد السائق</b> وتدرّج الحالة (معلّق ← قيد النقل ← مُسلَّم / فاشل / ملغى).</div>
+      <div class="feat">شاشة <b><span class="en">Closed Orders</span></b> بتجميع تواريخ بأسلوب <span class="en">Outlook</span> للمراجعة التاريخية.</div>
+      <div class="feat"><b>وسم المواقع</b> وعناوين الاستلام/التسليم مع اختيار عبر الخريطة.</div>
+      <div class="feat">بحث سريع عن العميل لإدخال سريع للطلب في مركز الاتصال.</div>
+      <div class="feat">معالجة <b>الطلب المجاني</b> و<b>الطلب بالأجل</b> (طلبات تُغلَق دون دفع فوري).</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>التتبّع المباشر والسائقون</h3>
+    <div class="grid2">
+      <div class="feat"><b>تتبّع عبر الخريطة</b> للطلبات ومواقع التوصيل.</div>
+      <div class="feat"><b>سجل السائقين</b> — إدارة السائقين والتوفّر والإسناد.</div>
+      <div class="feat">سجل <b><span class="en">Vehicles</span></b> مرتبط بالأسطول.</div>
+      <div class="feat">توفّر السائق ينعكس حيّاً على الـ <span class="en">Dashboard</span>.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 3</span></div>
+</section>
+
+<!-- ============================== MODULE A (cash / catalog / contacts) ============================== -->
+<section class="page">
+  <div class="modcard">
+    <h3>النقد والمدفوعات والتسوية المالية</h3>
+    <div class="grid2">
+      <div class="feat"><b>دورة حياة المال:</b> السائق يحصّل النقد ← <span class="en">Driver Settlements</span> ← <span class="en">Cashier Box</span>، متتبَّعة من البداية للنهاية.</div>
+      <div class="feat"><b><span class="en">Driver Settlements</span></b> — تسوية النقد المستحق على كل سائق وتعليمه كمدفوع للمكتب.</div>
+      <div class="feat"><b><span class="en">Cashier Box</span></b> — دفتر نقدية المكتب مع <b>نقطة إعادة تعيين</b> قابلة للعكس.</div>
+      <div class="feat"><b><span class="en">Credit Customers</span></b> — مستحقات على مستوى الحساب وتحصيل وكشوفات قابلة للطباعة.</div>
+      <div class="feat"><b><span class="en">Partner Dues</span></b> — أرصدة <span class="en">packages</span> لكل شريك وتسويتها.</div>
+      <div class="feat"><b>تعدد العملات</b> في المجاميع والتحصيلات في كل مكان.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>الكتالوج والشراء والبيع بالتجزئة</h3>
+    <div class="grid2">
+      <div class="feat">كتالوج <b><span class="en">Products</span></b> مع ترميز تسلسلي تلقائي حسب النوع (<span class="en">PRD / SRV / RTN / ADD</span>) ووسم الخدمة.</div>
+      <div class="feat">إدارة <b><span class="en">Price List</span></b>.</div>
+      <div class="feat">تتبّع <b><span class="en">Returnable Items</span></b>.</div>
+      <div class="feat"><b><span class="en">Purchase Invoices</span></b> (المشتريات).</div>
+      <div class="feat"><b><span class="en">Retail Invoices</span></b> (مبيعات بأسلوب نقاط البيع).</div>
+      <div class="feat"><b><span class="en">Supplier Settlements</span></b> — عمولة المشتريات وتقارير المورّدين آخر الشهر.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>جهات الاتصال والمحاسبة</h3>
+    <div class="grid2">
+      <div class="feat"><b><span class="en">Contacts</span></b> مُدارة كـ <span class="en">Customers</span> و<span class="en">Suppliers</span> و<span class="en">Partners</span>.</div>
+      <div class="feat">عناوين متعددة لكل جهة اتصال مع منتقي خريطة تفاعلي.</div>
+      <div class="feat">أرقام حسابات فرعية <b><span class="en">Chart-of-Accounts</span></b> لكل جهة اتصال.</div>
+      <div class="feat">دفاتر <b><span class="en">Account Statements</span></b> و<b><span class="en">Account Transactions</span></b>.</div>
+      <div class="feat"><b>ملف الشركة</b> و<b><span class="en">Reports</span></b> مع رسوم بيانية وتحليلات.</div>
+      <div class="feat">كشوفات وتقارير على الشاشة وقابلة للتصدير كـ <b><span class="en">PDF</span></b>.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 4</span></div>
+</section>
+
+<!-- ============================== MODULE A (admin) + MODULE B ============================== -->
+<section class="page">
+  <div class="modcard">
+    <h3>التواصل والإدارة</h3>
+    <div class="grid2">
+      <div class="feat"><b><span class="en">Broadcast Messages</span></b> — إرسال إعلانات للمستخدمين مع مؤشرات عدم القراءة لكل مستخدم ونوافذ منبثقة.</div>
+      <div class="feat">إدارة <b><span class="en">User Accounts</span></b> — إنشاء المستخدمين وإسناد الأدوار وإعادة تعيين كلمات المرور.</div>
+      <div class="feat">فرض <b>تغيير كلمة المرور عند أول دخول / بعد إعادة التعيين</b>.</div>
+      <div class="feat"><b><span class="en">App Settings</span></b> وإعداد الشركة.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>أدوات <span class="en">Super-Administrator</span> (المطوّر)</h3>
+    <div class="grid2">
+      <div class="feat">إدارة <b><span class="en">Developer Account</span></b> (مقيَّدة).</div>
+      <div class="feat"><b><span class="en">Delete Order</span></b> و<b><span class="en">Delete Orders by Date</span></b> (جماعي، انتقائي، لـ <span class="en">super-admin</span> فقط).</div>
+      <div class="feat"><b><span class="en">Reset Cashier Box</span></b> — نقطة قابلة للعكس تُخفي الحركات اعتباراً من تاريخ دون حذفها.</div>
+      <div class="feat"><b><span class="en">Reset Data</span></b> وعمليات صيانة مضبوطة.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>ملاحظة.</b> تشكّل الميزات أعلاه <span class="en">Operations Console</span> المُسلَّمة بالكامل. وسلوك كل شاشة وتخطيطها
+    وصياغتها كما هي منصَّبة في تاريخ النفاذ تُشكّل جزءاً من النطاق الأساسي.
+  </div>
+
+  <h2 id="p5">5. الوحدة B — <span class="en">Partners &amp; Suppliers Portal</span></h2>
+  <p>تجربة <b>مقيَّدة</b> مخصّصة للشركاء والمورّدين الخارجيين. عند تسجيل دخول شريك أو مورّد، يوضَع في بوابته الخاصة ولا يرى
+  تطبيق المكتب الخلفي الكامل مطلقاً.</p>
+  <div class="modcard">
+    <h3>قدرات بوابة الشريك/المورّد</h3>
+    <div class="grid2">
+      <div class="feat">وصول <b>مقصور على جهة اتصاله فقط</b> — لا يرى شيئاً يخصّ أطرافاً أخرى.</div>
+      <div class="feat">الرؤية محصورة بـ <b><span class="en">Sold Orders</span></b> و<b><span class="en">Completed Orders</span></b> الخاصة به.</div>
+      <div class="feat">تتبّع <b><span class="en">Supplier commission</span></b> وتقارير <b><span class="en">settlement</span></b> آخر الشهر.</div>
+      <div class="feat"><b><span class="en">Partner package dues</span></b> — أرصدة الطرود المُدارة نيابةً عنه.</div>
+      <div class="feat">تسجيل دخول منفصل وآمن يخضع لنفس نموذج الأدوار والأمان.</div>
+      <div class="feat">لا وصول إلى الإرسال أو الصندوق أو الكتالوج أو الإدارة أو بيانات عملاء آخرين.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 5</span></div>
+</section>
+
+<!-- ============================== MODULE C + MODULE D ============================== -->
+<section class="page">
+  <h2 id="p6">6. الوحدة C — <span class="en">Driver Application</span></h2>
+  <p>تطبيق خارجي لسائقي التوصيل في الميدان، متّصل بنفس النظام الحيّ. وهو المحطة الأولى في دورة حياة النقد ويُبقي حالة التوصيل
+  محدّثة للعملية بأكملها.</p>
+  <div class="modcard">
+    <h3>قدرات <span class="en">Driver Application</span></h3>
+    <div class="grid2">
+      <div class="feat">يرى السائقون الطلبات <b>المُسندة إليهم</b> للتوصيل.</div>
+      <div class="feat"><b>تحديث حالة التوصيل</b> (مثلاً مُسلَّم / فاشل) من الميدان، وينعكس فوراً في المكتب.</div>
+      <div class="feat"><b>تسجيل النقد المحصَّل</b> من العميل عند التسليم، منسوباً إلى السائق.</div>
+      <div class="feat">تتدفّق التحصيلات تلقائياً إلى <b><span class="en">Driver Settlements</span></b> لتسوية المكتب.</div>
+      <div class="feat">الوصول مقصور بدقّة على مهام السائق وتحصيلاته فقط.</div>
+      <div class="feat">يُبقي <b><span class="en">Tracking</span></b> و<b><span class="en">Dashboard</span></b> في المكتب محدّثَين فورياً.</div>
+    </div>
+  </div>
+
+  <h2 id="p7">7. الوحدة D — <span class="en">Customer Mobile Application</span></h2>
+  <p>تطبيق محمول موجَّه للعملاء يتيح للمستخدمين النهائيين التسجيل وحجز عمليات التوصيل وتتبّع طلباتهم.</p>
+  <div class="modcard">
+    <h3>قدرات <span class="en">Customer Mobile</span></h3>
+    <div class="grid2">
+      <div class="feat">واجهة <b>متعددة اللغات</b>: الإنجليزية، والعربية (بتخطيط من اليمين إلى اليسار)، والفرنسية، والرومانية.</div>
+      <div class="feat"><b>تسجيل</b> ودخول آمن، بما في ذلك رمز لمرة واحدة (<span class="en">OTP</span>) وتسجيل الدخول عبر <span class="en">Google</span>.</div>
+      <div class="feat">شاشة <b><span class="en">Home</span></b> بإجراءات سريعة ونشاط حديث.</div>
+      <div class="feat"><b><span class="en">Book Delivery</span></b> — إنشاء طلب توصيل/جمع بسطر طلب واحد أو أكثر.</div>
+      <div class="feat"><b>عناوين محفوظة</b> مع اختيار موقع عبر الخريطة؛ نقاط تسليم واستلام.</div>
+      <div class="feat"><b>تفضيل الدفع</b> — نقداً عند التسليم أو بطاقة، حيثما يُسمح.</div>
+      <div class="feat"><b><span class="en">My Orders</span></b> — عرض القائمة والتفاصيل وتحرير الطلبات المعلّقة.</div>
+      <div class="feat"><b>حالة توصيل حيّة</b> لكل طلب (بانتظار الاستلام، قيد التنفيذ، مُسلَّم).</div>
+      <div class="feat"><b>إشعارات</b> ورسائل بثّ من المشغّل.</div>
+      <div class="feat">إدارة <b><span class="en">Profile</span></b> (التفاصيل، العناوين، اللغة، كلمة المرور).</div>
+    </div>
+  </div>
+  <div class="callout">
+    <b>التكامل.</b> تصل طلبات العملاء المُنشأة مباشرةً إلى <span class="en">Operations Console</span> كطلبات خارجية، جاهزة
+    ليقوم مركز الاتصال بإرسالها — مُغلِقةً الحلقة عبر الوحدات الأربع.
+  </div>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 6</span></div>
+</section>
+
+<!-- ============================== SCOPE + CHANGE CONTROL ============================== -->
+<section class="page">
+  <h2 id="p8">8. النطاق الأساسي والقبول</h2>
+  <ol class="legal">
+    <li><b>تعريف النطاق المُسلَّم.</b> تشكّل الميزات والقدرات الموصوفة في البنود 3–7 النطاق الأساسي الكامل — كامل ما وافق
+      المطوّر على تسليمه بموجب هذه الاتفاقية. ويؤكّد العميل أن هذه الوثيقة تصف النظام المُسلَّم وصفاً دقيقاً وكاملاً.</li>
+    <li><b>القبول.</b> عند التوقيع، يقبل العميل النظام كما سُلِّم ومطابقاً لهذه الاتفاقية. وأي بند يعتقد العميل أنه ناقص من
+      النظام المُسلَّم يجب إثارته خطياً خلال <b>خمسة عشر (15)</b> يوماً من التوقيع؛ وإلا اعتُبر النظام مقبولاً بالكامل.</li>
+    <li><b>الاكتمال.</b> يتّفق الطرفان على أن النطاق الأساسي <b>كامل وقائم بذاته</b>. وهو ليس التزاماً مفتوحاً بإضافات مستمرة.
+      وأي قدرة أو شاشة أو تقرير أو تكامل أو أتمتة أو تغيير سلوكي <b>غير مذكور صراحةً</b> في البنود 3–7 يقع <u>خارج</u> النطاق الأساسي.</li>
+  </ol>
+
+  <h2 id="p9">9. ضبط التغييرات والأعمال الإضافية</h2>
+  <div class="callout warn">
+    <b>الغرض من هذا البند.</b> للحفاظ على استقرار المشروع وعدالة تسعيره لكلا الطرفين، تُعالَج كل الأفكار والإضافات والتعديلات
+    الجديدة بعد القبول عبر عملية ضبط تغييرات خطية واحدة. والطلبات الشفهية أو العارضة لا تنشئ التزاماً على المطوّر وليست جزءاً
+    من النطاق المُسلَّم.
+  </div>
+  <ol class="legal">
+    <li><b>كل جديد هو طلب تغيير.</b> أي طلب يضيف إلى النطاق الأساسي أو يوسّعه أو يغيّره — بما في ذلك شاشات أو حقول أو تقارير
+      أو قواعد أو تكاملات أو خدمات خارجية أو إعادة تصميم أو وحدات إضافية — هو <b><span class="en">Enhancement</span></b>
+      ويُعالَج كـ <b><span class="en">Change Request (CR)</span></b> منفصل عن هذه الاتفاقية.</li>
+    <li><b>كيفية تقديم طلب التغيير.</b> يقدّم العميل الطلب خطياً (البريد الإلكتروني كافٍ). ويردّ المطوّر بـ<b>تقييم أثر</b> خطي:
+      الوصف، وتقدير الجهد/الوقت، والسعر، وأي أثر على ميزات أو جداول زمنية أخرى.</li>
+    <li><b>الموافقة قبل العمل.</b> يبدأ المطوّر العمل على <span class="en">CR</span> فقط بعد موافقة العميل على التقدير والسعر
+      الخطيَّين. لا تقدير موافَق عليه، لا عمل — ولا توقّع للتسليم.</li>
+    <li><b>تسعير التغييرات.</b> تُفوتَر طلبات التغيير إمّا بسعر بالساعة قدره <b>25.00 دولار أمريكي في الساعة</b> أو، حيث يسمح
+      النطاق، بـ<b>سعر ثابت لكل <span class="en">CR</span></b> يُعرَض مسبقاً، وهي <b>غير</b> مشمولة في أي رسم دعم أو صيانة ما
+      لم يُتَّفق على ذلك خطياً.</li>
+    <li><b>تصحيح الأعطال ليس طلب تغيير.</b> العيب الحقيقي — ميزة ضمن النطاق الأساسي تخفق في العمل كما هو موصوف هنا — يُصحَّح
+      بموجب البند 10 ولا يُحتسب كـ <span class="en">CR</span>.</li>
+    <li><b>التمييز بين العيوب والتغييرات.</b> طلب جعل ميزة تتصرّف <i>على نحو مختلف</i> عمّا هو موصوف هنا (بدلاً من إصلاح إخفاق
+      في مطابقة هذا الوصف) هو طلب تغيير، لا عيب.</li>
+    <li><b>التجميع والجدولة.</b> للحفاظ على استقرار النظام، يجوز للمطوّر جدولة التغييرات المعتمَدة ضمن إصدارات مخطَّطة بدلاً من
+      تسليم كل طلب فوراً.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 7</span></div>
+</section>
+
+<!-- ============================== SUPPORT (SECTION 10) ============================== -->
+<section class="page">
+  <h2 id="p10">10. الدعم والصيانة والاستضافة</h2>
+  <ol class="legal">
+    <li><b>الضمان ودعم العيوب.</b> يقوم المطوّر بتصحيح العيوب المتحقَّق منها في النطاق الأساسي خلال فترة ضمان مدّتها
+      <b>تسعون (90) يوماً من تاريخ التسليم (01 حزيران/يونيو 2026)، أي حتى 30 آب/أغسطس 2026</b>، دون رسم إضافي.</li>
+    <li><b>الصيانة (اختيارية).</b> بعد فترة الضمان، يجوز تقديم صيانة مستمرة — تعديلات طفيفة وتحديثات وصيانة قاعدة البيانات
+      ودعم ذو أولوية — بموجب ترتيب صيانة سنوي منفصل بسعر <b>600.00 دولار أمريكي في السنة</b> (يُدفَع سنوياً ومقدَّماً، أي ما
+      يعادل 50.00 دولار في الشهر). ولا تشمل الصيانة <u>التحسينات</u> (البند 9)، التي تُسعَّر على حدة.</li>
+    <li><b>الاستضافة وخدمات الغير.</b> يعتمد النظام على خدمات قاعدة بيانات سحابية وخرائط ومصادقة. ورسوم اشتراكها/استخدامها هي
+      مسؤولية <b>العميل</b>، وتُقدَّر حالياً بـ<b>25.00 – 120.00 دولار أمريكي في الشهر</b> بحسب حجم الاستخدام؛ ويقوم المطوّر
+      بإعداد هذه الخدمات وصيانتها نيابةً عن العميل.</li>
+    <li><b>النسخ الاحتياطية والبيانات.</b> خلال فترة الضمان وأي ترتيب صيانة فعّال، يقوم المطوّر بـ<b>نسخ احتياطي تلقائي يومي
+      لقاعدة البيانات، يُحتفَظ به لمدة ثلاثين (30) يوماً</b>. ويبقى العميل مسؤولاً عن تصدير سجلاته التشغيلية والاحتفاظ بها
+      (الكشوفات والتقارير والفواتير) لاحتياجاته طويلة الأمد.</li>
+    <li><b>أهداف الاستجابة (مستويات خدمة إلزامية على المطوّر).</b> بالنسبة للمشكلات المُبلَّغ عنها خطياً (البريد الإلكتروني
+      كافٍ)، يبذل المطوّر جهوداً معقولة للوفاء بالأوقات التالية، محسوبةً بأيام عمل بيروت:
+      <ol>
+        <li><b>حرجة</b> (النظام غير قابل للاستخدام / توقّف العمليات): إقرار خلال <b>يوم عمل واحد (1)</b> وتقديم إصلاح أو حلّ
+          بديل خلال <b>ثلاثة (3) أيام عمل</b>.</li>
+        <li><b>كبرى</b> (ميزة رئيسية معطّلة مع وجود حلّ بديل): إقرار خلال <b>يومَي عمل (2)</b> وحلّ خلال <b>سبعة (7) أيام عمل</b>.</li>
+        <li><b>صغرى</b> (تجميلية أو منخفضة الأثر): تُعالَج في إصدار الصيانة المجدول التالي.</li>
+      </ol>
+    </li>
+    <li><b>ساعات الدعم.</b> يُقدَّم الدعم القياسي من <b>الاثنين إلى الجمعة، 09:00–17:00 (بتوقيت بيروت)</b>، باستثناء العطل
+      الرسمية اللبنانية.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 8</span></div>
+</section>
+
+<!-- ============================== IP + GENERAL ============================== -->
+<section class="page">
+  <h2 id="p11">11. الملكية الفكرية والترخيص</h2>
+  <ol class="legal">
+    <li><b>الملكية.</b> تبقى كل الملكية الفكرية والشيفرة المصدرية والتصميم والخبرة في <span class="en">iDeliver&nbsp;III</span>
+      ملكاً لـ <b>_NXCORE</b> ما لم ينصّ تنازل خطي منفصل على غير ذلك.</li>
+    <li><b>الترخيص للعميل.</b> يمنح المطوّر 3asari3 ترخيصاً غير حصري وغير قابل للتحويل لاستخدام النظام لأغراض عمل التوصيل
+      الخاص به طوال مدة هذا التعاقد.</li>
+    <li><b>العلامة.</b> يُسلَّم النظام من قِبل _NXCORE وقد يحمل إشارة نسبة خفيفة «<span class="en">Powered by _NXCORE</span>».</li>
+    <li><b>القيود.</b> لا يجوز للعميل بيع البرنامج أو ترخيصه من الباطن أو نسخه أو إعادة توزيعه، ولا تكليف طرف ثالث بتعديله،
+      دون موافقة المطوّر الخطية.</li>
+  </ol>
+
+  <h2 id="p12">12. الضمانات والمسؤولية والأحكام العامة</h2>
+  <ol class="legal">
+    <li><b>الضمان.</b> يضمن المطوّر أن النظام يؤدّي جوهرياً الوظائف الموصوفة في هذه الاتفاقية. وفيما عدا ما ذُكر، يُقدَّم النظام
+      «كما هو» دون ضمان آخر.</li>
+    <li><b>تحديد المسؤولية.</b> لا تتجاوز مسؤولية المطوّر الإجمالية بموجب هذه الاتفاقية الرسوم المدفوعة من العميل عن النظام
+      المُسلَّم. ولا يُسأل أي طرف عن خسارة غير مباشرة أو تبعية.</li>
+    <li><b>مسؤوليات العميل.</b> تقديم الملاحظات والوصول وبيانات الاختبار في وقتها، ودفع الرسوم المعتمَدة.</li>
+    <li><b>كامل الاتفاق.</b> هذه الوثيقة هي كامل الاتفاق بشأن النطاق المُسلَّم، وتحلّ محلّ المناقشات الشفهية السابقة وطلبات
+      الميزات غير الرسمية.</li>
+    <li><b>التعديلات.</b> يجب أن يكون أي تعديل خطياً وموقّعاً من الطرفين.</li>
+    <li><b>القانون الحاكم.</b> تخضع هذه الاتفاقية وتُفسَّر وفقاً لقوانين <b>الجمهورية اللبنانية (لبنان)</b>، وأي نزاع ينشأ عنها
+      أو يتّصل بها يُحَلّ أمام <b>المحاكم المختصة في بيروت، لبنان</b>.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 9</span></div>
+</section>
+
+<!-- ============================== SIGNATURES ============================== -->
+<section class="page">
+  <h2 id="p13">13. التوقيعات</h2>
+  <p>بالتوقيع أدناه، يؤكّد الطرفان أنهما قرآ وفهما ووافقا على اتفاقية نطاق وخدمة البرمجيات هذه بالكامل، ويقرّان بالنطاق الأساسي
+  (البنود 3–7) باعتباره النظام المُسلَّم الكامل.</p>
+
+  <div class="sign-wrap">
+    <div class="sign">
+      <div class="who">عن العميل — <span class="en">3asari3</span></div>
+      <div style="height:34px"></div>
+      <div class="line"></div>
+      <div class="lbl">التوقيع</div>
+      <table class="meta" style="margin-top:14px">
+        <tr><td class="k">الاسم</td><td>Elie Khoury</td></tr>
+        <tr><td class="k">الصفة</td><td>المالك، 3asari3</td></tr>
+        <tr><td class="k">التاريخ</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+
+    <div class="sign">
+      <div class="who">عن المطوّر — <span class="en">_NXCORE</span></div>
+      <div style="height:34px"></div>
+      <div class="line"></div>
+      <div class="lbl">التوقيع</div>
+      <table class="meta" style="margin-top:14px">
+        <tr><td class="k">الاسم</td><td>Nicolas Chami</td></tr>
+        <tr><td class="k">الصفة</td><td>كبير المهندسين، _NXCORE</td></tr>
+        <tr><td class="k">التاريخ</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:40px">
+    <b>مرجع الملحق.</b> إصدار النظام المُسلَّم عند التوقيع هو <b><span class="en">iDeliver&nbsp;III v3.00.015</span></b>، ويتألف
+    من الوحدات الأربع الموصوفة هنا: <span class="en">Operations Console &amp; Call Center</span>، و
+    <span class="en">Partners &amp; Suppliers Portal</span>، و<span class="en">Driver Application</span>، و
+    <span class="en">Customer Mobile Application</span>.
+  </div>
+
+  <p style="margin-top:26px; text-align:center; color:#94a3b8; font-size:9pt">
+    صُمِّم وهُندس بواسطة <b>_NXCORE</b> — <span class="en">Building the Next Core of Intelligent Software</span><br>
+    © <span class="mono">2026</span> _NXCORE. جميع الحقوق محفوظة.
+  </p>
+
+  <div class="foot"><span>iDeliver III — اتفاقية النطاق والخدمة (نسخة مترجمة)</span><span>صفحة 10</span></div>
+</section>

@@ -1,0 +1,441 @@
+<meta charset="utf-8">
+<title>iDeliver III — Appendix A — Software Licence &amp; Subscription Agreement</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#475569; --line:#d8dee9; --line2:#e9edf3;
+    --brand:#1d4ed8; --brand-soft:#eff4ff; --accent:#0b1220; --ok:#0f766e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:"Segoe UI", Calibri, Arial, sans-serif;
+    color:var(--ink); font-size:9.9pt; line-height:1.42;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page{ size:A4; margin:0; }
+  .page{
+    width:210mm; min-height:297mm; overflow:hidden; padding:16mm 18mm 15mm 18mm;
+    margin:0 auto; background:#fff; position:relative;
+    page-break-after:always;
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  h1,h2,h3{ color:var(--accent); margin:0; }
+  h2{ font-size:13pt; letter-spacing:.2px; margin:16px 0 5px; padding-bottom:4px; border-bottom:2px solid var(--brand); }
+  h2:first-of-type{ margin-top:2px; }
+  h3{ font-size:10.5pt; margin:11px 0 3px; color:var(--brand); }
+  p{ margin:5px 0; }
+  ul{ margin:5px 0 8px; padding-left:18px; }
+  li{ margin:2px 0; }
+  small{ color:var(--muted); }
+  .muted{ color:var(--muted); }
+  .mono{ font-family:"Consolas","Courier New",monospace; }
+  .fill{ display:inline-block; min-width:150px; border-bottom:1px solid #94a3b8; }
+  .tag{ display:inline-block; font-size:8pt; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+        color:var(--brand); background:var(--brand-soft); border:1px solid #cfe0ff; border-radius:4px; padding:1px 7px; }
+
+  .cover{ display:flex; flex-direction:column; height:253mm; }
+  .cover-top{ display:flex; justify-content:space-between; align-items:flex-start; }
+  .logo-box{ text-align:center; }
+  .logo-word{ font-family:"Consolas",monospace; font-weight:800; font-size:15pt; letter-spacing:2px; }
+  .cover-mid{ margin-top:auto; margin-bottom:auto; }
+  .doc-kicker{ letter-spacing:4px; text-transform:uppercase; color:var(--brand); font-weight:700; font-size:10pt; }
+  .doc-title{ font-size:30pt; line-height:1.08; font-weight:800; margin:10px 0 6px; }
+  .doc-sub{ font-size:13pt; color:var(--muted); }
+  .parties{ display:flex; gap:14px; margin-top:34px; }
+  .party{ flex:1; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .party .role{ font-size:8.5pt; text-transform:uppercase; letter-spacing:1px; color:var(--brand); font-weight:700; }
+  .party .name{ font-size:15pt; font-weight:800; margin-top:2px; }
+  .cover-foot{ margin-top:36px; border-top:1px solid var(--line); padding-top:12px; display:flex; justify-content:space-between; font-size:9pt; color:var(--muted); }
+
+  table.meta{ width:100%; border-collapse:collapse; margin-top:8px; }
+  table.meta td{ padding:5px 8px; border:1px solid var(--line2); vertical-align:top; }
+  table.meta td.k{ width:38%; background:#f7f9fc; font-weight:600; color:var(--accent); }
+
+  table.rate{ width:100%; border-collapse:collapse; margin:8px 0 4px; font-size:9.5pt; }
+  table.rate th{ background:var(--accent); color:#fff; text-align:left; padding:7px 10px; font-size:8.3pt;
+                 text-transform:uppercase; letter-spacing:.5px; }
+  table.rate th.num, table.rate td.num{ text-align:right; }
+  table.rate td{ padding:7px 10px; border-bottom:1px solid var(--line2); }
+  table.rate tr:nth-child(even) td{ background:#f9fbfe; }
+
+  .callout{ border-left:4px solid var(--brand); background:var(--brand-soft); padding:10px 14px; border-radius:0 6px 6px 0; margin:12px 0; }
+  .warn{ border-left:4px solid #b45309; background:#fff7ed; }
+
+  ol.legal{ padding-left:20px; }
+  ol.legal>li{ margin:8px 0; }
+  ol.legal ol{ padding-left:18px; margin-top:5px; }
+  ol.legal ol>li{ margin:4px 0; }
+
+  .sign-wrap{ display:flex; gap:20px; margin-top:24px; }
+  .sign{ flex:1; }
+  .sign .line{ border-bottom:1.4px solid var(--ink); height:44px; }
+  .sign .lbl{ font-size:9pt; color:var(--muted); margin-top:5px; }
+  .sign .who{ font-weight:800; font-size:11pt; margin-top:12px; }
+
+  .foot{ position:absolute; bottom:9mm; left:18mm; right:18mm; display:flex; justify-content:space-between;
+         font-size:8pt; color:#94a3b8; border-top:1px solid var(--line2); padding-top:6px; }
+</style>
+
+<!-- ============================== COVER ============================== -->
+<section class="page">
+  <div class="cover">
+    <div class="cover-top">
+      <div class="logo-box">
+        <div class="logo-word">iDeliver&nbsp;III</div>
+        <small>Delivery &amp; Logistics Management Suite</small>
+      </div>
+      <div class="logo-box">
+        <div class="logo-word">_NXCORE</div>
+        <small>Building the Next Core of Intelligent Software</small>
+      </div>
+    </div>
+
+    <div class="cover-mid">
+      <div class="doc-kicker">Appendix A — inseparable part of the Service Agreement V1.00.000</div>
+      <div class="doc-title">Software Licence &amp;<br>Subscription Agreement</div>
+      <div class="doc-sub">Licence terms, user &amp; driver subscriptions, and change control for iDeliver&nbsp;III</div>
+
+      <div class="parties">
+        <div class="party">
+          <div class="role">Licensee / Client</div>
+          <div class="name">3asari3</div>
+          <small>Represented by <b>Elie Khoury</b>, Owner</small>
+        </div>
+        <div class="party">
+          <div class="role">Licensor / Developer</div>
+          <div class="name">_NXCORE</div>
+          <small>Represented by <b>Nicolas Chami</b>, Principal Engineer</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="cover-foot">
+      <span>Document ref: NX-IDL3-LIC-A</span>
+      <span>Appendix to Service Agreement V1.00.000</span>
+      <span>Effective date: <span class="fill">&nbsp;</span></span>
+    </div>
+  </div>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>3asari3 &nbsp;·&nbsp; _NXCORE</span></div>
+</section>
+
+<!-- ============================== A1–A4 ============================== -->
+<section class="page">
+  <h2>Preamble &amp; Relationship to the Service Agreement</h2>
+  <p>This <b>Software Licence &amp; Subscription Agreement</b> (&ldquo;this <b>Appendix</b>&rdquo; or &ldquo;<b>Appendix&nbsp;A</b>&rdquo;)
+  is made between <b>_NXCORE</b>, represented by <b>Nicolas Chami</b> (the &ldquo;<b>Licensor</b>&rdquo; or &ldquo;<b>Developer</b>&rdquo;),
+  and <b>3asari3</b>, represented by <b>Elie Khoury</b> (the &ldquo;<b>Licensee</b>&rdquo; or &ldquo;<b>Client</b>&rdquo;), in respect of
+  the delivery &amp; logistics software known as <b>iDeliver&nbsp;III</b> (the &ldquo;<b>Software</b>&rdquo;).</p>
+  <p>This Appendix forms an <b>integral and inseparable part</b> of the <b>iDeliver&nbsp;III Software Scope &amp; Service
+  Agreement, Version&nbsp;1.00.000</b> (the &ldquo;<b>Principal Agreement</b>&rdquo;). It may not be detached from, assigned
+  separately from, or relied upon in isolation from the Principal Agreement, and both documents are to be read together
+  as a single agreement. Terms defined in the Principal Agreement carry the same meaning here unless expressly redefined.</p>
+  <div class="callout"><b>Order of precedence.</b> If there is any conflict between this Appendix and the body of the
+  Principal Agreement <u>on the specific subjects of licensing, user &amp; driver subscriptions, or change pricing</u>,
+  this Appendix prevails. On all other subjects, the Principal Agreement prevails. There are no verbal terms; nothing
+  outside these written documents binds either party.</div>
+
+  <h2>A1. Definitions</h2>
+  <ul>
+    <li><b>Software / iDeliver&nbsp;III</b> — the complete delivery &amp; logistics platform and its four modules, as described in the Principal Agreement, together with all updates provided under it.</li>
+    <li><b>Licence</b> — the limited right to use the Software granted in Article&nbsp;A2, subject to the restrictions in Article&nbsp;A3.</li>
+    <li><b>Call-Center User</b> — one named individual account authorised to sign in to the Operations Console / Call-Center (desktop) module.</li>
+    <li><b>Driver Seat</b> — one active driver enabled for live tracking and cash collection in the Driver Application within a Subscription Year.</li>
+    <li><b>Standard Package</b> — the included allotment of Call-Center Users and Driver Seats stated in Articles&nbsp;A5 and A6.</li>
+    <li><b>Subscription Year</b> — a period of twelve (12) consecutive months beginning on the Effective Date of this Appendix and on each anniversary thereof.</li>
+    <li><b>Additional User / Additional Driver</b> — any Call-Center User beyond six (6), or any Driver Seat beyond fifteen (15), enabled at any time during a Subscription Year.</li>
+    <li><b>Change Request</b> — any request to upgrade, extend, alter or add to the Software, as governed by Article&nbsp;A7 and Section&nbsp;9 of the Principal Agreement.</li>
+  </ul>
+
+  <h2>A2. Grant of Licence</h2>
+  <ol class="legal">
+    <li><b>Licence granted.</b> The Licensor grants the Licensee a <b>non-exclusive, non-transferable, non-sublicensable,
+      revocable</b> licence to install and use the Software <b>solely for the internal delivery &amp; logistics operations
+      of 3asari3</b>, for the duration of the engagement and for as long as the applicable subscription fees are paid.</li>
+    <li><b>Named business only.</b> The Licence is granted to 3asari3 as a single business entity at its own premises and
+      accounts. It does not extend to any parent, subsidiary, affiliate, franchisee, branch operated under separate
+      ownership, or any third party, without the Licensor's prior written consent.</li>
+    <li><b>Ownership unchanged.</b> The Licence transfers <b>no ownership</b>. All intellectual property in the Software
+      remains with _NXCORE at all times, as set out in Article&nbsp;A4 and Section&nbsp;11 of the Principal Agreement.</li>
+  </ol>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 2</span></div>
+</section>
+
+<!-- ============================== A3 RESTRICTIONS + A4 ============================== -->
+<section class="page">
+  <h2>A3. Licence Restrictions — Prohibited Acts</h2>
+  <p>The Licensee <b>shall not</b>, and shall not permit or enable any employee, contractor, agent or third party to do
+  any of the following, whether for payment or free of charge, in whole or in part:</p>
+  <ol class="legal">
+    <li><b>No selling.</b> Sell, resell, rent, lease, lend, assign, transfer, distribute or otherwise commercialise the
+      Software, any copy, module, component, or the Licence itself.</li>
+    <li><b>No sharing with others.</b> Share, disclose, provide access to, host for, or operate the Software on behalf of
+      any other company, business, organisation or person outside 3asari3 — including competitors, partners, suppliers or
+      affiliated businesses.</li>
+    <li><b>No sublicensing.</b> Sublicense, franchise, white-label, rebrand, or offer the Software (or any capability of it)
+      as a service, product or platform to any third party.</li>
+    <li><b>No copying.</b> Copy, reproduce, republish, mirror or redistribute the Software, its screens, database schema,
+      documentation or design, except a single reasonable backup where technically required for the Licensee's own use.</li>
+    <li><b>No reverse engineering.</b> Decompile, disassemble, reverse engineer, extract source code, or attempt to derive
+      the underlying ideas, algorithms, structure or database design, except to the limited extent such restriction is
+      prohibited by mandatory applicable law.</li>
+    <li><b>No modification by others.</b> Modify, adapt, translate, or create derivative works of the Software, or engage or
+      allow any third party (including any other developer) to alter, maintain or extend it, without the Licensor's prior
+      written consent.</li>
+    <li><b>No competing use.</b> Use the Software, or any knowledge, data structure or know-how obtained from it, to build,
+      train, assist or operate a competing or similar product, service or platform.</li>
+    <li><b>No removal of notices.</b> Remove, obscure or alter any copyright, ownership, trademark or &ldquo;Powered by
+      _NXCORE&rdquo; notice, watermark or attribution in the Software or its outputs.</li>
+    <li><b>No circumvention.</b> Bypass, disable or tamper with any licence check, user/seat limit, security control,
+      role restriction or usage measurement in the Software.</li>
+    <li><b>No unauthorised access sharing.</b> Share user accounts or credentials; each Call-Center User account is for one
+      named individual and must not be used concurrently by several people to avoid subscription fees.</li>
+  </ol>
+  <div class="callout warn"><b>Consequence of breach.</b> Any breach of this Article is a <b>material breach</b>. The Licensor
+  may, in addition to any other remedy, suspend or terminate the Licence immediately (Article&nbsp;A11), and the Licensee
+  remains liable for all fees due and for any loss or damage caused by the breach.</div>
+
+  <h2>A4. Ownership &amp; Intellectual Property</h2>
+  <ol class="legal">
+    <li>All source code, object code, design, architecture, database schema, user interface, documentation, know-how and
+      all intellectual property rights in iDeliver&nbsp;III are and remain the <b>exclusive property of _NXCORE</b>.</li>
+    <li>The Licensee receives only the limited Licence in Article&nbsp;A2. No rights are granted by implication, estoppel or
+      otherwise beyond those expressly stated.</li>
+    <li>Operational business data entered by the Licensee (its orders, customers, contacts and transactions) belongs to the
+      Licensee; the platform, software and structures that process that data belong to _NXCORE.</li>
+  </ol>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 3</span></div>
+</section>
+
+<!-- ============================== A4A OWNERSHIP OF PRODUCT LINE + LICENSED CAPACITY + STOPPAGE ============================== -->
+<section class="page">
+  <h2>A4A. Ownership of the iDeliver Product Line &amp; Licensed Capacity</h2>
+  <ol class="legal">
+    <li><b>Ownership of the software.</b> The software known as <b>iDeliver</b>, <b>iDeliver&nbsp;II</b> and
+      <b>iDeliver&nbsp;III</b>, in each and every version, module, component, screen, database design, source and object
+      code, and all associated intellectual property, is <b>owned exclusively by Nicolas Chami</b> (developing and licensing
+      through _NXCORE). The Licensee acquires no ownership of any of the foregoing; it receives only the limited, revocable
+      Licence granted under this Appendix.</li>
+    <li><b>Licensed for use — capacity limits.</b> The Licence permits use of the Software strictly within the following
+      limits, which together constitute the licensed capacity for the Licensee under this Agreement:
+      <ol>
+        <li><b>Call-Center application</b> — limited to <b>six (6) users</b>.</li>
+        <li><b>Partners application</b> — limited to <b>ten (10) users</b>.</li>
+        <li><b>Drivers application</b> — limited to <b>twenty (20) users</b>.</li>
+        <li><b>Customer application</b> — limited to <b>ten thousand (10,000) customers</b>.</li>
+      </ol>
+    </li>
+    <li><b>No use beyond the limits.</b> Use of the Software beyond any of the limits above is not licensed. Any additional
+      user, seat or customer capacity must be agreed in writing and is subject to the applicable fees before it is enabled.</li>
+  </ol>
+
+  <h2>A4B. Owner's Right to Stop the Software — Grounds of Breach</h2>
+  <p><b>Nicolas Chami</b>, as the developer and owner of the Software, reserves and retains <b>all rights to suspend or
+  stop the Software</b>, in whole or in part, immediately and on written notice, upon the occurrence of any of the following,
+  each of which constitutes a breach of this Agreement:</p>
+  <ol class="legal">
+    <li><b>Non-payment.</b> Failure to pay any licence, subscription, change-request or other fee due under this Agreement
+      within the period allowed for payment.</li>
+    <li><b>Exceeding the licensed capacity.</b> Use of the Software beyond the licensed number of Call-Center users,
+      Partners users, Drivers users or Customers stated in Article&nbsp;A4A.</li>
+    <li><b>Circumventing limits or controls.</b> Bypassing, disabling or tampering with any licence check, user or seat
+      limit, security control, role restriction or usage measurement in the Software.</li>
+    <li><b>Sharing or providing access to third parties.</b> Sharing, disclosing, hosting for, or operating the Software on
+      behalf of any company, business or person outside the Licensee, including competitors, partners, suppliers or
+      affiliated businesses.</li>
+    <li><b>Selling, sublicensing or commercialising.</b> Selling, reselling, renting, lending, assigning, transferring,
+      sublicensing, franchising, white-labelling or otherwise commercialising the Software or the Licence.</li>
+    <li><b>Copying or reverse engineering.</b> Copying, reproducing, redistributing, decompiling, disassembling or reverse
+      engineering the Software, its screens, database schema or design, other than a single permitted backup.</li>
+    <li><b>Unauthorised modification.</b> Modifying, adapting or creating derivative works of the Software, or allowing any
+      third party or other developer to alter, maintain or extend it, without the owner's prior written consent.</li>
+    <li><b>Competing use.</b> Using the Software, or any know-how, data structure or design obtained from it, to build,
+      train, assist or operate a competing or similar product, service or platform.</li>
+    <li><b>Sharing accounts or removing notices.</b> Sharing user accounts or credentials to avoid fees, or removing,
+      obscuring or altering any copyright, ownership, trademark or &ldquo;Powered by _NXCORE&rdquo; notice or attribution.</li>
+    <li><b>Confidentiality breach or unlawful use.</b> Disclosing the Software, its workings or confidential information to
+      any competitor or party seeking to replicate it, or using the Software for any unlawful purpose or in any manner that
+      harms the integrity, security or reputation of the Software or its owner.</li>
+  </ol>
+  <div class="callout warn"><b>Effect.</b> Exercising the right to stop the Software under this Article does not relieve the
+  Licensee of any fees accrued up to the date of stoppage, and is without prejudice to any other remedy available to the
+  owner under this Agreement or at law. Any such stoppage may be lifted once the breach is cured to the owner's reasonable
+  satisfaction.</div>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 3A</span></div>
+</section>
+
+<!-- ============================== A5 + A6 SUBSCRIPTIONS ============================== -->
+<section class="page">
+  <h2>A5. Call-Center User Subscriptions</h2>
+  <ol class="legal">
+    <li><b>Included Standard Package.</b> The Standard Package includes up to <b>six (6) Call-Center Users</b>, each charged
+      at <b>USD&nbsp;10.00 per user, per Subscription Year</b>.</li>
+    <li><b>Additional Users.</b> Each Call-Center User enabled <b>beyond the sixth (6th)</b> is charged at
+      <b>USD&nbsp;15.00 per additional user, per Subscription Year</b>.</li>
+    <li><b>Named accounts &amp; measurement.</b> Users are counted by the number of enabled named accounts. Enabling a user
+      at any point in a Subscription Year makes the full annual fee for that user payable for that year (no proration),
+      unless otherwise agreed in writing.</li>
+  </ol>
+  <table class="rate">
+    <thead><tr><th>Call-Center Users</th><th>Package</th><th class="num">Rate / user / year</th></tr></thead>
+    <tbody>
+      <tr><td>Users 1 – 6</td><td>Standard Package (included allotment)</td><td class="num">USD 10.00</td></tr>
+      <tr><td>User 7 and above</td><td>Additional User</td><td class="num">USD 15.00</td></tr>
+    </tbody>
+  </table>
+  <p class="muted"><small>Worked example: 6 users = 6 × USD 10.00 = USD 60.00 / year. 8 users = (6 × USD 10.00) + (2 × USD 15.00)
+  = USD 90.00 / year.</small></p>
+
+  <h2>A6. Driver Tracking Subscriptions</h2>
+  <ol class="legal">
+    <li><b>Included allotment.</b> The Software's driver live-tracking subscription includes up to <b>fifteen (15)
+      Driver Seats</b> per Subscription Year, as part of the Standard Package.</li>
+    <li><b>Additional Drivers.</b> Each Driver Seat enabled <b>beyond the fifteenth (15th)</b> is charged at
+      <b>USD&nbsp;15.00 per additional driver, per Subscription Year</b>.</li>
+    <li><b>Measurement.</b> Driver Seats are counted by the number of drivers enabled for tracking. Enabling a driver at any
+      point in a Subscription Year makes the full annual fee for that driver payable for that year (no proration), unless
+      otherwise agreed in writing.</li>
+  </ol>
+  <table class="rate">
+    <thead><tr><th>Driver Seats</th><th>Package</th><th class="num">Rate / driver / year</th></tr></thead>
+    <tbody>
+      <tr><td>Drivers 1 – 15</td><td>Standard Package (included allotment)</td><td class="num">Included</td></tr>
+      <tr><td>Driver 16 and above</td><td>Additional Driver</td><td class="num">USD 15.00</td></tr>
+    </tbody>
+  </table>
+
+  <h2>A7. Billing, Renewal &amp; Non-Payment</h2>
+  <ol class="legal">
+    <li><b>Annual billing.</b> Subscription fees under Articles&nbsp;A5 and A6 are invoiced <b>annually in advance</b> for
+      each Subscription Year and are payable <b>upon receipt of invoice</b>.</li>
+    <li><b>Mid-year additions.</b> Additional Users or Drivers enabled during a Subscription Year are invoiced when enabled
+      and, thereafter, form part of the annual renewal.</li>
+    <li><b>Renewal.</b> Subscriptions renew automatically for successive Subscription Years unless either party gives
+      written notice of non-renewal at least <b>thirty (30) days</b> before the anniversary date.</li>
+    <li><b>Non-payment.</b> If any subscription fee remains unpaid for <b>fifteen (15) days</b> after its due date, the
+      Licensor may suspend access to the Software (in whole or in part) until payment is made. Continued non-payment is a
+      material breach permitting termination under Article&nbsp;A11.</li>
+    <li><b>Taxes &amp; third-party fees.</b> Fees are exclusive of any applicable taxes. Third-party hosting, database,
+      mapping and authentication charges are handled as stated in the Principal Agreement (Section&nbsp;10).</li>
+  </ol>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 4</span></div>
+</section>
+
+<!-- ============================== A8 CHANGE + A9 SUPPORT + A10 CONFIDENTIALITY ============================== -->
+<section class="page">
+  <h2>A8. Upgrades &amp; Change Requests</h2>
+  <ol class="legal">
+    <li><b>Everything new is evaluated first.</b> Any request to <b>upgrade, extend, modify, redesign or add</b> to the
+      Software — including new features, screens, reports, integrations, rules or additional modules — is a
+      <b>Change Request</b> and is <u>not</u> included in the Licence or the subscription fees.</li>
+    <li><b>Evaluation &amp; estimate.</b> Upon a written Change Request, the Licensor will <b>evaluate</b> it and provide a
+      written <b>estimate</b> setting out the scope, the effort/time, the price, and any effect on other features or
+      timelines.</li>
+    <li><b>Mutual written agreement before work.</b> No work on a Change Request begins until <b>both parties agree in
+      writing</b> to the scope and price. Absent such written agreement, the Licensor has no obligation to perform the
+      change and the Licensee has no expectation of delivery.</li>
+    <li><b>Pricing.</b> Each Change Request is priced individually following evaluation. Change Requests are billed
+      separately from, and in addition to, the Licence and subscription fees.</li>
+    <li><b>Defects excluded.</b> Correction of a genuine Defect (a Scope-Baseline feature failing to work as described in
+      the Principal Agreement) is <b>not</b> a Change Request and is handled under Section&nbsp;10 of the Principal Agreement.</li>
+    <li><b>Relationship to Principal Agreement.</b> This Article operates together with, and does not replace, the Change
+      Control process in Section&nbsp;9 of the Principal Agreement.</li>
+  </ol>
+
+  <h2>A9. Support, Maintenance &amp; Updates</h2>
+  <ol class="legal">
+    <li>Defect support, optional maintenance, hosting and backups are governed by <b>Section&nbsp;10 of the Principal
+      Agreement</b>. This Appendix does not expand those obligations.</li>
+    <li>Routine updates the Licensor chooses to release are provided under the Licence; new functionality beyond the Scope
+      Baseline remains a Change Request under Article&nbsp;A8.</li>
+  </ol>
+
+  <h2>A10. Confidentiality</h2>
+  <ol class="legal">
+    <li>Each party shall keep confidential all non-public information of the other obtained under this Appendix, including
+      the Software's design, structure, pricing and business data, and shall use it only to perform this agreement.</li>
+    <li>The Licensee shall not disclose the Software, its screens or its workings to any competitor of the Licensor or to any
+      party seeking to replicate it.</li>
+    <li>These obligations survive termination for as long as the information remains confidential.</li>
+  </ol>
+
+  <h2>A11. Term, Suspension &amp; Termination</h2>
+  <ol class="legal">
+    <li><b>Term.</b> This Appendix takes effect on its Effective Date and continues for as long as the Principal Agreement
+      is in force and any subscription remains active.</li>
+    <li><b>Termination for breach.</b> The Licensor may suspend or terminate the Licence immediately on written notice if the
+      Licensee breaches Article&nbsp;A3 (Restrictions) or fails to pay fees when due and does not cure non-payment within
+      the period in Article&nbsp;A7.4.</li>
+    <li><b>Effect of termination.</b> On termination of the Licence, the Licensee shall <b>immediately cease all use</b> of
+      the Software, stop accessing all modules, and, at the Licensor's request, remove installed copies. Fees accrued up to
+      termination remain payable.</li>
+    <li><b>Data on exit.</b> Handling and return/export of the Licensee's own business data on termination is as agreed in
+      the Principal Agreement (Section&nbsp;10).</li>
+    <li><b>Survival.</b> Articles A3, A4, A10, A12 and any accrued payment obligations survive termination.</li>
+  </ol>
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 5</span></div>
+</section>
+
+<!-- ============================== A12 GENERAL + SIGNATURES ============================== -->
+<section class="page">
+  <h2>A12. Warranties, Liability &amp; General Terms</h2>
+  <ol class="legal">
+    <li><b>Warranty &amp; liability.</b> The warranties and the limitation of liability in Section&nbsp;12 of the Principal
+      Agreement apply to this Appendix. The Licensor's total aggregate liability shall not exceed the fees paid by the
+      Licensee under the Principal Agreement and this Appendix.</li>
+    <li><b>Compliance audit.</b> The Licensor may, on reasonable written notice, verify the number of enabled Call-Center
+      Users and Driver Seats to confirm correct subscription. Any shortfall found is invoiced at the rates in Articles A5–A6.</li>
+    <li><b>No waiver.</b> A failure to enforce any term is not a waiver of it. Any waiver must be in writing.</li>
+    <li><b>Severability.</b> If any provision is held unenforceable, the remainder continues in full force, and the
+      unenforceable provision is replaced by the closest enforceable term reflecting the parties' intent.</li>
+    <li><b>Assignment.</b> The Licensee may not assign or transfer this Appendix or the Licence. The Licensor may assign it
+      to a successor of its business on written notice.</li>
+    <li><b>Notices.</b> Notices must be in writing (email is sufficient) to the parties' representatives named on the cover.</li>
+    <li><b>Entire agreement.</b> This Appendix together with the Principal Agreement is the entire agreement between the
+      parties on its subject matter and supersedes all prior discussions. There are <b>no undocumented or verbal terms</b>.</li>
+    <li><b>Amendments.</b> Any amendment must be in writing and signed by both parties.</li>
+    <li><b>Governing law.</b> This Appendix is governed by the same law and jurisdiction as the Principal Agreement
+      (Principal Agreement, Section&nbsp;12), namely the laws of <span class="fill">&nbsp;</span>.</li>
+  </ol>
+
+  <h2>A13. Signatures</h2>
+  <p>By signing below, the parties confirm that they have read, understood and agree to this Software Licence &amp;
+  Subscription Agreement (Appendix&nbsp;A), and acknowledge it as an inseparable part of the iDeliver&nbsp;III Software Scope
+  &amp; Service Agreement V1.00.000.</p>
+
+  <div class="sign-wrap">
+    <div class="sign">
+      <div class="who">For the Licensee — 3asari3</div>
+      <div style="height:26px"></div>
+      <div class="line"></div>
+      <div class="lbl">Signature</div>
+      <table class="meta" style="margin-top:10px">
+        <tr><td class="k">Name</td><td>Elie Khoury</td></tr>
+        <tr><td class="k">Title</td><td>Owner, 3asari3</td></tr>
+        <tr><td class="k">Date</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+    <div class="sign">
+      <div class="who">For the Licensor — _NXCORE</div>
+      <div style="height:26px"></div>
+      <div class="line"></div>
+      <div class="lbl">Signature</div>
+      <table class="meta" style="margin-top:10px">
+        <tr><td class="k">Name</td><td>Nicolas Chami</td></tr>
+        <tr><td class="k">Title</td><td>Principal Engineer, _NXCORE</td></tr>
+        <tr><td class="k">Date</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:26px"><b>Binding reference.</b> This Appendix&nbsp;A (ref. NX-IDL3-LIC-A) is attached
+  to and forms one document with the iDeliver&nbsp;III Software Scope &amp; Service Agreement V1.00.000. Neither document is
+  valid without the other where both have been executed.</div>
+
+  <p style="margin-top:22px; text-align:center; color:#94a3b8; font-size:9pt">
+    Designed &amp; Engineered by <b>_NXCORE</b> — Building the Next Core of Intelligent Software<br>
+    © <span class="mono">2026</span> _NXCORE. All rights reserved.
+  </p>
+
+  <div class="foot"><span>iDeliver III — Appendix A · Software Licence &amp; Subscription Agreement</span><span>Page 6</span></div>
+</section>

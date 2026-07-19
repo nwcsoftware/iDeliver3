@@ -1,0 +1,511 @@
+<meta charset="utf-8">
+<title>iDeliver III — Software Scope &amp; Service Agreement</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#475569; --line:#d8dee9; --line2:#e9edf3;
+    --brand:#1d4ed8; --brand-soft:#eff4ff; --accent:#0b1220; --ok:#0f766e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:"Segoe UI", Calibri, Arial, sans-serif;
+    color:var(--ink); font-size:9.9pt; line-height:1.42;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page{ size:A4; margin:0; }
+  .page{
+    width:210mm; min-height:297mm; overflow:hidden; padding:18mm 18mm 22mm 18mm;
+    margin:0 auto; background:#fff; position:relative;
+    page-break-after:always;
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  h1,h2,h3{ color:var(--accent); margin:0; }
+  h2{ font-size:13.5pt; letter-spacing:.2px; margin:16px 0 5px; padding-bottom:4px; border-bottom:2px solid var(--brand); }
+  h2:first-of-type{ margin-top:2px; }
+  h3{ font-size:11pt; margin:12px 0 3px; color:var(--brand); }
+  p{ margin:5px 0; }
+  ul{ margin:5px 0 8px; padding-left:18px; }
+  li{ margin:2px 0; }
+  small{ color:var(--muted); }
+  .muted{ color:var(--muted); }
+  .mono{ font-family:"Consolas","Courier New",monospace; }
+  .fill{ display:inline-block; min-width:150px; border-bottom:1px solid #94a3b8; }
+  .tag{ display:inline-block; font-size:8pt; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+        color:var(--brand); background:var(--brand-soft); border:1px solid #cfe0ff; border-radius:4px; padding:1px 7px; }
+
+  /* Cover */
+  .cover{ display:flex; flex-direction:column; height:253mm; }
+  .cover-top{ display:flex; justify-content:space-between; align-items:flex-start; }
+  .logo-box{ text-align:center; }
+  .logo-word{ font-family:"Consolas",monospace; font-weight:800; font-size:15pt; letter-spacing:2px; }
+  .cover-mid{ margin-top:auto; margin-bottom:auto; }
+  .doc-kicker{ letter-spacing:4px; text-transform:uppercase; color:var(--brand); font-weight:700; font-size:10pt; }
+  .doc-title{ font-size:32pt; line-height:1.08; font-weight:800; margin:10px 0 6px; }
+  .doc-sub{ font-size:13pt; color:var(--muted); }
+  .parties{ display:flex; gap:14px; margin-top:34px; }
+  .party{ flex:1; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .party .role{ font-size:8.5pt; text-transform:uppercase; letter-spacing:1px; color:var(--brand); font-weight:700; }
+  .party .name{ font-size:15pt; font-weight:800; margin-top:2px; }
+  .cover-foot{ margin-top:36px; border-top:1px solid var(--line); padding-top:12px; display:flex; justify-content:space-between; font-size:9pt; color:var(--muted); }
+
+  table.meta{ width:100%; border-collapse:collapse; margin-top:8px; }
+  table.meta td{ padding:5px 8px; border:1px solid var(--line2); vertical-align:top; }
+  table.meta td.k{ width:38%; background:#f7f9fc; font-weight:600; color:var(--accent); }
+
+  .modcard{ border:1px solid var(--line); border-radius:8px; padding:9px 13px; margin:9px 0; break-inside:avoid; }
+  .modcard h3{ margin:0 0 3px; display:flex; align-items:center; gap:8px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 26px; }
+  .feat{ margin:2px 0; padding-left:15px; position:relative; }
+  .feat::before{ content:"▪"; color:var(--brand); position:absolute; left:0; }
+
+  .callout{ border-left:4px solid var(--brand); background:var(--brand-soft); padding:10px 14px; border-radius:0 6px 6px 0; margin:12px 0; }
+  .warn{ border-left:4px solid #b45309; background:#fff7ed; }
+
+  ol.legal{ padding-left:20px; }
+  ol.legal>li{ margin:9px 0; }
+  ol.legal ol{ padding-left:18px; margin-top:5px; }
+  ol.legal ol>li{ margin:4px 0; }
+
+  .sign-wrap{ display:flex; gap:20px; margin-top:26px; }
+  .sign{ flex:1; }
+  .sign .line{ border-bottom:1.4px solid var(--ink); height:46px; }
+  .sign .lbl{ font-size:9pt; color:var(--muted); margin-top:5px; }
+  .sign .who{ font-weight:800; font-size:11pt; margin-top:14px; }
+
+  .foot{ position:absolute; bottom:11mm; left:18mm; right:18mm; display:flex; justify-content:space-between;
+         font-size:8pt; color:#94a3b8; border-top:1px solid var(--line2); padding-top:6px; }
+
+  .toc a{ color:var(--ink); text-decoration:none; }
+  .toc .row{ display:flex; justify-content:space-between; border-bottom:1px dotted var(--line); padding:3px 0; }
+  .toc .row b{ font-weight:600; }
+</style>
+
+<!-- ============================== COVER ============================== -->
+<section class="page">
+  <div class="cover">
+    <div class="cover-top">
+      <div class="logo-box">
+        <div class="logo-word">iDeliver&nbsp;III</div>
+        <small>Delivery &amp; Logistics Management Suite</small>
+      </div>
+      <div class="logo-box">
+        <div class="logo-word">_NXCORE</div>
+        <small>Building the Next Core of Intelligent Software</small>
+      </div>
+    </div>
+
+    <div class="cover-mid">
+      <div class="doc-kicker">Software Scope &amp; Service Agreement</div>
+      <div class="doc-title">iDeliver&nbsp;III<br>Delivery Management Platform</div>
+      <div class="doc-sub">System Capabilities Specification &amp; Terms of Engagement</div>
+
+      <div class="parties">
+        <div class="party">
+          <div class="role">Client / Owner</div>
+          <div class="name">3asari3</div>
+          <small>Represented by <b>Elie Khoury</b>, Owner</small>
+        </div>
+        <div class="party">
+          <div class="role">Developer / Provider</div>
+          <div class="name">_NXCORE</div>
+          <small>Represented by <b>Nicolas Chami</b>, Principal Engineer</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="cover-foot">
+      <span>Document ref: NX-IDL3-SA-<span class="mono">001</span></span>
+      <span>Version 1.00.000 — System v3.00.015</span>
+      <span>Effective date: <b>01 June 2026</b></span>
+    </div>
+  </div>
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>3asari3 &nbsp;·&nbsp; _NXCORE</span></div>
+</section>
+
+<!-- ============================== TOC / PREAMBLE ============================== -->
+<section class="page">
+  <h2>Contents</h2>
+  <div class="toc">
+    <div class="row"><a href="#p1"><b>1.</b> &nbsp;Parties &amp; Preamble</a><span>2</span></div>
+    <div class="row"><a href="#p2"><b>2.</b> &nbsp;Definitions</a><span>2</span></div>
+    <div class="row"><a href="#p3"><b>3.</b> &nbsp;The Delivered System — Overview &amp; Architecture</a><span>3</span></div>
+    <div class="row"><a href="#p4"><b>4.</b> &nbsp;Module A — Operations Console &amp; Call Center (Desktop)</a><span>3</span></div>
+    <div class="row"><a href="#p5"><b>5.</b> &nbsp;Module B — Partners &amp; Suppliers Portal</a><span>5</span></div>
+    <div class="row"><a href="#p6"><b>6.</b> &nbsp;Module C — Driver Application</a><span>6</span></div>
+    <div class="row"><a href="#p7"><b>7.</b> &nbsp;Module D — Customer Mobile Application</a><span>6</span></div>
+    <div class="row"><a href="#p8"><b>8.</b> &nbsp;Scope Baseline &amp; Acceptance</a><span>7</span></div>
+    <div class="row"><a href="#p9"><b>9.</b> &nbsp;Change Control &amp; Additional Work</a><span>7</span></div>
+    <div class="row"><a href="#p10"><b>10.</b> Support, Maintenance &amp; Hosting</a><span>8</span></div>
+    <div class="row"><a href="#p11"><b>11.</b> Intellectual Property &amp; Licence</a><span>9</span></div>
+    <div class="row"><a href="#p12"><b>12.</b> Warranties, Liability &amp; General Terms</a><span>9</span></div>
+    <div class="row"><a href="#p13"><b>13.</b> Signatures</a><span>10</span></div>
+  </div>
+
+  <h2 id="p1">1. Parties &amp; Preamble</h2>
+  <p>This Software Scope &amp; Service Agreement (the &ldquo;<b>Agreement</b>&rdquo;) is entered into as of the Effective Date,
+  <b>01 June 2026</b>, as stated on the cover page, by and between:</p>
+  <table class="meta">
+    <tr><td class="k">The Client (&ldquo;3asari3&rdquo;)</td><td>3asari3, represented by <b>Elie Khoury</b>, Owner &mdash; the party for whom the Software has been developed and to whom it is delivered.</td></tr>
+    <tr><td class="k">The Developer (&ldquo;_NXCORE&rdquo;)</td><td>_NXCORE, represented by <b>Nicolas Chami</b> &mdash; the party that designed, engineered and delivered the Software.</td></tr>
+  </table>
+  <p>The Developer has designed, built and delivered to the Client a complete delivery &amp; logistics management
+  platform known as <b>iDeliver&nbsp;III</b> (the &ldquo;<b>Software</b>&rdquo; or the &ldquo;<b>System</b>&rdquo;), comprising the four
+  modules described in Sections 4&ndash;7. The Software was <b>delivered to and installed for the Client on 01 June 2026</b>
+  (the &ldquo;<b>Delivery Date</b>&rdquo;), which is also the Effective Date of this Agreement. This Agreement records, in full,
+  <b>what the Software does and delivers</b> as of the
+  Effective Date, so that both parties share a single, agreed definition of the delivered scope (the
+  &ldquo;<b>Scope Baseline</b>&rdquo;). Anything not expressly listed in this Agreement is outside the Scope Baseline and is
+  governed by the Change Control process in Section&nbsp;9.</p>
+
+  <h2 id="p2">2. Definitions</h2>
+  <ul>
+    <li><b>Scope Baseline</b> &mdash; the complete set of features and capabilities described in Sections 3&ndash;7, representing the delivered System.</li>
+    <li><b>Module</b> &mdash; one of the four delivered applications: the Operations Console (Desktop), the Partners &amp; Suppliers Portal, the Driver Application, and the Customer Mobile Application.</li>
+    <li><b>Change Request (CR)</b> &mdash; any request for a feature, behaviour, integration or modification not expressly included in the Scope Baseline.</li>
+    <li><b>Defect</b> &mdash; a verifiable failure of a Scope Baseline feature to operate as described in this Agreement.</li>
+    <li><b>Enhancement</b> &mdash; new or expanded functionality beyond the Scope Baseline; always treated as a Change Request.</li>
+    <li><b>Acceptance</b> &mdash; the Client's confirmation (Section&nbsp;8) that the delivered System matches this Agreement.</li>
+  </ul>
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 2</span></div>
+</section>
+
+<!-- ============================== SYSTEM OVERVIEW + MODULE A ============================== -->
+<section class="page">
+  <h2 id="p3">3. The Delivered System — Overview &amp; Architecture</h2>
+  <p>iDeliver&nbsp;III is an integrated, multi-user platform that manages the full lifecycle of a delivery business:
+  from taking an order, through dispatch and driver assignment, delivery, cash collection, and final financial
+  reconciliation. It is delivered as <b>four connected applications</b> sharing a single secure database:</p>
+  <div class="grid2">
+    <div><span class="tag">Module A</span> <b>Operations Console &amp; Call Center</b> — the desktop back-office application used by staff.</div>
+    <div><span class="tag">Module B</span> <b>Partners &amp; Suppliers Portal</b> — a restricted view for external partners/suppliers.</div>
+    <div style="margin-top:8px"><span class="tag">Module C</span> <b>Driver Application</b> — the field app drivers use on delivery.</div>
+    <div style="margin-top:8px"><span class="tag">Module D</span> <b>Customer Mobile Application</b> — the app end-customers use to book &amp; track.</div>
+  </div>
+  <h3>Technical foundation</h3>
+  <ul>
+    <li><b>Desktop application</b> packaged for Windows (and buildable for macOS / Linux), installable on office workstations.</li>
+    <li><b>Secure cloud database &amp; backend</b> with role-based access control and row-level security, so every user sees only the data their role permits.</li>
+    <li><b>Real-time shared data</b> — orders, drivers, payments and messages are synchronised across all four modules.</li>
+    <li><b>Roles supported:</b> Super-Administrator (Developer), Administrator, Office/Call-Center user, Partner, Supplier, Driver, and Customer.</li>
+    <li><b>Multi-currency</b> handling of order totals and collections; <b>interactive maps</b> for locations &amp; tracking; built-in <b>PDF/report</b> generation.</li>
+    <li><b>Security:</b> individual user accounts, enforced password change on first login / after reset, and administrator-managed account provisioning.</li>
+  </ul>
+
+  <h2 id="p4">4. Module A — Operations Console &amp; Call Center (Desktop)</h2>
+  <p>The desktop application is the operational heart of the business — the <b>Call Center</b> and back-office console.
+  It includes the following delivered capabilities:</p>
+
+  <div class="modcard">
+    <h3>Dispatch &amp; Order Management (Call Center)</h3>
+    <div class="grid2">
+      <div class="feat">Live <b>Dashboard</b> with real-time stats: available drivers, orders in transit, pending, failed / cancelled.</div>
+      <div class="feat"><b>Order intake &amp; management</b> — create and edit delivery orders with customer, addresses and instructions.</div>
+      <div class="feat">Order composition: <b>goods/items</b>, <b>services</b>, <b>packages</b>, and <b>returnable items</b> on a single order.</div>
+      <div class="feat"><b>Driver assignment</b> and status progression (pending → in transit → delivered / failed / cancelled).</div>
+      <div class="feat"><b>Closed Orders</b> screen with Outlook-style date grouping for historical review.</div>
+      <div class="feat"><b>Location tagging</b> and pickup / drop-off addresses with map selection.</div>
+      <div class="feat">Customer quick-search / combobox for fast order entry at the call center.</div>
+      <div class="feat"><b>Free-order</b> and <b>credit-order</b> handling (orders that close without immediate payment).</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>Live Tracking &amp; Drivers</h3>
+    <div class="grid2">
+      <div class="feat"><b>Map-based tracking</b> of orders and delivery locations.</div>
+      <div class="feat"><b>Drivers register</b> — manage drivers, availability and assignment.</div>
+      <div class="feat"><b>Vehicles</b> register linked to the fleet.</div>
+      <div class="feat">Driver availability reflected live on the dashboard.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 3</span></div>
+</section>
+
+<!-- ============================== MODULE A (cash / catalog / contacts) ============================== -->
+<section class="page">
+  <div class="modcard">
+    <h3>Cash, Payments &amp; Financial Reconciliation</h3>
+    <div class="grid2">
+      <div class="feat"><b>Money lifecycle:</b> driver collects cash → Driver Settlements → Cashier Box, fully tracked end-to-end.</div>
+      <div class="feat"><b>Driver Settlements</b> — reconcile cash owed by each driver and mark it paid to the office.</div>
+      <div class="feat"><b>Cashier Box</b> — the office cash ledger with a reversible <b>reset checkpoint</b>.</div>
+      <div class="feat"><b>Credit Customers</b> — account-level dues, collection and printable statements.</div>
+      <div class="feat"><b>Partner Dues</b> — per-partner package balances and settlement.</div>
+      <div class="feat"><b>Multi-currency</b> totals and collections throughout.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>Catalog, Purchasing &amp; Retail</h3>
+    <div class="grid2">
+      <div class="feat"><b>Products</b> catalog with automatic serial coding by kind (PRD / SRV / RTN / ADD) and service flagging.</div>
+      <div class="feat"><b>Price List</b> management.</div>
+      <div class="feat"><b>Returnable Items</b> tracking.</div>
+      <div class="feat"><b>Purchase Invoices</b> (procurement).</div>
+      <div class="feat"><b>Retail Invoices</b> (point-of-sale style sales).</div>
+      <div class="feat"><b>Supplier Settlements</b> — procurement commission &amp; month-end supplier reports.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>Contacts &amp; Accounting</h3>
+    <div class="grid2">
+      <div class="feat"><b>Contacts</b> managed as Customers, Suppliers and Partners.</div>
+      <div class="feat">Multiple <b>addresses per contact</b> with interactive map picker.</div>
+      <div class="feat"><b>Chart-of-Accounts</b> sub-account numbers per contact.</div>
+      <div class="feat"><b>Account Statements</b> and <b>Account Transactions</b> ledgers.</div>
+      <div class="feat"><b>Company profile</b> and <b>Reports</b> with charts &amp; analytics.</div>
+      <div class="feat">On-screen and <b>PDF-exportable</b> statements &amp; reports.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 4</span></div>
+</section>
+
+<!-- ============================== MODULE A (admin) + MODULE B ============================== -->
+<section class="page">
+  <div class="modcard">
+    <h3>Communication &amp; Administration</h3>
+    <div class="grid2">
+      <div class="feat"><b>Broadcast Messages</b> — send announcements to users, with per-user unread indicators &amp; pop-ups.</div>
+      <div class="feat"><b>User Accounts</b> administration — create users, assign roles, reset passwords.</div>
+      <div class="feat">Enforced <b>first-login / post-reset password change</b>.</div>
+      <div class="feat"><b>App Settings</b> and company configuration.</div>
+    </div>
+  </div>
+
+  <div class="modcard">
+    <h3>Super-Administrator (Developer) Tools</h3>
+    <div class="grid2">
+      <div class="feat"><b>Developer Account</b> management (restricted).</div>
+      <div class="feat"><b>Delete Order</b> and <b>Delete Orders by Date</b> (bulk, selective, super-admin only).</div>
+      <div class="feat"><b>Reset Cashier Box</b> — reversible checkpoint that hides movements as of a date without deleting.</div>
+      <div class="feat"><b>Reset Data</b> and controlled maintenance operations.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>Note.</b> The features above constitute the delivered Operations Console in full. Screen-by-screen behaviour,
+    layout and wording are as installed on the Effective Date and form part of the Scope Baseline.
+  </div>
+
+  <h2 id="p5">5. Module B — Partners &amp; Suppliers Portal</h2>
+  <p>A dedicated, <b>restricted</b> experience for external Partners and Suppliers. When a partner or supplier signs in,
+  they are placed in their own portal and never see the full back-office application.</p>
+  <div class="modcard">
+    <h3>Partner / Supplier Portal capabilities</h3>
+    <div class="grid2">
+      <div class="feat">Access <b>scoped to their own contact only</b> — they see nothing that belongs to other parties.</div>
+      <div class="feat">Visibility limited to their <b>Sold Orders</b> and <b>Completed Orders</b>.</div>
+      <div class="feat"><b>Supplier commission</b> tracking and month-end <b>settlement</b> reporting.</div>
+      <div class="feat"><b>Partner package dues</b> — balances of packages handled on their behalf.</div>
+      <div class="feat">Separate, secure login governed by the same role &amp; security model.</div>
+      <div class="feat">No access to dispatch, cashier, catalog, admin or other customers' data.</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 5</span></div>
+</section>
+
+<!-- ============================== MODULE C + MODULE D ============================== -->
+<section class="page">
+  <h2 id="p6">6. Module C — Driver Application</h2>
+  <p>An external application for delivery drivers in the field, connected to the same live system. It is the first hop
+  of the cash lifecycle and keeps delivery status current for the whole operation.</p>
+  <div class="modcard">
+    <h3>Driver Application capabilities</h3>
+    <div class="grid2">
+      <div class="feat">Drivers see the orders <b>assigned to them</b> for delivery.</div>
+      <div class="feat"><b>Update delivery status</b> (e.g. delivered / failed) from the field, reflected instantly in the office.</div>
+      <div class="feat"><b>Record cash collected</b> from the customer on delivery, attributed to the driver.</div>
+      <div class="feat">Collections flow automatically into <b>Driver Settlements</b> for office reconciliation.</div>
+      <div class="feat">Access limited strictly to the driver's own assignments and collections.</div>
+      <div class="feat">Keeps the office <b>Tracking</b> and <b>Dashboard</b> up to date in real time.</div>
+    </div>
+  </div>
+
+  <h2 id="p7">7. Module D — Customer Mobile Application</h2>
+  <p>A customer-facing mobile application allowing end-customers to register, book deliveries, and track their orders.</p>
+  <div class="modcard">
+    <h3>Customer Mobile capabilities</h3>
+    <div class="grid2">
+      <div class="feat"><b>Multi-language</b> interface: English, Arabic (with right-to-left layout), French and Romanian.</div>
+      <div class="feat"><b>Registration</b> and secure sign-in, including one-time-passcode (OTP) and Google sign-in.</div>
+      <div class="feat"><b>Home</b> screen with quick actions and recent activity.</div>
+      <div class="feat"><b>Book Delivery</b> — create a delivery/collection request with one or more request lines.</div>
+      <div class="feat"><b>Saved addresses</b> with map-based location selection; delivery / drop and pickup points.</div>
+      <div class="feat"><b>Payment preference</b> — cash on delivery or credit/debit, where allowed.</div>
+      <div class="feat"><b>My Orders</b> — list, view details, and edit pending requests.</div>
+      <div class="feat"><b>Live delivery status</b> per order (awaiting pickup, in progress, delivered).</div>
+      <div class="feat"><b>Notifications</b> &amp; broadcast messages from the operator.</div>
+      <div class="feat"><b>Profile</b> management (details, addresses, language, password).</div>
+    </div>
+  </div>
+  <div class="callout">
+    <b>Integration.</b> Customer-created requests arrive directly in the Operations Console as external requests,
+    ready for the call center to dispatch — closing the loop across all four modules.
+  </div>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 6</span></div>
+</section>
+
+<!-- ============================== TERMS: SCOPE, CHANGE CONTROL ============================== -->
+<section class="page">
+  <h2 id="p8">8. Scope Baseline &amp; Acceptance</h2>
+  <ol class="legal">
+    <li><b>Definition of delivered scope.</b> The features and capabilities described in Sections 3&ndash;7 constitute the
+      complete Scope Baseline &mdash; the entirety of what the Developer has agreed to deliver under this Agreement.
+      The Client confirms that this document accurately and fully describes the delivered System.</li>
+    <li><b>Acceptance.</b> Upon signature, the Client accepts the System as delivered and matching this Agreement.
+      Any item the Client believes to be missing from the delivered System must be raised in writing within
+      <b>fifteen (15)</b> days of signature; otherwise the System is deemed fully accepted.</li>
+    <li><b>Completeness.</b> Both parties agree that the Scope Baseline is <b>complete and self-contained</b>. It is not an
+      open-ended commitment to continuous additions. Any capability, screen, report, integration, automation or
+      behavioural change <b>not expressly listed</b> in Sections 3&ndash;7 is <u>outside</u> the Scope Baseline.</li>
+  </ol>
+
+  <h2 id="p9">9. Change Control &amp; Additional Work</h2>
+  <div class="callout warn">
+    <b>Purpose of this section.</b> To keep the project stable and fairly priced for both parties, all new ideas,
+    additions and modifications after Acceptance are handled through a single, written Change Control process.
+    Verbal or ad-hoc requests do not create an obligation on the Developer and are not part of the delivered scope.
+  </div>
+  <ol class="legal">
+    <li><b>Everything new is a Change Request.</b> Any request that adds to, expands, or alters the Scope Baseline &mdash;
+      including new screens, fields, reports, rules, integrations, third-party services, redesigns, or additional
+      modules &mdash; is an <b>Enhancement</b> and is handled as a <b>Change Request (CR)</b>, separate from this Agreement.</li>
+    <li><b>How a Change Request is raised.</b> The Client submits the request in writing (email is sufficient). The
+      Developer responds with a written <b>impact assessment</b>: description, effort/time estimate, price, and any effect
+      on other features or timelines.</li>
+    <li><b>Approval before work.</b> The Developer begins work on a CR only after the Client approves the written estimate
+      and price. No approved estimate, no work &mdash; and no expectation of delivery.</li>
+    <li><b>Pricing of changes.</b> Change Requests are billed either at an hourly rate of <b>USD&nbsp;25.00 per hour</b> or,
+      where the scope allows, at a <b>fixed price per CR</b> quoted in advance, and are <b>not</b> included in any support or
+      maintenance fee unless expressly agreed in writing.</li>
+    <li><b>Bug fixes are not Change Requests.</b> A genuine <b>Defect</b> &mdash; a Scope Baseline feature failing to work as
+      described in this Agreement &mdash; is corrected under Section&nbsp;10 and is not charged as a CR.</li>
+    <li><b>Distinguishing defects from changes.</b> A request to make a feature behave <i>differently</i> than described
+      here (rather than fixing a failure to meet this description) is a Change Request, not a Defect.</li>
+    <li><b>Batching &amp; scheduling.</b> To keep the System stable, the Developer may schedule approved changes into
+      planned releases rather than delivering each request immediately.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 7</span></div>
+</section>
+
+<!-- ============================== TERMS: SUPPORT, IP ============================== -->
+<section class="page">
+  <h2 id="p10">10. Support, Maintenance &amp; Hosting</h2>
+  <ol class="legal">
+    <li><b>Warranty &amp; Defect support.</b> The Developer will correct verified Defects in the Scope Baseline for a
+      warranty period of <b>ninety (90) days from the Delivery Date (01 June 2026), i.e. until 30 August 2026</b>, at no
+      additional charge.</li>
+    <li><b>Maintenance (optional).</b> After the warranty period, ongoing maintenance — minor adjustments, updates, database
+      upkeep and priority support — may be provided under a separate annual maintenance arrangement at
+      <b>USD&nbsp;600.00 per year</b> (payable annually in advance, equivalent to USD&nbsp;50.00 per month). Maintenance does
+      <u>not</u> include Enhancements (Section&nbsp;9), which are quoted separately.</li>
+    <li><b>Hosting &amp; third-party services.</b> The System relies on cloud database, mapping and authentication services.
+      Their subscription / usage fees are the <b>Client's</b> responsibility, currently estimated at
+      <b>USD&nbsp;25.00 – USD&nbsp;120.00 per month</b> depending on usage volume; the Developer will configure and maintain
+      these services on the Client's behalf.</li>
+    <li><b>Backups &amp; data.</b> During the warranty period and any active maintenance arrangement, the Developer performs
+      <b>automated daily database backups, retained for thirty (30) days</b>. The Client remains responsible for exporting
+      and retaining its own operational records (statements, reports and invoices) for its long-term needs.</li>
+    <li><b>Response targets (developer's mandatory service levels).</b> For issues reported in writing (email is sufficient),
+      the Developer will use reasonable endeavours to meet the following times, counted in Beirut business days:
+      <ol>
+        <li><b>Critical</b> (System unusable / operations stopped): acknowledge within <b>one (1) business day</b> and
+          provide a fix or workaround within <b>three (3) business days</b>.</li>
+        <li><b>Major</b> (a key feature failing, workaround exists): acknowledge within <b>two (2) business days</b> and
+          resolve within <b>seven (7) business days</b>.</li>
+        <li><b>Minor</b> (cosmetic or low-impact): addressed in the next scheduled maintenance release.</li>
+      </ol>
+    </li>
+    <li><b>Support hours.</b> Standard support is provided <b>Monday to Friday, 09:00–17:00 (Beirut time)</b>, excluding
+      official Lebanese public holidays.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 8</span></div>
+</section>
+
+<!-- ============================== TERMS: IP + GENERAL ============================== -->
+<section class="page">
+  <h2 id="p11">11. Intellectual Property &amp; Licence</h2>
+  <ol class="legal">
+    <li><b>Ownership.</b> All intellectual property, source code, design and know-how in iDeliver&nbsp;III remain the
+      property of <b>_NXCORE</b> unless a separate written assignment states otherwise.</li>
+    <li><b>Licence to the Client.</b> The Developer grants 3asari3 a non-exclusive, non-transferable licence to use the
+      System for its own delivery business operations for the duration of this engagement.</li>
+    <li><b>Branding.</b> The System is delivered by _NXCORE and may carry a discreet &ldquo;Powered by _NXCORE&rdquo;
+      attribution.</li>
+    <li><b>Restrictions.</b> The Client shall not resell, sublicense, copy or redistribute the Software, nor commission a
+      third party to modify it, without the Developer's written consent.</li>
+  </ol>
+
+  <h2 id="p12">12. Warranties, Liability &amp; General Terms</h2>
+  <ol class="legal">
+    <li><b>Warranty.</b> The Developer warrants that the System substantially performs the functions described in this
+      Agreement. Except as stated, the System is provided &ldquo;as is&rdquo; without further warranty.</li>
+    <li><b>Limitation of liability.</b> The Developer's total liability under this Agreement shall not exceed the fees paid
+      by the Client for the delivered System. Neither party is liable for indirect or consequential loss.</li>
+    <li><b>Client responsibilities.</b> Timely feedback, access, test data, and payment of approved fees.</li>
+    <li><b>Entire agreement.</b> This document is the entire agreement on the delivered scope and supersedes prior verbal
+      discussions and informal feature requests.</li>
+    <li><b>Amendments.</b> Any amendment must be in writing and signed by both parties.</li>
+    <li><b>Governing law.</b> This Agreement is governed by and construed in accordance with the laws of the
+      <b>Lebanese Republic (Lebanon)</b>, and any dispute arising out of or in connection with it shall be resolved by the
+      <b>competent courts of Beirut, Lebanon</b>.</li>
+  </ol>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 9</span></div>
+</section>
+
+<!-- ============================== SIGNATURES ============================== -->
+<section class="page">
+  <h2 id="p13">13. Signatures</h2>
+  <p>By signing below, the parties confirm that they have read, understood and agree to this Software Scope &amp; Service
+  Agreement in its entirety, and acknowledge the Scope Baseline (Sections 3&ndash;7) as the complete delivered System.</p>
+
+  <div class="sign-wrap">
+    <div class="sign">
+      <div class="who">For the Client — 3asari3</div>
+      <div style="height:34px"></div>
+      <div class="line"></div>
+      <div class="lbl">Signature</div>
+      <div style="margin-top:18px" class="line" style="height:0"></div>
+      <table class="meta">
+        <tr><td class="k">Name</td><td>Elie Khoury</td></tr>
+        <tr><td class="k">Title</td><td>Owner, 3asari3</td></tr>
+        <tr><td class="k">Date</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+
+    <div class="sign">
+      <div class="who">For the Developer — _NXCORE</div>
+      <div style="height:34px"></div>
+      <div class="line"></div>
+      <div class="lbl">Signature</div>
+      <div style="margin-top:18px"></div>
+      <table class="meta">
+        <tr><td class="k">Name</td><td>Nicolas Chami</td></tr>
+        <tr><td class="k">Title</td><td>Principal Engineer, _NXCORE</td></tr>
+        <tr><td class="k">Date</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:40px">
+    <b>Annex reference.</b> The delivered System version at signature is <b>iDeliver&nbsp;III v3.00.015</b>, comprising the four
+    modules described herein: Operations Console &amp; Call Center, Partners &amp; Suppliers Portal, Driver Application, and
+    Customer Mobile Application.
+  </div>
+
+  <p style="margin-top:26px; text-align:center; color:#94a3b8; font-size:9pt">
+    Designed &amp; Engineered by <b>_NXCORE</b> — Building the Next Core of Intelligent Software<br>
+    © <span class="mono">2026</span> _NXCORE. All rights reserved.
+  </p>
+
+  <div class="foot"><span>iDeliver III — Scope &amp; Service Agreement</span><span>Page 10</span></div>
+</section>

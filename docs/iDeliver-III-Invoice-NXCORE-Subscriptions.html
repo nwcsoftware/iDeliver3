@@ -1,0 +1,187 @@
+<meta charset="utf-8">
+<title>_NXCORE — Invoice — iDeliver III Annual Subscriptions</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#475569; --line:#d8dee9; --line2:#e9edf3;
+    --brand:#1d4ed8; --brand-soft:#eff4ff; --accent:#0b1220; --ok:#0f766e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family:"Segoe UI", Calibri, Arial, sans-serif;
+    color:var(--ink); font-size:10pt; line-height:1.45;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page{ size:A4; margin:0; }
+  .page{
+    width:210mm; min-height:297mm; padding:16mm 18mm 15mm 18mm;
+    margin:0 auto; background:#fff; position:relative;
+  }
+
+  h1,h2,h3{ color:var(--accent); margin:0; }
+  small{ color:var(--muted); }
+  .muted{ color:var(--muted); }
+  .mono{ font-family:"Consolas","Courier New",monospace; }
+
+  /* Letterhead */
+  .head{ display:flex; justify-content:space-between; align-items:flex-start;
+         border-bottom:2px solid var(--brand); padding-bottom:14px; }
+  .logo-word{ font-family:"Consolas",monospace; font-weight:800; font-size:22pt; letter-spacing:2px; }
+  .logo-box small{ display:block; margin-top:2px; }
+  .head-right{ text-align:right; }
+  .doc-kicker{ letter-spacing:4px; text-transform:uppercase; color:var(--brand); font-weight:700; font-size:10pt; }
+  .doc-title{ font-size:30pt; line-height:1; font-weight:800; margin:6px 0 2px; }
+
+  .meta-row{ display:flex; justify-content:space-between; gap:22px; margin-top:20px; }
+  .bill{ flex:1; }
+  .bill .role{ font-size:8.5pt; text-transform:uppercase; letter-spacing:1px; color:var(--brand); font-weight:700; }
+  .bill .name{ font-size:14pt; font-weight:800; margin-top:2px; }
+
+  table.info{ border-collapse:collapse; font-size:9.5pt; }
+  table.info td{ padding:3px 8px; }
+  table.info td.k{ color:var(--muted); text-align:right; }
+  table.info td.v{ font-weight:700; }
+
+  table.items{ width:100%; border-collapse:collapse; margin-top:24px; font-size:9.8pt; }
+  table.items th{ background:var(--accent); color:#fff; text-align:left; padding:9px 12px; font-size:8.5pt;
+                  text-transform:uppercase; letter-spacing:.6px; }
+  table.items th.num, table.items td.num{ text-align:right; }
+  table.items td{ padding:9px 12px; border-bottom:1px solid var(--line2); vertical-align:top; }
+  table.items tr:nth-child(even) td{ background:#f9fbfe; }
+  .item-title{ font-weight:700; }
+  .item-desc{ color:var(--muted); font-size:8.8pt; margin-top:2px; }
+  .term{ display:inline-block; font-size:7.5pt; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+         color:var(--brand); background:var(--brand-soft); border:1px solid #cfe0ff; border-radius:4px; padding:0 6px; margin-left:6px; }
+
+  .totals{ display:flex; justify-content:flex-end; margin-top:16px; }
+  .totals table{ border-collapse:collapse; min-width:290px; font-size:10pt; }
+  .totals td{ padding:6px 12px; }
+  .totals td.k{ text-align:right; color:var(--muted); }
+  .totals td.v{ text-align:right; font-weight:700; min-width:120px; }
+  .totals tr.grand td{ border-top:2px solid var(--brand); font-size:13pt; color:var(--accent); padding-top:10px; }
+  .totals tr.grand td.v{ color:var(--brand); font-weight:800; }
+
+  .notes{ margin-top:30px; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .notes h3{ font-size:10pt; color:var(--brand); margin-bottom:6px; }
+  .notes table.info td.k{ text-align:left; width:150px; }
+
+  .foot{ position:absolute; bottom:9mm; left:18mm; right:18mm; display:flex; justify-content:space-between;
+         font-size:8pt; color:#94a3b8; border-top:1px solid var(--line2); padding-top:6px; }
+</style>
+
+<section class="page">
+  <!-- ===== Letterhead ===== -->
+  <div class="head">
+    <div class="logo-box">
+      <div class="logo-word">_NXCORE</div>
+      <small>Building the Next Core of Intelligent Software</small>
+    </div>
+    <div class="head-right">
+      <div class="doc-kicker">Annual Subscription</div>
+      <div class="doc-title">INVOICE</div>
+      <small>Platform Infrastructure &amp; Managed Services</small>
+    </div>
+  </div>
+
+  <!-- ===== Bill to / meta ===== -->
+  <div class="meta-row">
+    <div class="bill">
+      <div class="role">From</div>
+      <div class="name">_NXCORE</div>
+      <small>Nicolas Chami, Principal Engineer</small>
+
+      <div class="role" style="margin-top:14px">Bill To</div>
+      <div class="name">3asari3</div>
+      <small>Elie Khoury, Owner</small>
+    </div>
+    <div>
+      <table class="info">
+        <tr><td class="k">Invoice No.</td><td class="v mono">NX-IDL3-INV-0002</td></tr>
+        <tr><td class="k">Invoice Date</td><td class="v">18 July 2026</td></tr>
+        <tr><td class="k">Billing Period</td><td class="v">1 year (annual)</td></tr>
+        <tr><td class="k">Due Date</td><td class="v">Upon receipt</td></tr>
+        <tr><td class="k">Project</td><td class="v">iDeliver&nbsp;III</td></tr>
+        <tr><td class="k">Currency</td><td class="v">USD</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== Line items ===== -->
+  <table class="items">
+    <thead>
+      <tr>
+        <th>Subscription Service</th>
+        <th class="num">Annual Fee</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <div class="item-title">Managed PostgreSQL Cluster &mdash; RLS &amp; PITR<span class="term">SaaS</span></div>
+          <div class="item-desc">High-availability relational data tier with row-level security policies, point-in-time
+            recovery and connection pooling.</div>
+        </td>
+        <td class="num">$240.00</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-title">Geospatial Tile &amp; Reverse-Geocoding API<span class="term">GIS</span></div>
+          <div class="item-desc">Vector map tile delivery, geocoding / reverse-geocoding and route-matrix quota for
+            real-time tracking.</div>
+        </td>
+        <td class="num">$120.00</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-title">Identity Provider &mdash; OAuth2 / OTP Tenancy<span class="term">IAM</span></div>
+          <div class="item-desc">Managed authentication tenancy: token issuance, one-time-passcode delivery and
+            federated sign-in provider.</div>
+        </td>
+        <td class="num">$90.00</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-title">Edge CDN, TLS Termination &amp; Static Distribution<span class="term">CDN</span></div>
+          <div class="item-desc">Global edge caching, automated TLS certificate provisioning and static asset
+            distribution.</div>
+        </td>
+        <td class="num">$90.00</td>
+      </tr>
+      <tr>
+        <td>
+          <div class="item-title">Object Storage &amp; Automated Snapshot Retention<span class="term">S3</span></div>
+          <div class="item-desc">Encrypted object storage bucket with scheduled snapshot retention and off-site
+            backup lifecycle.</div>
+        </td>
+        <td class="num">$60.00</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ===== Totals ===== -->
+  <div class="totals">
+    <table>
+      <tr><td class="k">Subtotal</td><td class="v">$600.00</td></tr>
+      <tr class="grand"><td class="k">Total Due (USD)</td><td class="v">$600.00</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== Notes ===== -->
+  <div class="notes">
+    <h3>Notes &amp; Payment Terms</h3>
+    <p style="margin:0 0 8px">Annual platform infrastructure and managed-services subscription for the operation
+    of iDeliver&nbsp;III. Fees cover the twelve-month billing period from the invoice date and renew annually.</p>
+    <table class="info">
+      <tr><td class="k">Renewal</td><td class="v">Auto-renews annually unless cancelled in writing</td></tr>
+      <tr><td class="k">Payment terms</td><td class="v">Due upon receipt</td></tr>
+      <tr><td class="k">Reference</td><td class="v">Please quote invoice no. NX-IDL3-INV-0002</td></tr>
+    </table>
+  </div>
+
+  <p style="margin-top:26px; text-align:center; color:#94a3b8; font-size:9pt">
+    Designed &amp; Engineered by <b>_NXCORE</b> — Building the Next Core of Intelligent Software<br>
+    © <span class="mono">2026</span> _NXCORE. All rights reserved.
+  </p>
+
+  <div class="foot"><span>_NXCORE — Invoice NX-IDL3-INV-0002</span><span>iDeliver III &nbsp;·&nbsp; 3asari3</span></div>
+</section>
