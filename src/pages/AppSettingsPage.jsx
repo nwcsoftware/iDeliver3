@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 /* General application settings. Currently holds the order-confirmation reminder
@@ -21,11 +21,21 @@ export default function AppSettingsPage() {
   )
   const [highlightSavedMsg, setHighlightSavedMsg] = useState('')
 
+  // How many days of orders the shared load pulls on login (0 = all). Lower = less
+  // data downloaded; financial pages always pull the full history regardless.
+  const [ordersWindow, setOrdersWindow] = useState(
+    String(appSettings.ordersWindowDays ?? 90)
+  )
+  const [ordersWindowSavedMsg, setOrdersWindowSavedMsg] = useState('')
+
   const reminderDirty =
     String(appSettings.orderConfirmReminderMinutes ?? 15) !== reminderMins.trim()
 
   const highlightDirty =
     String(appSettings.highlightBeforeScheduledMinutes ?? 5) !== highlightMins.trim()
+
+  const ordersWindowDirty =
+    String(appSettings.ordersWindowDays ?? 90) !== ordersWindow.trim()
 
   function saveReminder() {
     const n = Math.max(0, Math.round(Number(reminderMins) || 0))
@@ -41,6 +51,14 @@ export default function AppSettingsPage() {
     setHighlightMins(String(n))
     setHighlightSavedMsg('Saved')
     setTimeout(() => setHighlightSavedMsg(''), 2000)
+  }
+
+  function saveOrdersWindow() {
+    const n = Math.max(0, Math.round(Number(ordersWindow) || 0))
+    updateAppSettings({ ordersWindowDays: n })
+    setOrdersWindow(String(n))
+    setOrdersWindowSavedMsg('Saved')
+    setTimeout(() => setOrdersWindowSavedMsg(''), 2000)
   }
 
   return (
@@ -151,6 +169,57 @@ export default function AppSettingsPage() {
           <p className="text-[11px] text-slate-500">
             Example: <span className="font-mono text-slate-400">5</span> turns a row red 5 minutes before
             its scheduled time. Set to <span className="font-mono text-slate-400">0</span> to turn it off.
+          </p>
+        </div>
+
+        {/* Recent-orders window (data usage) */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center flex-shrink-0">
+              <Database className="w-4 h-4 text-sky-300" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100">Recent orders window (reduce data usage)</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                On start-up the app loads only orders created or scheduled within this
+                many days, which cuts the amount of data downloaded. Financial pages
+                (Cashier Box, Credit Customers, Driver/Partner Dues, Reports) still load
+                the full history automatically when you open them.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-end gap-3">
+            <div className="flex-1 max-w-[12rem]">
+              <label className="label">Days of orders to load on start-up</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                className="input"
+                value={ordersWindow}
+                onChange={e => { setOrdersWindow(e.target.value); setOrdersWindowSavedMsg('') }}
+                onKeyDown={e => { if (e.key === 'Enter') saveOrdersWindow() }}
+              />
+            </div>
+            <button
+              className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={saveOrdersWindow}
+              disabled={!ordersWindowDirty}
+            >
+              <Save className="w-4 h-4" /> Save
+            </button>
+            {ordersWindowSavedMsg && (
+              <span className="text-xs text-green-400 flex items-center gap-1.5 pb-2.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> {ordersWindowSavedMsg}
+              </span>
+            )}
+          </div>
+
+          <p className="text-[11px] text-slate-500">
+            Lower values download less data. Set to <span className="font-mono text-slate-400">0</span> to
+            load the entire order history on start-up (the old behaviour). Takes effect on the next start-up
+            or refresh.
           </p>
         </div>
 

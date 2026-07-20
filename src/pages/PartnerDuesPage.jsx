@@ -25,8 +25,11 @@ function fmtMoney(value, currency) {
 }
 
 export default function PartnerDuesPage() {
-  const { orders, loading, COMPANY_ID } = useApp()
+  const { orders, loading, COMPANY_ID, loadFullOrderHistory } = useApp()
   const { currentUser, hasRole } = useAuth()
+
+  // Partner balances span the whole history, so pull every order (beyond the window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
   const canPay = hasRole('super_admin', 'admin')
 

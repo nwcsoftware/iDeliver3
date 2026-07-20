@@ -6,6 +6,21 @@ const AppContext = createContext(null)
 
 const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
 
+// Columns + nested relations loaded for every order. Shared by the full-table load
+// (fetchOrders) and the single-row realtime refresh (fetchOneOrder) so both keep the
+// exact same shape.
+const ORDER_SELECT = `
+  *,
+  driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
+  customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
+  zone:delivery_zones(id, name),
+  order_items(currency, line_total, is_deleted),
+  delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(id, code, company_name, first_name, last_name)),
+  order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
+  retail_goods_invoices(invoice_value, currency, paid, shop_name, contact_id),
+  payment_collections(amount, currency, collected_by_name, collected_by)
+`
+
 // Per-user UI preference: whether the order amounts summary popup is shown.
 // Stored in localStorage keyed by the signed-in user so each user keeps their
 // own view on this device. Defaults to shown.
@@ -30,6 +45,11 @@ const DEFAULT_APP_SETTINGS = {
   // in the daily order list — a reminder that the order is about to start.
   // 0 disables the highlight.
   highlightBeforeScheduledMinutes: 5,
+  // How many days of orders the shared (global) load pulls from the server, to
+  // keep egress down on login. Operational pages (Deliveries, Dashboard) only need
+  // recent orders; financial pages call loadFullOrderHistory() to pull everything.
+  // 0 = unlimited (load the whole table, the pre-window behaviour).
+  ordersWindowDays: 90,
 }
 function readAppSettings() {
   try {
@@ -57,6 +77,11 @@ export function AppProvider({ children }) {
   const [zones,      setZones]      = useState([])
   const [loading,    setLoading]    = useState({ drivers: true, orders: true })
 
+  // True once the full order history (not just the recent window) is loaded into
+  // `orders`. Financial pages wait for this before trusting balances.
+  const [ordersFullyLoaded, setOrdersFullyLoaded] = useState(false)
+  const ordersFullyLoadedRef = useRef(false)
+
   // Amounts summary popup show/hide preference (per user, persisted locally).
   const [showSummary, setShowSummaryState] = useState(() => readShowSummary(userId))
   useEffect(() => { setShowSummaryState(readShowSummary(userId)) }, [userId])
@@ -79,6 +104,14 @@ export function AppProvider({ children }) {
       return next
     })
   }, [])
+
+  // Recent-window size (days) for the shared order load, mirrored into a ref so
+  // fetchOrders can read it without becoming a new function on every settings edit
+  // (which would otherwise re-subscribe the realtime channels).
+  const ordersWindowRef = useRef(Number(appSettings.ordersWindowDays) || 0)
+  useEffect(() => {
+    ordersWindowRef.current = Number(appSettings.ordersWindowDays) || 0
+  }, [appSettings.ordersWindowDays])
 
   /* ── Broadcast messages (admin → all users) ───────────────────────────────
      Active messages plus this user's read receipts, so the sidebar badge can
@@ -224,30 +257,99 @@ export function AppProvider({ children }) {
   // Paged — the order table is well past PostgREST's 1000-row response cap, and a
   // plain select would silently drop the oldest orders from every page that reads
   // `orders` (Deliveries, Cashier Box, driver settlements).
-  const fetchOrders = useCallback(async () => {
+  // Load the shared orders array. By default it is limited to the recent window
+  // (appSettings.ordersWindowDays) to keep login egress down; pass { full: true }
+  // (or set the window to 0) to pull the entire table. The window keeps any order
+  // whose creation OR scheduled date is within range, so today's list and
+  // future-scheduled orders are never dropped.
+  const fetchOrders = useCallback(async ({ full } = {}) => {
     setLoading(l => ({ ...l, orders: true }))
+    // Default (full undefined): keep whatever scope is already loaded, so a plain
+    // refresh after a mutation on a financial page never shrinks the full history
+    // back to the recent window.
+    const effectiveFull = full === undefined ? ordersFullyLoadedRef.current : full
+    const windowDays = effectiveFull ? 0 : (ordersWindowRef.current || 0)
     const { data, error } = await fetchAllRows(() => {
       let q = supabase
         .from('delivery_orders')
-        .select(`
-          *,
-          driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
-          customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
-          zone:delivery_zones(id, name),
-          order_items(currency, line_total, is_deleted),
-          delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(id, code, company_name, first_name, last_name)),
-          order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
-          retail_goods_invoices(invoice_value, currency, paid, shop_name, contact_id),
-          payment_collections(amount, currency, collected_by_name, collected_by)
-        `)
+        .select(ORDER_SELECT)
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      if (windowDays > 0) {
+        const cutoff = new Date(Date.now() - windowDays * 86400000)
+        q = q.or(`created_at.gte.${cutoff.toISOString()},scheduled_date.gte.${cutoff.toISOString().slice(0, 10)}`)
+      }
       return q
     })
-    if (!error && data) setOrders(data)
+    if (!error && data) {
+      setOrders(data)
+      const nowFull = windowDays === 0
+      ordersFullyLoadedRef.current = nowFull
+      setOrdersFullyLoaded(nowFull)
+    }
     setLoading(l => ({ ...l, orders: false }))
   }, [])
+
+  // Ensure the whole order history is loaded (called by financial pages on mount).
+  // No-op if it is already fully loaded, so navigating between financial pages does
+  // not refetch. Returns once `orders` holds every order.
+  const loadFullOrderHistory = useCallback(async () => {
+    if (ordersFullyLoadedRef.current) return
+    await fetchOrders({ full: true })
+  }, [fetchOrders])
+
+  // Fetch a single order (with the full nested shape) by id. Used by the realtime
+  // handler so an insert/update pulls only that one row instead of re-downloading
+  // the whole orders table. Returns the row, or null if not found / not visible.
+  const fetchOneOrder = useCallback(async (id) => {
+    let q = supabase.from('delivery_orders').select(ORDER_SELECT).eq('id', id)
+    if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+    const { data, error } = await q.maybeSingle()
+    if (error) return null
+    return data ?? null
+  }, [])
+
+  // Pending debounce timers, keyed by order id. A burst of realtime updates to the
+  // same order (rapid saves, or nested writes that each touch the parent row) is
+  // collapsed into a single fetchOneOrder instead of one fetch per event.
+  const orderRefreshTimers = useRef(new Map())
+  const ORDER_REFRESH_DEBOUNCE_MS = 1200
+
+  // Fetch one order and splice the fresh row into state (or drop it if it vanished).
+  const refreshOrderIntoState = useCallback(async (id) => {
+    const row = await fetchOneOrder(id)
+    setOrders(prev => {
+      const i = prev.findIndex(o => o.id === id)
+      if (!row) return i === -1 ? prev : prev.filter(o => o.id !== id)
+      if (i === -1) return [row, ...prev]           // new order → front (list is newest-first)
+      const next = [...prev]; next[i] = row; return next
+    })
+  }, [fetchOneOrder])
+
+  // Apply a realtime change to the orders array in place. The postgres_changes
+  // payload only carries delivery_orders columns (not the nested relations we
+  // render), so for insert/update we fetch just that one row; delete removes by id.
+  // Insert/update fetches are debounced per id to coalesce edit bursts.
+  const applyOrderChange = useCallback((payload) => {
+    const timers = orderRefreshTimers.current
+    if (payload.eventType === 'DELETE') {
+      const id = payload.old?.id
+      if (id == null) return
+      const t = timers.get(id)                       // cancel any pending refresh for a now-deleted row
+      if (t) { clearTimeout(t); timers.delete(id) }
+      setOrders(prev => prev.filter(o => o.id !== id))
+      return
+    }
+    const id = payload.new?.id
+    if (id == null) return
+    const existing = timers.get(id)
+    if (existing) clearTimeout(existing)             // reset the window on each new event → coalesce
+    timers.set(id, setTimeout(() => {
+      timers.delete(id)
+      refreshOrderIntoState(id)
+    }, ORDER_REFRESH_DEBOUNCE_MS))
+  }, [refreshOrderIntoState])
 
   const fetchZones = useCallback(async () => {
     let q = supabase
@@ -276,14 +378,16 @@ export function AppProvider({ children }) {
       .channel('delivery-orders-changes')
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'delivery_orders' },
-        fetchOrders)
+        applyOrderChange)
       .subscribe()
 
     return () => {
       supabase.removeChannel(driversChannel)
       supabase.removeChannel(ordersChannel)
+      orderRefreshTimers.current.forEach(clearTimeout)   // drop any pending debounced refreshes
+      orderRefreshTimers.current.clear()
     }
-  }, [fetchDrivers, fetchOrders, fetchZones])
+  }, [fetchDrivers, fetchOrders, fetchZones, applyOrderChange])
 
   const stats = {
     totalDrivers:      drivers.length,
@@ -301,6 +405,7 @@ export function AppProvider({ children }) {
     <AppContext.Provider value={{
       drivers, fetchDrivers,
       orders,  fetchOrders,
+      ordersFullyLoaded, loadFullOrderHistory,
       zones,   fetchZones,
       loading, stats,
       COMPANY_ID,

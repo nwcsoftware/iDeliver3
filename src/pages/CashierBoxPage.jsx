@@ -63,8 +63,11 @@ const PARTY_CATS = [
          delivery packages and order services.
    Only closed orders count, dated by when the order was closed (closed_at). */
 export default function CashierBoxPage() {
-  const { orders, loading, COMPANY_ID } = useApp()
+  const { orders, loading, COMPANY_ID, loadFullOrderHistory } = useApp()
   const { currentUser } = useAuth()
+
+  // Balances span the whole history, so pull every order (beyond the recent window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
 
   const [from, setFrom] = useState(todayStr())
   const [to,   setTo]   = useState(todayStr())

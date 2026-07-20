@@ -46,8 +46,11 @@ function orderDate(o) {
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function CreditCustomersPage() {
-  const { orders, loading, fetchOrders, COMPANY_ID } = useApp()
+  const { orders, loading, fetchOrders, COMPANY_ID, loadFullOrderHistory } = useApp()
   const { currentUser, hasRole } = useAuth()
+
+  // Credit balances span the whole history, so pull every order (beyond the window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
   const isAdmin = hasRole('super_admin', 'admin')   // settlement-erasing tools are admin-only
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -26,8 +26,11 @@ const tooltipStyle = {
 }
 
 export default function ReportsPage() {
-  const { orders, drivers } = useApp()
+  const { orders, drivers, loadFullOrderHistory } = useApp()
   const [range, setRange]   = useState(30)
+
+  // Reports can look back over any date range, so pull every order (beyond the window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
 
   const now   = new Date()
   const since = new Date(now.getTime() - range * 24 * 60 * 60 * 1000)

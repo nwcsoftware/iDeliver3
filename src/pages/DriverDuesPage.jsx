@@ -89,8 +89,11 @@ function orderDate(o) {
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DriverDuesPage() {
-  const { orders, drivers, loading, fetchOrders, showSummary } = useApp()
+  const { orders, drivers, loading, fetchOrders, showSummary, loadFullOrderHistory } = useApp()
   const { currentUser, hasRole } = useAuth()
+
+  // Driver balances span the whole history, so pull every order (beyond the window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const isSuperAdmin = hasRole('super_admin')
   // Who may back-/forward-date the "Collect & close as of" settlement date.
   // Admins get this alongside super admins; everyone else settles as of today.

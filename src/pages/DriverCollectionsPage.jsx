@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Truck, Calendar, CheckCircle2, Loader, AlertTriangle, Wallet, CheckSquare, Square } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -49,8 +49,11 @@ const driverName = (o) =>
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
 export default function DriverCollectionsPage() {
-  const { orders, fetchOrders, loading } = useApp()
+  const { orders, fetchOrders, loading, loadFullOrderHistory } = useApp()
   const { hasRole } = useAuth()
+
+  // Works across all outstanding orders, so pull every order (beyond the window).
+  useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   // Demonstration tool — restricted to super_admin (the developer) only.
   const isSuperAdmin = hasRole('super_admin')
 
