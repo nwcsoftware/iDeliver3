@@ -20,6 +20,10 @@ const ASSIGNABLE_ROLES = [
 ]
 const roleLabel = Object.fromEntries(ASSIGNABLE_ROLES.map(r => [r.value, r.label]))
 
+// Maximum number of *active* accounts allowed per role. Adding beyond the cap
+// is blocked with a warning; deactivated accounts don't count (and are hidden).
+const ROLE_LIMITS = { partner: 20, supplier: 20, call_center: 6 }
+
 const STATUS_STYLES = {
   active:    'bg-green-500/10 text-green-400 border-green-500/30',
   inactive:  'bg-slate-500/10 text-slate-400 border-slate-500/30',
@@ -46,6 +50,7 @@ function friendlyError(message = '') {
 export default function UserAccountsPage() {
   const { currentUser, hasRole } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
+  const isSuperAdmin = hasRole('super_admin')
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -132,14 +137,23 @@ export default function UserAccountsPage() {
     )
   }
 
+  // Regular admins never see deactivated users; the super admin sees everyone
+  // (of every role) and can reactivate any of them.
+  const visibleUsers = isSuperAdmin ? users : users.filter(u => u.status === 'active')
+
   const q = search.trim().toLowerCase()
-  const filtered = users.filter(u =>
+  const filtered = visibleUsers.filter(u =>
     !q ||
     u.username?.toLowerCase().includes(q) ||
     u.email?.toLowerCase().includes(q) ||
     u.mobile?.includes(search.trim()) ||
     roleLabel[u.role]?.toLowerCase().includes(q)
   )
+
+  // Count active accounts for a role, optionally excluding one user (the row
+  // being edited). Used to enforce the per-role caps in ROLE_LIMITS.
+  const activeRoleCount = (role, excludeId = null) =>
+    users.filter(u => u.role === role && u.status === 'active' && u.id !== excludeId).length
 
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
@@ -156,6 +170,16 @@ export default function UserAccountsPage() {
     if (!form.mobile.trim())   { setFormErr('Mobile is required.'); return }
     if (isPartyRole && !form.contact_id) {
       setFormErr(`Select the ${form.role} contact this login belongs to.`); return
+    }
+    // Enforce the per-role active-account cap. Only relevant when the saved
+    // account will be active in a capped role and isn't already counted.
+    const limit = ROLE_LIMITS[form.role]
+    if (limit != null) {
+      const excludeId = modal === 'add' ? null : modal.id
+      if (activeRoleCount(form.role, excludeId) >= limit) {
+        setFormErr(`Limit reached: you can have at most ${limit} active ${roleLabel[form.role]} accounts. Deactivate an existing one to add another.`)
+        return
+      }
     }
     if (modal === 'add' && form.password.length < 8) {
       setFormErr('Set a temporary password of at least 8 characters.'); return
@@ -361,6 +385,17 @@ export default function UserAccountsPage() {
                   }}>
                   {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
+                {ROLE_LIMITS[form.role] != null && (() => {
+                  const used = activeRoleCount(form.role, modal === 'add' ? null : modal.id)
+                  const cap  = ROLE_LIMITS[form.role]
+                  const full = used >= cap
+                  return (
+                    <p className={`text-[11px] mt-1 ${full ? 'text-red-400' : 'text-slate-500'}`}>
+                      {used} of {cap} {roleLabel[form.role]} accounts used
+                      {full && ' — limit reached'}
+                    </p>
+                  )
+                })()}
               </div>
 
               {/* Supplier/Partner logins must be tied to a contact (contact_id). */}
