@@ -48,8 +48,9 @@ function friendlyError(message = '') {
 }
 
 export default function UserAccountsPage() {
-  const { currentUser, hasRole } = useAuth()
+  const { currentUser, hasRole, onlineUserIds } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
+  const onlineSet = new Set((onlineUserIds ?? []).map(String))
   const isSuperAdmin = hasRole('super_admin')
   const location = useLocation()
   const navigate = useNavigate()
@@ -278,16 +279,16 @@ export default function UserAccountsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Username', 'Email', 'Mobile', 'Role', 'Status', 'Last Login', ''].map(h => (
+              {['Username', 'Email', 'Mobile', 'Role', 'Status', 'Online', 'Last Login', ''].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No users found</td></tr>
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No users found</td></tr>
             ) : filtered.map(u => {
               const isSelf = u.id === currentUser.user_id
               return (
@@ -307,6 +308,21 @@ export default function UserAccountsPage() {
                     <span className={`text-[11px] capitalize border rounded px-2 py-0.5 ${STATUS_STYLES[u.status] ?? STATUS_STYLES.pending}`}>
                       {u.status}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {onlineSet.has(String(u.id)) ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-green-400">
+                        <span className="relative flex w-2 h-2">
+                          <span className="absolute inline-flex w-full h-full rounded-full bg-green-400 opacity-60 animate-ping" />
+                          <span className="relative inline-flex w-2 h-2 rounded-full bg-green-400" />
+                        </span>
+                        Online now
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <span className="w-2 h-2 rounded-full bg-slate-600" /> Offline
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">
                     {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never'}

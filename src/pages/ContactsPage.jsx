@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -12,6 +12,7 @@ import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES } from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import ContactSubAccounts from '../components/contacts/ContactSubAccounts'
+import ContactPartnerPackages from '../components/contacts/ContactPartnerPackages'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount } from '../lib/subAccounts'
 
@@ -396,6 +397,17 @@ export default function ContactsPage({ type }) {
   // Entity type (Individual / Company) of the open form — used by the save button.
   const isCompany = form.entity_type === 'company'
 
+  // The "Packages" tab lists everything this partner has shipped through us, so it
+  // only makes sense for a saved contact that actually holds the Partner role.
+  const isSaved       = modal && modal !== 'add'
+  const holdsPartner  = (form.contact_types || []).includes('partner')
+  const contactTabs   = (isSaved && holdsPartner)
+    ? [...CONTACT_TABS, { value: 'packages', label: 'Packages', Icon: Package }]
+    : CONTACT_TABS
+  // If the open tab is no longer available (e.g. the Partner role was toggled off
+  // while viewing Packages), fall back to Details so the pane never goes blank.
+  const activeTab = contactTabs.some(t => t.value === tab) ? tab : 'details'
+
   /* ── login access (suppliers & partners) ─────────────────────
      A contact tagged Supplier or Partner may be given a user account to sign in.
      The button hands the entered details to the User Accounts form, where the
@@ -570,7 +582,7 @@ export default function ContactsPage({ type }) {
       {/* Modal */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-lg p-6 space-y-4 overflow-y-auto max-h-[90vh]">
+          <div className={`card w-full p-6 space-y-4 overflow-y-auto max-h-[90vh] transition-[max-width] duration-200 ${activeTab === 'packages' ? 'max-w-4xl' : 'max-w-lg'}`}>
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <Icon className={`w-4 h-4 ${color}`} />
@@ -583,7 +595,7 @@ export default function ContactsPage({ type }) {
                 numbers each deserve their own pane. Validation errors and the
                 Save button live outside the tabs, so they're always reachable. */}
             <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6">
-              {CONTACT_TABS.map(t => (
+              {contactTabs.map(t => (
                 <button key={t.value} type="button" onClick={() => setTab(t.value)}
                   className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
                     tab === t.value
@@ -597,7 +609,7 @@ export default function ContactsPage({ type }) {
               ))}
             </div>
 
-            {tab === 'details' && (
+            {activeTab === 'details' && (
               <ContactFormFields
                 type={type}
                 form={form}
@@ -608,11 +620,11 @@ export default function ContactsPage({ type }) {
               />
             )}
 
-            {tab === 'addresses' && (
+            {activeTab === 'addresses' && (
               <ContactAddresses addresses={addresses} setAddresses={setAddresses} />
             )}
 
-            {tab === 'accounts' && (
+            {activeTab === 'accounts' && (
               <ContactSubAccounts
                 accounts={accounts}
                 setAccounts={setAccounts}
@@ -620,8 +632,12 @@ export default function ContactsPage({ type }) {
               />
             )}
 
+            {activeTab === 'packages' && isSaved && (
+              <ContactPartnerPackages contactId={modal.id} />
+            )}
+
             {/* Login access — suppliers & partners may be given a user account. */}
-            {tab === 'details' && isAdmin && loginRole && (
+            {activeTab === 'details' && isAdmin && loginRole && (
               <div className="border border-surface-border rounded-lg p-3 flex items-start gap-3 bg-surface-hover/30">
                 <div className="flex-1 min-w-0">
                   <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-300 flex items-center gap-1.5">
@@ -643,7 +659,7 @@ export default function ContactsPage({ type }) {
             )}
 
             {/* Customer user account & security — collapsible, admin only */}
-            {tab === 'details' && type === 'customer' && modal !== 'add' && isAdmin && (
+            {activeTab === 'details' && type === 'customer' && modal !== 'add' && isAdmin && (
               <div className="border border-surface-border rounded-lg overflow-hidden">
                 <button type="button" onClick={() => setCredOpen(o => !o)}
                   className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">

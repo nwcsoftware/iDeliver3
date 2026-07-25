@@ -306,7 +306,10 @@ function adjustTime(t, deltaMinutes) {
 
 const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
 
-const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD', paid: false, payment_type: '' }
+// is_procurement defaults to true — a local-market retail invoice is "We bought"
+// unless the user flips it to Shop-sent. (2nd-party/shop-sent orders force it
+// false on save.) Mirrors the DB column default.
+const EMPTY_RETAIL_INVOICE = { shop_name: '', shop_type: '', contact_id: '', contact_code: '', invoice_reference: '', invoice_date: '', invoice_value: '', currency: 'USD', paid: false, payment_type: '', is_procurement: true }
 
 /* Pickup / delivery addresses are stored as a single text column but edited as
    multiple location tags — serialised with " | " so existing single-address rows
@@ -1428,6 +1431,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       currency:          ri.currency ?? 'USD',
       paid:              !!ri.paid,
       payment_type:      ri.payment_type ?? '',
+      is_procurement:    !!ri.is_procurement,
     })))
     const { data: payData } = await supabase
       .from('payment_collections')
@@ -1801,9 +1805,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       free_marked_by:       isFree ? ((modal !== 'add' && modal?.free_marked_by) || currentUser?.user_id || null) : null,
       free_marked_at:       isFree ? ((modal !== 'add' && modal?.free_marked_at) || new Date().toISOString())    : null,
       order_type:            (partyContactId && partyContact?.shop_type) ? partyContact.shop_type : (form.order_type || null),
-      // Procurement = we bought the goods → the order earns shop commission.
+      // Procurement is per-invoice now; keep the order-level flag as a summary
+      // (true when any local-market invoice is marked "we purchased these goods").
       // Never set for shop-sent (2nd-party) orders.
-      is_procurement:        !partyContactId && !!form.is_procurement,
+      is_procurement:        !partyContactId && retailEff.some(r => r.shop_name?.trim() && r.is_procurement),
       order_details_text:    form.order_details_text?.trim()   || null,
       special_instructions:  form.special_instructions?.trim() || null,
       scheduled_date:        form.scheduled_date               || null,
@@ -1868,16 +1873,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       if (ie) { setError(ie.message); setSaving(false); return }
     }
 
-    // Retail goods invoices — only rows with a shop selected. On a procurement
-    // order, snapshot the shop's commission % and the money we earn on each
-    // invoice (invoice value × %); shop-sent orders record no commission.
-    const isProcurementOrder = !partyContactId && !!form.is_procurement
+    // Retail goods invoices — only rows with a shop selected. Procurement is now
+    // a per-invoice flag ("we purchased these goods"): each such invoice snapshots
+    // the shop's commission % and the money we earn (invoice value × %). Invoices
+    // left off (shop-sent) record no commission.
     const retailRows = retailEff
       .filter(r => r.shop_name?.trim())
       .map(r => {
         const value = Number(r.invoice_value) || 0
+        const isProc = !partyContactId && !!r.is_procurement
         const shop  = r.contact_id ? customers.find(c => c.id === r.contact_id) : null
-        const rate  = isProcurementOrder ? Number(shop?.partner_percentage) : NaN
+        const rate  = isProc ? Number(shop?.partner_percentage) : NaN
         const hasRate = Number.isFinite(rate) && rate > 0
         return {
           order_id:          orderId,
@@ -1891,6 +1897,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           currency:          r.currency || 'USD',
           paid:              !!r.paid,
           payment_type:      r.payment_type || null,
+          is_procurement:    isProc,
           commission_rate:   hasRate ? rate : null,
           commission_amount: hasRate ? round2(value * rate / 100) : null,
           created_by:        currentUser?.user_id || null,
@@ -3391,40 +3398,35 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </button>
                 }>
 
-                {/* Procurement toggle — staff only. When on, each invoice's
-                    shop commission (its % × value) is recorded for month-end. */}
+                {/* Procurement is now a per-invoice toggle in the "Purchased" column
+                    below — tick each invoice we bought so it earns that shop's
+                    commission % at month-end. */}
                 {!partyContactId && (
-                  <label className="flex items-start gap-2 mb-3 px-3 py-2 rounded-lg border border-surface-border bg-surface-hover/40 cursor-pointer select-none">
-                    <input type="checkbox" className="mt-0.5 accent-brand-600"
-                      checked={!!form.is_procurement}
-                      onChange={e => fld('is_procurement', e.target.checked)} />
-                    <span className="text-xs">
-                      <span className="text-slate-200 font-medium">We purchased these goods (earn commission)</span>
-                      <span className="block text-[11px] text-slate-500">
-                        Tick when we bought the items for the customer — each shop invoice earns that shop’s commission % at month-end. Leave off for shop-sent orders (delivery fee only).
-                      </span>
-                    </span>
-                  </label>
+                  <p className="text-[11px] text-slate-500 mb-3 px-1">
+                    Use the <span className="text-slate-300 font-medium">Purchased</span> toggle on each invoice to mark the ones <span className="text-slate-300 font-medium">we bought</span> for the customer — those earn that shop’s commission % at month-end. Leave off for shop-sent invoices (delivery fee only).
+                  </p>
                 )}
 
                 <div className="border border-surface-border rounded-xl overflow-x-auto">
-                  <table className="w-full text-xs min-w-[860px]">
+                  <table className="w-full text-xs min-w-[980px]">
                     <thead>
                       <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
                         {/* Warehouse/Shop hidden for 2nd-party users (fixed to them). */}
-                        {!partyContactId && <th className="text-left px-3 py-2 w-[22%]">Warehouse / Shop</th>}
-                        <th className="text-left px-3 py-2 w-[14%]">Invoice Ref</th>
-                        <th className="text-left px-3 py-2 w-[12%]">Date</th>
-                        <th className="text-left px-3 py-2 w-[11%]">Amount</th>
-                        <th className="text-left px-3 py-2 w-[9%]">Currency</th>
-                        <th className="text-left px-3 py-2 w-[13%]">Paid</th>
-                        <th className="text-left px-3 py-2 w-[15%]">Payment Type</th>
+                        {!partyContactId && <th className="text-left px-3 py-2 w-[20%]">Warehouse / Shop</th>}
+                        <th className="text-left px-3 py-2 w-[13%]">Invoice Ref</th>
+                        <th className="text-left px-3 py-2 w-[11%]">Date</th>
+                        <th className="text-left px-3 py-2 w-[10%]">Amount</th>
+                        <th className="text-left px-3 py-2 w-[8%]">Currency</th>
+                        {/* Procurement toggle — staff only. */}
+                        {!partyContactId && <th className="text-left px-3 py-2 w-[12%]">Purchased</th>}
+                        <th className="text-left px-3 py-2 w-[11%]">Paid</th>
+                        <th className="text-left px-3 py-2 w-[13%]">Payment Type</th>
                         <th className="w-[4%]"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {retailInvoices.length === 0 ? (
-                        <tr><td colSpan={partyContactId ? 7 : 8} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
+                        <tr><td colSpan={partyContactId ? 7 : 9} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
                       ) : retailInvoices.map((ri, idx) => (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           {!partyContactId && (
@@ -3484,6 +3486,20 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                               {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
+                          {!partyContactId && (
+                          <td className="px-3 py-2 align-top">
+                            <button type="button" onClick={() => setRetailInvoice(idx, 'is_procurement', !ri.is_procurement)}
+                              aria-pressed={!!ri.is_procurement}
+                              title={ri.is_procurement ? 'We purchased these goods — earns this shop’s commission at month-end' : 'Shop-sent — no commission (delivery fee only)'}
+                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none
+                                ${ri.is_procurement
+                                  ? 'bg-brand-500/15 border-brand-500/40 text-brand-300'
+                                  : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
+                              {ri.is_procurement ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
+                              {ri.is_procurement ? 'We bought' : 'Shop-sent'}
+                            </button>
+                          </td>
+                          )}
                           <td className="px-3 py-2 align-top">
                             <button type="button" onClick={() => setRetailInvoice(idx, 'paid', !ri.paid)}
                               aria-pressed={!!ri.paid}

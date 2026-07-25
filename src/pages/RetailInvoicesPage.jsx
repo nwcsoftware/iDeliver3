@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, Receipt, FilterX, FileDown } from 'lucide-react'
+import { Search, Receipt, FilterX, FileDown, HandCoins, X, Loader, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 
 /* Business types a supplier/shop can have (mirrors the Suppliers form). */
 const SHOP_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
@@ -16,22 +17,43 @@ const EMPTY_FILTERS = {
   date_from:    '',
   date_to:      '',
   paid:         'all',   // 'all' | 'paid' | 'unpaid'
+  commission:   'all',   // 'all' | 'collected' | 'outstanding'
 }
+
+const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 
 function fmtMoney(value, currency) {
   const n = Number(value) || 0
   return `${currency} ${n.toFixed(currency === 'LBP' ? 0 : 2)}`
 }
 
+/* A "we bought" invoice carries commission we earn from the shop. It's eligible
+   to collect only when it actually has a commission amount and hasn't been
+   collected yet. */
+function commissionAmount(inv) {
+  return inv.is_procurement ? round2(inv.commission_amount) : 0
+}
+function isCollectable(inv) {
+  return commissionAmount(inv) > 0 && !inv.commission_collected
+}
+
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function RetailInvoicesPage() {
   const { COMPANY_ID } = useApp()
+  const { currentUser } = useAuth()
 
   const [invoices, setInvoices] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
   const [filters,  setFilters]  = useState(EMPTY_FILTERS)
+
+  // Commission collection: which invoice ids are ticked, the confirmation modal,
+  // and the in-flight save.
+  const [selected,   setSelected]   = useState(() => new Set())
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [collecting, setCollecting] = useState(false)
+  const [collectErr, setCollectErr] = useState('')
 
   /* ── fetch ───────────────────────────────────────────────── */
 
@@ -80,18 +102,111 @@ export default function RetailInvoicesPage() {
     const matchFrom  = !filters.date_from || (date && date >= filters.date_from)
     const matchTo    = !filters.date_to   || (date && date <= filters.date_to)
     const matchPaid  = filters.paid === 'all' || (filters.paid === 'paid' ? inv.paid === true : inv.paid !== true)
+    const matchComm  = filters.commission === 'all'
+      || (filters.commission === 'collected'   ? inv.commission_collected === true
+      : /* outstanding */                          isCollectable(inv))
 
-    return matchSearch && matchCode && matchOrder && matchShop && matchType && matchFrom && matchTo && matchPaid
+    return matchSearch && matchCode && matchOrder && matchShop && matchType && matchFrom && matchTo && matchPaid && matchComm
   })
 
-  // Per-currency totals for the visible rows.
+  // Per-currency totals for the visible rows: full value, the part already paid,
+  // and the outstanding balance (value − paid). Paid invoices count fully as paid.
   const totalsByCurrency = visible.reduce((acc, inv) => {
     const cur = inv.currency || 'USD'
-    acc[cur] = (acc[cur] || 0) + (Number(inv.invoice_value) || 0)
+    const val = Number(inv.invoice_value) || 0
+    const b = acc[cur] || (acc[cur] = { total: 0, paid: 0, balance: 0 })
+    b.total += val
+    if (inv.paid) b.paid += val
+    else          b.balance += val
     return acc
   }, {})
 
-  const totalsStr = Object.entries(totalsByCurrency).map(([c, v]) => fmtMoney(v, c)).join('   •   ') || '—'
+  const curEntries = Object.entries(totalsByCurrency)
+  const totalsStr   = curEntries.map(([c, v]) => fmtMoney(v.total,   c)).join('   •   ') || '—'
+  const paidStr     = curEntries.map(([c, v]) => fmtMoney(v.paid,    c)).join('   •   ') || '—'
+  const balanceStr  = curEntries.map(([c, v]) => fmtMoney(v.balance, c)).join('   •   ') || '—'
+
+  // Per-currency commission across the visible rows: already collected vs still
+  // outstanding (eligible to collect).
+  const commByCurrency = visible.reduce((acc, inv) => {
+    const amt = commissionAmount(inv)
+    if (!amt) return acc
+    const cur = inv.currency || 'USD'
+    const b = acc[cur] || (acc[cur] = { collected: 0, outstanding: 0 })
+    if (inv.commission_collected) b.collected   = round2(b.collected + amt)
+    else                          b.outstanding = round2(b.outstanding + amt)
+    return acc
+  }, {})
+  const commEntries      = Object.entries(commByCurrency)
+  const commCollectedStr = commEntries.map(([c, v]) => fmtMoney(v.collected,   c)).join('   •   ') || '—'
+  const commOutstandStr  = commEntries.map(([c, v]) => fmtMoney(v.outstanding, c)).join('   •   ') || '—'
+
+  /* ── commission selection ────────────────────────────────── */
+
+  // Only rows currently visible AND collectable can be ticked.
+  const collectableVisible = visible.filter(isCollectable)
+  const selectedInvoices   = collectableVisible.filter(inv => selected.has(inv.id))
+  const allVisibleSelected = collectableVisible.length > 0 && selectedInvoices.length === collectableVisible.length
+
+  function toggleOne(id) {
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function toggleAllVisible() {
+    setSelected(s => {
+      const n = new Set(s)
+      if (allVisibleSelected) collectableVisible.forEach(inv => n.delete(inv.id))
+      else                    collectableVisible.forEach(inv => n.add(inv.id))
+      return n
+    })
+  }
+
+  // The selected commission, grouped by shop (partner) and currency, for the
+  // confirmation popup — "each partner's collected commission value".
+  const selectionByPartner = useMemo(() => {
+    const map = new Map()
+    for (const inv of selectedInvoices) {
+      const key  = inv.contact_id || inv.shop_name || 'unknown'
+      const name = inv.shop_name || inv.contact_code || 'Unknown shop'
+      const cur  = inv.currency || 'USD'
+      const entry = map.get(key) || { name, count: 0, cur: {} }
+      entry.count += 1
+      entry.cur[cur] = round2((entry.cur[cur] || 0) + commissionAmount(inv))
+      map.set(key, entry)
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [selectedInvoices])
+
+  // Grand total of the selection, per currency.
+  const selectionTotals = useMemo(() => {
+    const t = {}
+    for (const inv of selectedInvoices) {
+      const cur = inv.currency || 'USD'
+      t[cur] = round2((t[cur] || 0) + commissionAmount(inv))
+    }
+    return t
+  }, [selectedInvoices])
+  const selectionTotalsStr = Object.entries(selectionTotals).map(([c, v]) => fmtMoney(v, c)).join('   •   ') || '—'
+
+  /* Mark every selected invoice's commission as collected, stamping who/when.
+     The cashier box reads these rows and books each as partner income on the
+     collection date. */
+  async function collectCommission() {
+    const ids = selectedInvoices.map(inv => inv.id)
+    if (ids.length === 0) { setConfirmOpen(false); return }
+    setCollecting(true); setCollectErr('')
+    const { error } = await supabase
+      .from('retail_goods_invoices')
+      .update({
+        commission_collected:    true,
+        commission_collected_at: new Date().toISOString(),
+        commission_collected_by: currentUser?.user_id || null,
+      })
+      .in('id', ids)
+    setCollecting(false)
+    if (error) { setCollectErr(error.message); return }
+    setConfirmOpen(false); setSelected(new Set())
+    fetchInvoices()
+  }
 
   // Human-readable summary of the active search/filters (for the toolbar + PDF).
   function activeFilterSummary() {
@@ -124,12 +239,13 @@ export default function RetailInvoicesPage() {
 
     autoTable(doc, {
       startY: 32,
-      head: [['Order #', 'Contact Code', 'Shop', 'Business Type', 'Invoice Ref', 'Date', 'Value', 'Currency', 'Paid']],
+      head: [['Order #', 'Contact Code', 'Shop', 'Business Type', 'Source', 'Invoice Ref', 'Date', 'Value', 'Currency', 'Paid']],
       body: visible.map(inv => [
         inv.order?.order_number ?? '—',
         inv.contact_code ?? '—',
         inv.shop_name ?? '—',
         inv.shop_type ?? '—',
+        inv.is_procurement ? 'We bought' : 'Shop-sent',
         inv.invoice_reference ?? '—',
         inv.invoice_date ?? '—',
         (Number(inv.invoice_value) || 0).toFixed((inv.currency || 'USD') === 'LBP' ? 0 : 2),
@@ -139,13 +255,15 @@ export default function RetailInvoicesPage() {
       styles: { fontSize: 8, cellPadding: 1.5 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 247, 250] },
-      columnStyles: { 6: { halign: 'right' } },
+      columnStyles: { 7: { halign: 'right' } },
     })
 
     const finalY = doc.lastAutoTable?.finalY ?? 32
     doc.setFontSize(10); doc.setTextColor(20)
     doc.text(`Invoices: ${visible.length}`, marginX, finalY + 8)
     doc.text(`Total: ${totalsStr}`, marginX, finalY + 14)
+    doc.text(`Paid: ${paidStr}`, marginX, finalY + 20)
+    doc.text(`Balance: ${balanceStr}`, marginX, finalY + 26)
 
     doc.save(`retail-invoices-${now.toISOString().slice(0, 10)}.pdf`)
   }
@@ -178,6 +296,13 @@ export default function RetailInvoicesPage() {
             <FilterX className="w-4 h-4" /> Clear
           </button>
         )}
+
+        <button onClick={() => { setCollectErr(''); setConfirmOpen(true) }}
+          disabled={selectedInvoices.length === 0}
+          className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-green-500/10 border-green-500/40 text-green-300 hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed">
+          <HandCoins className="w-4 h-4" />
+          Collect Commission{selectedInvoices.length > 0 ? ` (${selectedInvoices.length})` : ''}
+        </button>
       </div>
 
       {/* Filters */}
@@ -225,6 +350,14 @@ export default function RetailInvoicesPage() {
               <option value="unpaid">Unpaid</option>
             </select>
           </div>
+          <div>
+            <label className="label">Commission</label>
+            <select className="input" value={filters.commission} onChange={e => setFilter('commission', e.target.value)}>
+              <option value="all">All</option>
+              <option value="collected">Collected</option>
+              <option value="outstanding">Outstanding</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -233,18 +366,32 @@ export default function RetailInvoicesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Order #', 'Contact Code', 'Shop', 'Business Type', 'Invoice Ref', 'Date', 'Value', 'Currency', 'Paid'].map(h => (
+              <th className="px-4 py-3 w-8">
+                <input type="checkbox" className="accent-green-500 w-4 h-4 align-middle"
+                  checked={allVisibleSelected} disabled={collectableVisible.length === 0}
+                  onChange={toggleAllVisible}
+                  title={collectableVisible.length === 0 ? 'No collectable commission in view' : 'Select all collectable in view'} />
+              </th>
+              {['Order #', 'Contact Code', 'Shop', 'Business Type', 'Source', 'Invoice Ref', 'Date', 'Value', 'Currency', 'Paid', 'Commission', 'Collected'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">No invoices found</td></tr>
+              <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">No invoices found</td></tr>
             ) : visible.map(inv => (
-              <tr key={inv.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors">
+              <tr key={inv.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${selected.has(inv.id) ? 'bg-green-500/5' : ''}`}>
+                <td className="px-4 py-3">
+                  {isCollectable(inv) ? (
+                    <input type="checkbox" className="accent-green-500 w-4 h-4 align-middle"
+                      checked={selected.has(inv.id)} onChange={() => toggleOne(inv.id)} />
+                  ) : (
+                    <span className="inline-block w-4" />
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   {inv.order?.order_number
                     ? <span className="font-mono text-xs text-brand-400 bg-brand-600/10 border border-brand-600/20 px-2 py-0.5 rounded">{inv.order.order_number}</span>
@@ -253,6 +400,13 @@ export default function RetailInvoicesPage() {
                 <td className="px-4 py-3 font-mono text-xs text-slate-300">{inv.contact_code ?? <span className="text-slate-600">—</span>}</td>
                 <td className="px-4 py-3 text-slate-200 text-xs">{inv.shop_name ?? <span className="text-slate-600">—</span>}</td>
                 <td className="px-4 py-3 text-slate-400 text-xs capitalize">{inv.shop_type ?? <span className="text-slate-600">—</span>}</td>
+                <td className="px-4 py-3">
+                  {inv.is_procurement ? (
+                    <span className="text-[11px] font-medium border rounded px-2 py-0.5 bg-purple-500/10 text-purple-300 border-purple-500/30 whitespace-nowrap">We bought</span>
+                  ) : (
+                    <span className="text-[11px] font-medium border rounded px-2 py-0.5 bg-sky-500/10 text-sky-300 border-sky-500/30 whitespace-nowrap">Shop-sent</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">{inv.invoice_reference ?? <span className="text-slate-600">—</span>}</td>
                 <td className="px-4 py-3 text-slate-400 text-xs">{inv.invoice_date ?? <span className="text-slate-600">—</span>}</td>
                 <td className="px-4 py-3 text-slate-100 text-xs font-medium">{fmtMoney(inv.invoice_value, inv.currency || 'USD')}</td>
@@ -263,6 +417,37 @@ export default function RetailInvoicesPage() {
                     : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>
                     {inv.paid ? 'Paid' : 'Unpaid'}
                   </span>
+                </td>
+                {/* Commission — only meaningful on "we bought" invoices with an amount */}
+                <td className="px-4 py-3 whitespace-nowrap">
+                  {commissionAmount(inv) > 0 ? (
+                    inv.commission_collected ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-400"
+                        title={inv.commission_collected_at ? `Collected ${new Date(inv.commission_collected_at).toLocaleString()}` : 'Collected'}>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {fmtMoney(commissionAmount(inv), inv.currency || 'USD')}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-300" title="Commission not collected yet">
+                        <span className="w-2 h-2 rounded-full bg-amber-400" />
+                        {fmtMoney(commissionAmount(inv), inv.currency || 'USD')}
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-slate-600 text-xs">—</span>
+                  )}
+                </td>
+                {/* Collected — commission collection status */}
+                <td className="px-4 py-3">
+                  {commissionAmount(inv) > 0 ? (
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium border whitespace-nowrap ${inv.commission_collected
+                      ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
+                      {inv.commission_collected ? 'Collected' : 'Not collected'}
+                    </span>
+                  ) : (
+                    <span className="text-slate-600 text-xs">—</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -283,12 +468,99 @@ export default function RetailInvoicesPage() {
               <span className="text-slate-500 uppercase text-xs tracking-wider mr-2">Total</span>
               <span className="font-semibold text-slate-100">{totalsStr}</span>
             </div>
+            <div className="text-sm text-slate-300">
+              <span className="text-slate-500 uppercase text-xs tracking-wider mr-2">Paid</span>
+              <span className="font-semibold text-green-400">{paidStr}</span>
+            </div>
+            <div className="text-sm text-slate-300">
+              <span className="text-slate-500 uppercase text-xs tracking-wider mr-2">Balance</span>
+              <span className="font-semibold text-amber-400">{balanceStr}</span>
+            </div>
+            <div className="text-sm text-slate-300" title="Commission already collected / still outstanding on 'we bought' invoices">
+              <span className="text-slate-500 uppercase text-xs tracking-wider mr-2">Comm.</span>
+              <span className="font-semibold text-green-400">{commCollectedStr}</span>
+              <span className="text-slate-600 mx-1.5">/</span>
+              <span className="font-semibold text-amber-400">{commOutstandStr}</span>
+            </div>
             <button className="btn-primary" onClick={exportPDF} disabled={visible.length === 0}>
               <FileDown className="w-4 h-4" /> Export PDF
             </button>
           </div>
         </div>
       </div>
+
+      {/* ── Collect Commission confirmation ─────────────────────── */}
+      {confirmOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4" onClick={() => !collecting && setConfirmOpen(false)}>
+          <div className="card w-full max-w-lg flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <HandCoins className="w-4 h-4 text-green-400" /> Collect Commission
+              </h3>
+              <button onClick={() => !collecting && setConfirmOpen(false)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              <p className="text-xs text-slate-400">
+                You are collecting commission on <span className="text-slate-200 font-medium">{selectedInvoices.length}</span> invoice{selectedInvoices.length === 1 ? '' : 's'}.
+                They will be marked <span className="text-green-300">collected</span> and the amount will post to <span className="text-slate-200">today’s Cashier Box</span> as partner income.
+              </p>
+
+              {/* Per-partner breakdown */}
+              <div className="border border-surface-border rounded-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-surface-hover/40">
+                      <th className="px-3 py-2 font-medium">Partner / Shop</th>
+                      <th className="px-3 py-2 font-medium text-center">Invoices</th>
+                      <th className="px-3 py-2 font-medium text-right">Commission</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectionByPartner.map((p, i) => (
+                      <tr key={i} className="border-t border-surface-border/40">
+                        <td className="px-3 py-2 text-slate-200">{p.name}</td>
+                        <td className="px-3 py-2 text-center text-slate-400 tabular-nums">{p.count}</td>
+                        <td className="px-3 py-2 text-right">
+                          {Object.entries(p.cur).map(([c, v]) => (
+                            <div key={c} className="tabular-nums text-green-300 whitespace-nowrap">{fmtMoney(v, c)}</div>
+                          ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-surface-border bg-surface-hover/30">
+                      <td className="px-3 py-2 text-right text-[11px] uppercase tracking-wider text-slate-500 font-semibold" colSpan={2}>Total</td>
+                      <td className="px-3 py-2 text-right">
+                        {Object.entries(selectionTotals).map(([c, v]) => (
+                          <div key={c} className="tabular-nums font-semibold text-green-300 whitespace-nowrap">{fmtMoney(v, c)}</div>
+                        ))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {collectErr && (
+                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-300 text-xs leading-relaxed">{collectErr}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
+              <button onClick={() => setConfirmOpen(false)} disabled={collecting}
+                className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button onClick={collectCommission} disabled={collecting || selectedInvoices.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border bg-green-500/15 border-green-500/40 text-green-200 hover:bg-green-500/25 disabled:opacity-50">
+                {collecting ? <><Loader className="w-4 h-4 animate-spin" /> Collecting…</> : <><HandCoins className="w-4 h-4" /> Confirm — {selectionTotalsStr}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

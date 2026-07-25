@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -29,6 +29,7 @@ const secondaryNav = [
   { to: '/products',             icon: Tag,             label: 'Products'  },
   { to: '/price-list',           icon: ClipboardList,   label: 'Price List' },
   { to: '/returnable-items',     icon: RotateCcw,       label: 'Returnable Items' },
+  { to: '/packages',             icon: Boxes,           label: 'Packages' },
   { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
   { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
   { to: '/account-statements',   icon: BookText,        label: 'Account Statements' },

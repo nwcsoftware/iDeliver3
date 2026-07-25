@@ -164,6 +164,26 @@ export default function CashierBoxPage() {
       }
     }
 
+    // IN — commission collected from a shop on "we bought" invoices (Retail Goods
+    // Invoices → Collect Commission). Booked as partner income, dated by when it
+    // was collected (commission_collected_at), independent of the order's close.
+    for (const o of orders) {
+      for (const r of (o.retail_goods_invoices ?? [])) {
+        if (!r.commission_collected) continue
+        const amt = round2(r.commission_amount)
+        if (!amt) continue
+        const day = r.commission_collected_at ? String(r.commission_collected_at).slice(0, 10) : null
+        if (!day) continue
+        if (resetThrough && day <= resetThrough) continue
+        out.push({
+          day, order: o.order_number, recipient: o.recipient_name,
+          cat: 'partner', partyId: r.contact_id || r.shop_name || 'commission', party: r.shop_name || '—',
+          dir: 'in', desc: `Commission collected${r.shop_name ? ` · ${r.shop_name}` : ''}`,
+          cur: norm(r.currency), amount: amt,
+        })
+      }
+    }
+
     // OUT — money actually handed to a partner (Partner Dues → Pay). Dated by the
     // payout, not by any order, since a payout can settle many orders at once.
     for (const p of payouts) {

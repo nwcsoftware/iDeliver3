@@ -8,6 +8,46 @@ const SESSION_KEY = 'ideliver_session'
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null)
   const [loading,     setLoading]     = useState(true)
+  // user_ids of everyone currently signed in (live), via Supabase Realtime
+  // presence. Every logged-in client announces itself on the shared channel,
+  // so any client (e.g. the admin's User Accounts page) can see who's online.
+  const [onlineUserIds, setOnlineUserIds] = useState([])
+
+  // Announce this session on the shared presence channel while signed in, and
+  // keep the live roster of online user_ids in sync as clients come and go.
+  useEffect(() => {
+    if (!currentUser?.user_id) { setOnlineUserIds([]); return }
+
+    const channel = supabase.channel('online-users', {
+      config: { presence: { key: String(currentUser.user_id) } },
+    })
+
+    const syncRoster = () => {
+      const state = channel.presenceState()
+      const ids = new Set()
+      for (const metas of Object.values(state)) {
+        for (const m of metas) if (m.user_id != null) ids.add(String(m.user_id))
+      }
+      setOnlineUserIds([...ids])
+    }
+
+    channel
+      .on('presence', { event: 'sync' },  syncRoster)
+      .on('presence', { event: 'join' },  syncRoster)
+      .on('presence', { event: 'leave' }, syncRoster)
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            user_id:   currentUser.user_id,
+            username:  currentUser.username,
+            role:      currentUser.role,
+            online_at: new Date().toISOString(),
+          })
+        }
+      })
+
+    return () => { supabase.removeChannel(channel) }
+  }, [currentUser?.user_id, currentUser?.username, currentUser?.role])
 
   // Rehydrate session from localStorage on mount
   useEffect(() => {
@@ -164,7 +204,7 @@ export function AuthProvider({ children }) {
   }, [currentUser])
 
   return (
-    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword, changeUsername }}>
+    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword, changeUsername, onlineUserIds }}>
       {children}
     </AuthContext.Provider>
   )
