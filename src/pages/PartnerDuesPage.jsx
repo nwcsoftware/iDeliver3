@@ -83,6 +83,20 @@ export default function PartnerDuesPage() {
     })
   }, [list, search, onlyDue])
 
+  // Count of closed orders (within the date range) that carry partner packages —
+  // i.e. the orders the totals below are built from.
+  const orderCount = useMemo(() => {
+    const inRange = day => !day || ((!dateFrom || day >= dateFrom) && (!dateTo || day <= dateTo))
+    let n = 0
+    for (const o of orders) {
+      if (!o.isclosed) continue
+      const day = o.closed_at ? String(o.closed_at).slice(0, 10) : null
+      if (!day || !inRange(day)) continue
+      if ((o.delivery_packages ?? []).some(pk => pk.provider_id && Number(pk.package_price))) n++
+    }
+    return n
+  }, [orders, dateFrom, dateTo])
+
   const totals     = useMemo(() => sumPartnerDues(filtered), [filtered])
   const activeCurs = CURRENCIES.filter(c => Object.values(totals[c]).some(v => v !== 0))
 
@@ -147,7 +161,7 @@ export default function PartnerDuesPage() {
   const busy = loading.orders || payLoading
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="flex-1 overflow-y-auto p-6 space-y-4">
       {/* ── header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -205,6 +219,7 @@ export default function PartnerDuesPage() {
         <div className="card p-4">
           <h2 className="text-sm font-semibold text-slate-200 mb-3">
             Totals{dateFrom || dateTo ? ` — ${dateFrom || '…'} → ${dateTo || '…'}` : ' — all time'}
+            <span className="text-xs font-normal text-slate-500 ml-2">· {orderCount} order{orderCount === 1 ? '' : 's'}</span>
           </h2>
           <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${activeCurs.length}, minmax(0, 1fr))` }}>
             {activeCurs.map(c => (
