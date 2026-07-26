@@ -696,6 +696,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   const [search,    setSearch]    = useState('')
   const [filter,    setFilter]    = useState('all')
+  const [confirmFilter, setConfirmFilter] = useState('all')   // all | confirmed | unconfirmed
   const [sort,      setSort]      = useState({ col: null, dir: null })  // column sort: asc | desc | null
   const [modal,     setModal]     = useState(null)
   const [mapOpen,   setMapOpen]   = useState(false)   // delivery-address map picker
@@ -922,11 +923,20 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
   function matchSource(o) {
     if (!sourceFilter) return true
-    // External data may be filled with varied spelling/casing (e.g. "EXTERNAL",
-    // "EXTRERNAL"); treat anything starting with EXT as external, else local.
-    const isExternal = (o.order_source || '').trim().toUpperCase().startsWith('EXT')
-    return sourceFilter === 'EXTERNAL' ? isExternal : !isExternal
+    // Exact match against the actual delivery_orders.order_source value.
+    return (o.order_source || '').trim().toLowerCase() === sourceFilter.toLowerCase()
   }
+  // Distinct order_source values actually present in the data, for the dropdown.
+  const sourceOptions = useMemo(() => {
+    const seen = new Map()   // lowercased key → original casing (first seen)
+    for (const o of orders) {
+      const raw = (o.order_source || '').trim()
+      if (!raw) continue
+      const key = raw.toLowerCase()
+      if (!seen.has(key)) seen.set(key, raw)
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b))
+  }, [orders])
   // An order from the online application = external source.
   const isOnlineOrder = (o) => (o.order_source || '').trim().toUpperCase().startsWith('EXT')
   // Orders that need the call-center confirm affordance in the list: online (EXT),
@@ -958,6 +968,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       o.customer?.account_number,
     ].some(v => String(v ?? '').toLowerCase().includes(q))
     return matchClosed && matchSearch
+      && (confirmFilter === 'all' || (confirmFilter === 'confirmed' ? isConfirmed(o) : !isConfirmed(o)))
       && (filter === 'all' || normalizeStatus(o.status) === filter)
       && (!payFilter      || o.payment_status === payFilter)
       && (!flagFilter     || (flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
@@ -1764,10 +1775,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
     // New-order source: an order counts as an "outside" partner/supplier order
     // ONLY when a 2nd-party (supplier/partner) user is signed in and creates it —
-    // then the source is THEIR role and it arrives UNCONFIRMED for the call center
-    // to review. Anything the call center adds is a "Call center" order that is
-    // confirmed on creation, regardless of whether the customer contact happens to
-    // be a partner or supplier type.
+    // then the source is THEIR role ('partner' / 'supplier') and it arrives
+    // UNCONFIRMED for the call center to review. Anything the call center adds is a
+    // "Call center" order that is confirmed on creation, regardless of whether the
+    // customer contact happens to be a partner or supplier type.
     const addSource = partyContactId
       ? (currentUser?.role === 'supplier' ? 'supplier' : 'partner')
       : 'Call center'
@@ -2000,6 +2011,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   function openPopover(type, order, e) {
     rememberOrder(order.id)
     if (isRowLocked(order)) return
+    // Nothing can be done to an order until it's confirmed — only the confirm
+    // toggle ('online') stays available. Backstops the disabled buttons.
+    if (type !== 'online' && !isConfirmed(order)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const width = type === 'driver' ? 240 : type === 'fee' ? 220 : 176
     setDriverQuickSearch('')
@@ -2014,6 +2028,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   async function quickAssignDriver(order, driverId) {
     rememberOrder(order.id)
+    if (!isConfirmed(order)) { setPopover(null); return }   // driver can't be assigned until confirmed
     setQuickBusy(true)
     await supabase.from('delivery_orders').update({ driver_id: driverId || null }).eq('id', order.id)
     await fetchOrders()
@@ -2043,6 +2058,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // the Amount(s) sort stay in sync.
   async function quickSaveFee(order, amount, currency) {
     rememberOrder(order.id)
+    if (!isConfirmed(order)) { setPopover(null); return }   // fee can't be edited until confirmed
     setQuickBusy(true)
     const fee = Math.max(0, Number(amount) || 0)
     const totals = orderTotalsByCurrency({ ...order, delivery_fee: fee, currency })
@@ -2354,6 +2370,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           </div>
           {!closed && (
             <div className="flex items-center gap-1 flex-wrap">
+              <CheckCircle2 className="w-4 h-4 text-slate-500" />
+              {[
+                { value: 'all',         label: 'All',         cls: FILTER_VARIANTS.all },
+                { value: 'confirmed',   label: 'Confirmed',   cls: 'bg-green-500/15 text-green-400 border-green-500/30' },
+                { value: 'unconfirmed', label: 'Unconfirmed', cls: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30' },
+              ].map(c => {
+                const active = confirmFilter === c.value
+                return (
+                  <button key={c.value} onClick={() => setConfirmFilter(c.value)}
+                    className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border transition-all ${
+                      active ? c.cls : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'
+                    }`}>
+                    {c.label}
+                  </button>
+                )
+              })}
+              <span className="w-px h-5 bg-surface-border mx-1" />
               <Filter className="w-4 h-4 text-slate-500" />
               {STATUS_FILTERS.map(s => {
                 const active = filter === s
@@ -2467,9 +2500,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           <div>
             <label className="label flex items-center gap-1"><Package className="w-3 h-3" /> Order source</label>
             <select className="input py-1.5 text-xs w-36" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
-              <option value="">All orders</option>
-              <option value="LOCAL">Local orders</option>
-              <option value="EXTERNAL">External orders</option>
+              <option value="">All sources</option>
+              {sourceOptions.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -2673,9 +2705,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
                   <div className="flex items-center gap-1.5">
-                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId}
+                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId || !isConfirmed(o)}
                       onClick={(e) => openPopover('driver', o, e)}
-                      title={partyContactId ? 'Assigned by the operations team' : (o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver')}
+                      title={partyContactId ? 'Assigned by the operations team' : (o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to assign a driver' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver')}
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Truck className={`w-3.5 h-3.5 ${normalizeStatus(o.status) === 'in_progress' ? 'animate-truck' : ''}`} />
                     </button>
@@ -2689,9 +2721,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 </td>
                 {!partyContactId && (
                 <td className="px-4 py-3">
-                  <button type="button" disabled={isRowLocked(o)}
+                  <button type="button" disabled={isRowLocked(o) || !isConfirmed(o)}
                     onClick={(e) => openPopover('fee', o, e)}
-                    title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : 'Edit delivery fee'}
+                    title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to edit the fee' : 'Edit delivery fee'}
                     className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors hover:brightness-125 disabled:opacity-60 disabled:cursor-not-allowed ${
                       Number(o.delivery_fee) > 0
                         ? 'border-green-500/30 bg-green-500/10 text-green-300'
@@ -4147,7 +4179,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <p className="text-xs text-slate-500">
                 Based on <span className="text-slate-200 font-semibold">{pendingsSummary.count}</span> filtered order{pendingsSummary.count === 1 ? '' : 's'}
-                {hasAdvancedFilters || filter !== 'all' || payFilter || search ? ' (current filters applied)' : ''}.
+                {hasAdvancedFilters || filter !== 'all' || confirmFilter !== 'all' || payFilter || search ? ' (current filters applied)' : ''}.
               </p>
 
               {pendingsSummary.rows.length === 0 ? (

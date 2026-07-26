@@ -32,6 +32,9 @@ export default function PartnerDuesPage() {
   useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
   const canPay = hasRole('super_admin', 'admin')
+  // Only the super admin may delete a settled payout — it reverses a recorded
+  // payment, so regular admins can't undo it.
+  const canDeletePayout = hasRole('super_admin')
 
   const [payouts,    setPayouts]    = useState([])
   const [payLoading, setPayLoading] = useState(true)
@@ -40,7 +43,9 @@ export default function PartnerDuesPage() {
   const [search,   setSearch]   = useState('')
   const [dateFrom, setDateFrom] = useState('')   // blank = all time, so dues read as a true balance
   const [dateTo,   setDateTo]   = useState('')
-  const [onlyDue,  setOnlyDue]  = useState(true)
+  // Show every partner with package movement by default (settled ones included,
+  // with a disabled Pay button). Users can flip "Outstanding only" to hide settled.
+  const [onlyDue,  setOnlyDue]  = useState(false)
 
   // Record-payout modal — an editable list of { currency, amount } lines, so one
   // payout can settle several currencies at once.
@@ -92,6 +97,8 @@ export default function PartnerDuesPage() {
 
   /* ── record a payout ──────────────────────────────────────── */
   function openPay(p) {
+    // Nothing to pay once every currency is settled — don't open the modal.
+    if (p.curs.filter(c => round2(p.cur[c].dues) !== 0).length === 0) return
     // Pre-fill a line per currency the partner is actually owed in.
     const owed = p.curs.filter(c => round2(p.cur[c].dues) > 0)
     setPayFor(p)
@@ -204,10 +211,11 @@ export default function PartnerDuesPage() {
               <div key={c} className="rounded-lg border border-surface-border p-3 space-y-1.5">
                 <div className="text-xs font-semibold text-slate-400">{c}</div>
                 {[
-                  ['Delivered packages',  'delivered',        'text-slate-200'],
-                  ['Paid directly',       'paidDirect',       'text-sky-300'],
-                  ['Collected by drivers','collectedDrivers', 'text-green-300'],
-                  ['Paid to partner',     'paidOut',          'text-purple-300'],
+                  ['Delivered packages',    'delivered',        'text-slate-200'],
+                  ['Paid directly',         'paidDirect',       'text-sky-300'],
+                  ['Collected by drivers',  'collectedDrivers', 'text-green-300'],
+                  ['Collected by call center','collectedOffice','text-teal-300'],
+                  ['Paid to partner',       'paidOut',          'text-purple-300'],
                 ].map(([label, key, cls]) => (
                   <div key={key} className="flex items-center justify-between text-xs">
                     <span className="text-slate-500">{label}</span>
@@ -235,6 +243,7 @@ export default function PartnerDuesPage() {
               <th className="px-3 py-2 font-medium text-right">Delivered packages</th>
               <th className="px-3 py-2 font-medium text-right">Paid directly to partner</th>
               <th className="px-3 py-2 font-medium text-right">Collected by drivers</th>
+              <th className="px-3 py-2 font-medium text-right">Collected by call center</th>
               <th className="px-3 py-2 font-medium text-right">Paid to partner</th>
               <th className="px-3 py-2 font-medium text-right">Partner dues</th>
               <th className="px-3 py-2" />
@@ -242,12 +251,16 @@ export default function PartnerDuesPage() {
           </thead>
           <tbody>
             {busy ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">
                 {onlyDue ? 'No partner has outstanding dues for this range.' : 'No partner package movement for this range.'}
               </td></tr>
-            ) : filtered.map(p => (
+            ) : filtered.map(p => {
+              // Fully settled = no currency has an outstanding due. When settled the
+              // Pay button is disabled so a partner can't be paid again.
+              const settled = p.curs.filter(c => round2(p.cur[c].dues) !== 0).length === 0
+              return (
               <tr key={p.id} className="border-t border-surface-border/40 hover:bg-surface-hover/30 align-top">
                 <td className="px-3 py-2">
                   <div className="text-slate-200">{p.name}</div>
@@ -256,9 +269,10 @@ export default function PartnerDuesPage() {
                 <td className="px-3 py-2 text-right">{curLines(p, 'delivered', 'text-slate-200')}</td>
                 <td className="px-3 py-2 text-right">{curLines(p, 'paidDirect', 'text-sky-300')}</td>
                 <td className="px-3 py-2 text-right">{curLines(p, 'collectedDrivers', 'text-green-300')}</td>
+                <td className="px-3 py-2 text-right">{curLines(p, 'collectedOffice', 'text-teal-300')}</td>
                 <td className="px-3 py-2 text-right">{curLines(p, 'paidOut', 'text-purple-300')}</td>
                 <td className="px-3 py-2 text-right">
-                  {p.curs.filter(c => round2(p.cur[c].dues) !== 0).length === 0
+                  {settled
                     ? <span className="inline-flex items-center gap-1 text-[#1dffd5]"><CheckCircle2 className="w-3.5 h-3.5" /> Settled</span>
                     : p.curs.filter(c => round2(p.cur[c].dues) !== 0).map(c => (
                         <div key={c} className={`tabular-nums font-semibold whitespace-nowrap ${p.cur[c].dues > 0 ? 'text-amber-300' : 'text-[#1dffd5]'}`}>
@@ -268,14 +282,16 @@ export default function PartnerDuesPage() {
                 </td>
                 <td className="px-3 py-2 text-right">
                   {canPay && (
-                    <button type="button" onClick={() => openPay(p)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-purple-500/40 bg-purple-500/15 text-purple-200 hover:bg-purple-500/25 whitespace-nowrap">
+                    <button type="button" onClick={() => openPay(p)} disabled={settled}
+                      title={settled ? 'Nothing due — already settled' : 'Record a payout'}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-purple-500/40 bg-purple-500/15 text-purple-200 hover:bg-purple-500/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-purple-500/15 whitespace-nowrap">
                       <HandCoins className="w-3.5 h-3.5" /> Pay
                     </button>
                   )}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -284,7 +300,11 @@ export default function PartnerDuesPage() {
       {payouts.length > 0 && (
         <div className="card p-4 space-y-2">
           <h2 className="text-sm font-semibold text-slate-200">Recent payouts</h2>
-          <p className="text-xs text-slate-500">Deleting a payout puts its amount back on the partner’s dues.</p>
+          <p className="text-xs text-slate-500">
+            {canDeletePayout
+              ? 'Deleting a payout puts its amount back on the partner’s dues. Only the super admin can delete.'
+              : 'Settled payouts are a permanent record and cannot be deleted.'}
+          </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -295,7 +315,7 @@ export default function PartnerDuesPage() {
                   <th className="px-3 py-1.5 font-medium">Paid by</th>
                   <th className="px-3 py-1.5 font-medium">Notes</th>
                   <th className="px-3 py-1.5 font-medium text-right">Amount</th>
-                  <th className="px-3 py-1.5" />
+                  {canDeletePayout && <th className="px-3 py-1.5" />}
                 </tr>
               </thead>
               <tbody>
@@ -309,12 +329,12 @@ export default function PartnerDuesPage() {
                       <td className="px-3 py-1.5 text-slate-400">{p.paid_by_name || '—'}</td>
                       <td className="px-3 py-1.5 text-slate-500">{p.notes || '—'}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-purple-300 whitespace-nowrap">{fmtMoney(p.amount, p.currency)}</td>
-                      <td className="px-3 py-1.5 text-right">
-                        {canPay && (
-                          <button type="button" onClick={() => deletePayout(p.id)} title="Delete payout"
+                      {canDeletePayout && (
+                        <td className="px-3 py-1.5 text-right">
+                          <button type="button" onClick={() => deletePayout(p.id)} title="Delete payout (super admin)"
                             className="text-slate-500 hover:text-red-300"><Trash2 className="w-3.5 h-3.5" /></button>
-                        )}
-                      </td>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}

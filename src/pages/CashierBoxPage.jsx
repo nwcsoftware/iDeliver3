@@ -132,13 +132,17 @@ export default function CashierBoxPage() {
       const partyNm  = partyName(o.customer) || o.main_account || '—'
       const partyId  = o.customer?.id || o.customer_id || partyNm
 
-      // IN — office-collected payments only.
+      // IN — payments with a collector name. A named payment by anyone other than
+      // the order's own driver is a call-center / office collection; that portion
+      // is tracked separately on each line (office) for the breakdown.
       for (const p of (o.payment_collections ?? [])) {
         if (!p.collected_by_name) continue
+        const amt = round2(p.amount)
+        const byOfficeUser = !(o.driver_id && p.collected_by === o.driver_id)
         out.push({
           day, order: o.order_number, recipient: o.recipient_name, cat, partyId, party: partyNm,
           dir: 'in', desc: `Payment collected · ${p.collected_by_name}`,
-          cur: norm(p.currency), amount: round2(p.amount),
+          cur: norm(p.currency), amount: amt, office: byOfficeUser ? amt : 0,
         })
       }
       // OUT — external retail invoices.
@@ -247,15 +251,16 @@ export default function CashierBoxPage() {
     [orders, payouts, effFrom, to],
   )
   const partnerDuesTotals = useMemo(() => {
-    const t = Object.fromEntries(CURRENCIES.map(c => [c, { delivered: 0, collectedDrivers: 0, paidOut: 0, balance: 0 }]))
+    const t = Object.fromEntries(CURRENCIES.map(c => [c, { delivered: 0, collectedDrivers: 0, collectedOffice: 0, paidOut: 0, balance: 0 }]))
     for (const p of partnerDues) for (const c of p.curs) {
       t[c].delivered        += p.cur[c].delivered - p.cur[c].paidDirect   // paid-direct never enters the box
       t[c].collectedDrivers += p.cur[c].collectedDrivers
+      t[c].collectedOffice  += p.cur[c].collectedOffice
       t[c].paidOut          += p.cur[c].paidOut
     }
     for (const c of CURRENCIES) {
       t[c].delivered = round2(t[c].delivered); t[c].paidOut = round2(t[c].paidOut)
-      t[c].collectedDrivers = round2(t[c].collectedDrivers)
+      t[c].collectedDrivers = round2(t[c].collectedDrivers); t[c].collectedOffice = round2(t[c].collectedOffice)
       t[c].balance   = round2(t[c].delivered - t[c].paidOut)
     }
     return t
@@ -287,16 +292,16 @@ export default function CashierBoxPage() {
     const m = {}
     for (const cat of PARTY_CATS) {
       m[cat.key] = {}
-      for (const c of CURRENCIES) m[cat.key][c] = { collected: 0, spent: 0, net: 0 }
+      for (const c of CURRENCIES) m[cat.key][c] = { collected: 0, office: 0, spent: 0, net: 0 }
     }
     for (const l of lines) {
       const cat = m[l.cat] ? l.cat : 'customer'
-      if (l.dir === 'in') m[cat][l.cur].collected += l.amount
+      if (l.dir === 'in') { m[cat][l.cur].collected += l.amount; m[cat][l.cur].office += (l.office || 0) }
       else                m[cat][l.cur].spent     += l.amount
     }
     for (const cat of PARTY_CATS) for (const c of CURRENCIES) {
       const g = m[cat.key][c]
-      g.collected = round2(g.collected); g.spent = round2(g.spent); g.net = round2(g.collected - g.spent)
+      g.collected = round2(g.collected); g.office = round2(g.office); g.spent = round2(g.spent); g.net = round2(g.collected - g.spent)
     }
     return m
   }, [lines])
@@ -310,8 +315,8 @@ export default function CashierBoxPage() {
       const bucket = cats[catKey]
       const key    = l.partyId || l.party || 'unknown'
       const entry  = (bucket[key] ||= { name: l.party || '—', cur: {} })
-      const g      = (entry.cur[l.cur] ||= { collected: 0, spent: 0 })
-      if (l.dir === 'in') g.collected += l.amount
+      const g      = (entry.cur[l.cur] ||= { collected: 0, office: 0, spent: 0 })
+      if (l.dir === 'in') { g.collected += l.amount; g.office += (l.office || 0) }
       else                g.spent     += l.amount
     }
     const result = {}
@@ -320,7 +325,7 @@ export default function CashierBoxPage() {
         const curs = CURRENCIES.filter(c => e.cur[c] && (e.cur[c].collected || e.cur[c].spent))
         const cur = {}
         for (const c of curs) cur[c] = {
-          collected: round2(e.cur[c].collected), spent: round2(e.cur[c].spent),
+          collected: round2(e.cur[c].collected), office: round2(e.cur[c].office), spent: round2(e.cur[c].spent),
           net: round2(e.cur[c].collected - e.cur[c].spent),
         }
         return { id, name: e.name, curs, cur }
@@ -548,7 +553,7 @@ export default function CashierBoxPage() {
             <h2 className="text-sm font-semibold text-slate-200">
               Detailed breakdown by party — {rangeLabel}
               <span className="text-slate-500 text-xs font-normal ml-2">
-                (customers &amp; suppliers: collected / spent / net · partners: dues / collected by drivers / paid / balance · click a row to expand)
+                (customers &amp; suppliers: collected / by call center / spent / net · partners: dues / collected by drivers / by call center / paid / balance · click a row to expand)
               </span>
             </h2>
             {PARTY_CATS.map(cat => {
@@ -580,6 +585,8 @@ export default function CashierBoxPage() {
                             <span className="text-slate-600 mx-1">/</span>
                             <span className="text-green-300" title="Collected by drivers from the customer">{fmtAmount(partnerDuesTotals[c].collectedDrivers, c)}</span>
                             <span className="text-slate-600 mx-1">/</span>
+                            <span className="text-teal-300" title="Collected by call center from the customer">{fmtAmount(partnerDuesTotals[c].collectedOffice, c)}</span>
+                            <span className="text-slate-600 mx-1">/</span>
                             <span className="text-purple-300" title="Paid to partner">{fmtAmount(partnerDuesTotals[c].paidOut, c)}</span>
                             <span className="text-slate-600 mx-1">/</span>
                             <span className={partnerDuesTotals[c].balance > 0 ? 'text-amber-300' : 'text-[#1dffd5]'} title="Balance still owed">
@@ -602,6 +609,9 @@ export default function CashierBoxPage() {
                                 <th className="px-3 py-1.5 font-medium text-right" title="Package money the driver collected from the customer (packages paid directly to the partner are excluded)">
                                   Collected by drivers
                                 </th>
+                                <th className="px-3 py-1.5 font-medium text-right" title="Package money the call center / office collected from the customer">
+                                  Collected by call center
+                                </th>
                                 <th className="px-3 py-1.5 font-medium text-right">Paid to partner</th>
                                 <th className="px-3 py-1.5 font-medium text-right">Balance</th>
                               </tr>
@@ -621,6 +631,9 @@ export default function CashierBoxPage() {
                                     </td>
                                     <td className="px-3 py-1.5 text-right whitespace-nowrap">
                                       {rows.map(c => <div key={c} className="text-green-300 tabular-nums">{fmtAmount(p.cur[c].collectedDrivers, c)} <span className="text-slate-600">{c}</span></div>)}
+                                    </td>
+                                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                      {rows.map(c => <div key={c} className="text-teal-300 tabular-nums">{fmtAmount(p.cur[c].collectedOffice, c)} <span className="text-slate-600">{c}</span></div>)}
                                     </td>
                                     <td className="px-3 py-1.5 text-right whitespace-nowrap">
                                       {rows.map(c => <div key={c} className="text-purple-300 tabular-nums">{fmtAmount(p.cur[c].paidOut, c)} <span className="text-slate-600">{c}</span></div>)}
@@ -660,11 +673,13 @@ export default function CashierBoxPage() {
                       {curs.length === 0 ? <span className="text-slate-600">No cash movement</span> : curs.map(c => (
                         <span key={c} className="tabular-nums whitespace-nowrap">
                           <span className="text-slate-500 mr-1.5">{c}</span>
-                          <span className="text-green-300">{fmtAmount(byParty[cat.key][c].collected, c)}</span>
+                          <span className="text-green-300" title="Collected (total)">{fmtAmount(byParty[cat.key][c].collected, c)}</span>
                           <span className="text-slate-600 mx-1">/</span>
-                          <span className="text-red-300">{fmtAmount(byParty[cat.key][c].spent, c)}</span>
+                          <span className="text-teal-300" title="Collected by call center (office)">{fmtAmount(byParty[cat.key][c].office, c)}</span>
                           <span className="text-slate-600 mx-1">/</span>
-                          <span className={byParty[cat.key][c].net >= 0 ? 'text-[#1dffd5]' : 'text-amber-300'}>{fmtAmount(byParty[cat.key][c].net, c)}</span>
+                          <span className="text-red-300" title="Spent">{fmtAmount(byParty[cat.key][c].spent, c)}</span>
+                          <span className="text-slate-600 mx-1">/</span>
+                          <span className={byParty[cat.key][c].net >= 0 ? 'text-[#1dffd5]' : 'text-amber-300'} title="Net">{fmtAmount(byParty[cat.key][c].net, c)}</span>
                         </span>
                       ))}
                     </div>
@@ -680,6 +695,7 @@ export default function CashierBoxPage() {
                             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-surface-hover/30">
                               <th className="px-3 py-1.5 font-medium">{single}</th>
                               <th className="px-3 py-1.5 font-medium text-right">Collected</th>
+                              <th className="px-3 py-1.5 font-medium text-right" title="Portion collected by the call center / office">Collected by call center</th>
                               <th className="px-3 py-1.5 font-medium text-right">Spent</th>
                               <th className="px-3 py-1.5 font-medium text-right">Net</th>
                             </tr>
@@ -690,6 +706,9 @@ export default function CashierBoxPage() {
                                 <td className="px-3 py-1.5 text-slate-300">{p.name}</td>
                                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                                   {p.curs.map(c => <div key={c} className="text-green-300 tabular-nums">{fmtAmount(p.cur[c].collected, c)} <span className="text-slate-600">{c}</span></div>)}
+                                </td>
+                                <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                  {p.curs.map(c => <div key={c} className="text-teal-300 tabular-nums">{fmtAmount(p.cur[c].office, c)} <span className="text-slate-600">{c}</span></div>)}
                                 </td>
                                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                                   {p.curs.map(c => <div key={c} className="text-red-300 tabular-nums">{fmtAmount(p.cur[c].spent, c)} <span className="text-slate-600">{c}</span></div>)}
