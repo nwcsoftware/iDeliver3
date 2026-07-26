@@ -144,7 +144,8 @@ export default function CreditCustomersPage() {
     const m = new Map()
     const ensure = (cust) => {
       if (!m.has(cust.id)) {
-        m.set(cust.id, { customer: cust, orders: [], payments: [], charged: emptyCur(), paid: emptyCur() })
+        m.set(cust.id, { customer: cust, orders: [], payments: [], charged: emptyCur(),
+          collectedDriver: emptyCur(), collectedOffice: emptyCur(), paid: emptyCur() })
       }
       return m.get(cust.id)
     }
@@ -153,6 +154,19 @@ export default function CreditCustomersPage() {
       a.orders.push(o)
       const t = orderTotalsByCurrency(o)
       for (const c of CURRENCIES) a.charged[c] += round2(t[c] || 0)
+      // Cash collected ON the order settles part of the credit balance. The
+      // channel is read from payment_collections.collection_group: 'Driver' →
+      // "Collected by driver", 'Call center' → "Collected in the call center".
+      // Rows with no group fall back to the old rule (collector = the order's
+      // driver ⇒ driver, else office).
+      for (const pc of (o.payment_collections ?? [])) {
+        const cur = CURRENCIES.includes(pc.currency) ? pc.currency : 'USD'
+        const amt = round2(Number(pc.amount) || 0)
+        const grp = String(pc.collection_group || '').trim().toLowerCase()
+        const isDriver = grp === 'driver' || (!grp && o.driver_id && pc.collected_by === o.driver_id)
+        if (isDriver) a.collectedDriver[cur] += amt
+        else          a.collectedOffice[cur] += amt
+      }
     }
     for (const [custId, ps] of paymentsByCustomer) {
       // A customer may have payments but (after a data reset) no orders loaded —
@@ -161,13 +175,15 @@ export default function CreditCustomersPage() {
         || { id: custId, first_name: '', last_name: '', company_name: ps[0]?.customer_name || '' }
       const a = ensure(cust)
       a.payments.push(...ps)
-      for (const p of ps) a.paid[p.currency || 'USD'] += round2(Number(p.amount) || 0)
+      // Account-level "Collect Payment" is taken at the call center / office.
+      for (const p of ps) a.collectedOffice[CURRENCIES.includes(p.currency) ? p.currency : 'USD'] += round2(Number(p.amount) || 0)
     }
-    // balance + a "has any outstanding currency" flag
+    // paid (= driver + call center), balance, and a "has any outstanding" flag
     for (const a of m.values()) {
       a.balance = {}
       a.outstanding = false
       for (const c of CURRENCIES) {
+        a.paid[c]    = round2(a.collectedDriver[c] + a.collectedOffice[c])
         a.balance[c] = round2(a.charged[c] - a.paid[c])
         if (a.balance[c] > 0) a.outstanding = true
       }
@@ -220,6 +236,20 @@ export default function CreditCustomersPage() {
         kind: 'order', date: orderDate(o), ref: o.order_number || String(o.id).slice(0, 8),
         label: o.recipient_name || o.order_type || 'Order', debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at, order: o,
       })
+      // Cash collected on the order (driver at delivery / office) — a credit that
+      // reduces the balance, shown as its own statement line so it reconciles.
+      for (const pc of (o.payment_collections ?? [])) {
+        const amt = round2(Number(pc.amount) || 0)
+        if (!amt) continue
+        const cur = CURRENCIES.includes(pc.currency) ? pc.currency : 'USD'
+        const grp = String(pc.collection_group || '').trim().toLowerCase()
+        const byDriver = grp === 'driver' || (!grp && o.driver_id && pc.collected_by === o.driver_id)
+        all.push({
+          kind: 'collection', date: orderDate(o), ref: byDriver ? 'driver' : 'office',
+          label: `Collected on order #${o.order_number || String(o.id).slice(0, 8)}${pc.collected_by_name ? ` · ${pc.collected_by_name}` : ''}`,
+          debit: null, credit: { [cur]: amt }, _t: o.closed_at || o.created_at,
+        })
+      }
     }
     for (const p of selected.payments) {
       all.push({
@@ -424,7 +454,7 @@ export default function CreditCustomersPage() {
     for (const c of CURRENCIES) {
       if (!selected.charged[c] && !selected.paid[c]) continue
       doc.text(
-        `${c} — Charged ${fmtMoney(selected.charged[c], c)}   Paid ${fmtMoney(selected.paid[c], c)}   Balance ${fmtMoney(selected.balance[c], c)}`,
+        `${c} — Charged ${fmtMoney(selected.charged[c], c)}   By driver ${fmtMoney(selected.collectedDriver[c], c)}   By call center ${fmtMoney(selected.collectedOffice[c], c)}   Balance ${fmtMoney(selected.balance[c], c)}`,
         marginX, y)
       y += 5
     }
@@ -555,7 +585,8 @@ export default function CreditCustomersPage() {
                     <div key={c} className="rounded-lg border border-surface-border bg-surface-hover/40 p-3">
                       <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{c}</p>
                       <div className="flex justify-between text-xs text-slate-400 mt-1"><span>Charged</span><span>{fmtMoney(selected.charged[c], c)}</span></div>
-                      <div className="flex justify-between text-xs text-slate-400"><span>Paid</span><span className="text-green-400">{fmtMoney(selected.paid[c], c)}</span></div>
+                      <div className="flex justify-between text-xs text-slate-400"><span>Collected by driver</span><span className="text-green-400">{fmtMoney(selected.collectedDriver[c], c)}</span></div>
+                      <div className="flex justify-between text-xs text-slate-400"><span>Collected in the call center</span><span className="text-teal-300">{fmtMoney(selected.collectedOffice[c], c)}</span></div>
                       <div className="flex justify-between text-sm font-semibold mt-1 pt-1 border-t border-surface-border">
                         <span className="text-slate-300">Balance</span>
                         <span className={selected.balance[c] > 0 ? 'text-amber-400' : 'text-slate-300'}>{fmtMoney(selected.balance[c], c)}</span>

@@ -88,7 +88,9 @@ export function buildPartnerDues({ orders = [], payouts = [], from = '', to = ''
   for (const p of payouts) {
     const day = p.paid_at ? String(p.paid_at).slice(0, 10) : ''
     if (!inRange(day)) continue
-    const g = bucketFor(p.partner_id, '—', null, norm(p.currency))
+    // Use the payout's joined partner contact for the name/code so a partner with
+    // only payouts (no delivered packages in range) still shows their name.
+    const g = bucketFor(p.partner_id, partnerName(p.partner), p.partner?.code || null, norm(p.currency))
     g.paidOut += Number(p.amount) || 0
   }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard, Calendar } from 'lucide-react'
+import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard, Calendar, Trash2 } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -73,8 +73,15 @@ function isReconcilable(o) { return ['collected_by_driver', 'paid_to_office'].in
    driver carries no cash for them and they must not show under a driver or add to
    the driver's order count. */
 function isSettlementEligible(o) {
-  if (o?.customer?.credit_debit_allowed === true) return false
   if (o?.is_free_order === true) return false
+  // Credit-customer orders carry no cash by default, but if the driver actually
+  // collected from the customer, that cash must still be reconciled here — so the
+  // call center can see whatever the driver holds regardless of the customer type.
+  // Include a credit order only when the driver genuinely collected something.
+  if (o?.customer?.credit_debit_allowed === true) {
+    const dc = orderDriverCollectedByCurrency(o)
+    return CURRENCIES.some(c => round2(dc[c]) > 0)
+  }
   return o?.isclosed === true
     || (isDelivered(o) && isCompleted(o) && isReconcilable(o))
 }
@@ -107,8 +114,9 @@ export default function DriverDuesPage() {
   const [settlements,    setSettlements]    = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [expanded,       setExpanded]       = useState(new Set())   // expanded settlement ids
+  const [selectedSettlements, setSelectedSettlements] = useState(new Set())  // for bulk delete (super admin)
+  const [deletingSettlements, setDeletingSettlements] = useState(false)
 
-  const [retailByOrder, setRetailByOrder] = useState({})   // orderId → [retail invoices]
   const [settledIds,    setSettledIds]    = useState(new Set())   // orders already collected from driver
   const [dataLoading,   setDataLoading]   = useState(true)
 
@@ -152,27 +160,26 @@ export default function DriverDuesPage() {
     [orders],
   )
 
-  /* ── supplementary fetch: full retail invoices + which orders are settled ─── */
-
+  /* ── supplementary fetch: which orders are already settled ───
+     Retail invoices come from the order's own nested data (petty cash is summed
+     from o.retail_goods_invoices), so we only need the settled-order set here.
+     The id list can be thousands long, so it's queried in chunks — a single
+     .in(...) with every id would blow past the URL length limit and silently
+     return nothing (which is what made petty cash and settled state come back
+     empty). */
   const fetchSupplementary = useCallback(async () => {
     const ids = closedOrders.map(o => o.id)
-    if (ids.length === 0) { setRetailByOrder({}); setSettledIds(new Set()); setDataLoading(false); return }
+    if (ids.length === 0) { setSettledIds(new Set()); setDataLoading(false); return }
     setDataLoading(true)
 
-    const [{ data: retail }, { data: settled }] = await Promise.all([
-      supabase.from('retail_goods_invoices')
-        .select('id, order_id, shop_name, invoice_reference, invoice_date, invoice_value, currency')
-        .in('order_id', ids),
-      // An order is settled once a driver_settlement_orders line exists for it.
-      supabase.from('driver_settlement_orders')
-        .select('order_id')
-        .in('order_id', ids),
-    ])
-
-    const map = {}
-    for (const r of retail ?? []) (map[r.order_id] ??= []).push(r)
-    setRetailByOrder(map)
-    setSettledIds(new Set((settled ?? []).map(r => r.order_id)))
+    const CHUNK = 200
+    const settledSet = new Set()
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK)
+      const { data } = await supabase.from('driver_settlement_orders').select('order_id').in('order_id', slice)
+      for (const r of data ?? []) settledSet.add(r.order_id)
+    }
+    setSettledIds(settledSet)
     setDataLoading(false)
   }, [closedOrders])
 
@@ -226,6 +233,35 @@ export default function DriverDuesPage() {
     setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
+  /* ── delete settlements (super admin) ────────────────────────
+     Removes the settlement record and its child rows (currency totals + order
+     lines). The orders themselves stay closed — a super admin can reopen any of
+     them from the To Collect tab (Unlock) to re-settle. */
+  function toggleSettlement(id) {
+    setSelectedSettlements(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  async function deleteSettlements(ids) {
+    if (!isSuperAdmin || ids.length === 0) return
+    if (!window.confirm(
+      `Delete ${ids.length} settlement${ids.length === 1 ? '' : 's'}?\n\n` +
+      'This removes the settlement record and its lines. The orders stay closed — ' +
+      'reopen them from the To Collect tab (Unlock) if you need to re-settle. This cannot be undone.'
+    )) return
+    setDeletingSettlements(true)
+    const e1 = (await supabase.from('driver_settlement_orders').delete().in('settlement_id', ids)).error
+    const e2 = (await supabase.from('driver_settlement_currency_totals').delete().in('settlement_id', ids)).error
+    const e3 = (await supabase.from('driver_daily_settlements').delete().in('id', ids)).error
+    setDeletingSettlements(false)
+    if (e1 || e2 || e3) { window.alert(`Could not delete: ${(e1 || e2 || e3).message}`); return }
+    setSelectedSettlements(new Set())
+    await Promise.all([fetchHistory(), fetchSupplementary()])
+  }
+  function toggleAllSettlements() {
+    setSelectedSettlements(s => s.size === visibleSettlements.length
+      ? new Set()
+      : new Set(visibleSettlements.map(x => x.id)))
+  }
+
   /* ── per-order reconciliation rows ───────────────────────── */
 
   // Collected cash, external retail (petty cash), and the net due from the
@@ -243,16 +279,20 @@ export default function DriverDuesPage() {
     const officeCur = orderOfficeCollectedByCurrency(o)
     const office    = emptyCur()
     for (const c of CURRENCIES) office[c] = round2(officeCur[c])
+    // Petty cash used = total of the order's external retail invoices
+    // (retail_goods_invoices), summed per currency from the order's own data.
     const retail    = emptyCur()
-    const invoices  = retailByOrder[o.id] ?? []
+    const invoices  = o.retail_goods_invoices ?? []
     for (const r of invoices) {
       const cur = CURRENCIES.includes(r.currency) ? r.currency : 'USD'
       retail[cur] += round2(r.invoice_value)
     }
-    // Petty cash (retail) is no longer deducted — the total dues equal the
-    // collected cash, so net mirrors collected per currency.
+    // Balance the driver owes = cash collected from customers − what he paid out
+    // of his own petty cash (retail_goods_invoices he bought for the orders). Can
+    // go negative when he spent more petty cash than he collected — the office
+    // then owes him the difference.
     const net = emptyCur()
-    for (const c of CURRENCIES) net[c] = round2(collected[c])
+    for (const c of CURRENCIES) net[c] = round2(collected[c] - retail[c])
     // Order total (full order value) — shown alongside collected so the user can
     // confirm the order is fully paid (collected ≈ total).
     const totalCur = orderTotalsByCurrency(o)
@@ -266,7 +306,7 @@ export default function DriverDuesPage() {
       hasDues:      CURRENCIES.some(c => Math.abs(net[c]) > 0),
       paidToOffice: CURRENCIES.some(c => office[c] > 0),
     }
-  }), [closedOrders, retailByOrder, settledIds])
+  }), [closedOrders, settledIds])
 
   // Orders still ready to collect (outstanding: not yet settled and not closed),
   // per driver — shown next to each driver in the picker. '' key = grand total.
@@ -607,7 +647,7 @@ export default function DriverDuesPage() {
     autoTable(doc, {
       startY: 32,
       head: [['Date', 'Order #', 'Driver', 'Customer',
-        'Total USD', 'Total LBP', 'Collected USD', 'Collected LBP', 'To office USD', 'To office LBP', 'Total dues USD', 'Total dues LBP', 'Settled']],
+        'Total USD', 'Total LBP', 'Collected USD', 'Collected LBP', 'Petty USD', 'Petty LBP', 'To office USD', 'To office LBP', 'Balance USD', 'Balance LBP', 'Settled']],
       body: visible.map(r => [
         orderDate(r.order) || '—',
         r.order.order_number ?? '—',
@@ -615,6 +655,7 @@ export default function DriverDuesPage() {
         r.order.recipient_name ?? '—',
         r.total.USD.toFixed(2),     r.total.LBP.toFixed(0),
         r.collected.USD.toFixed(2), r.collected.LBP.toFixed(0),
+        r.retail.USD.toFixed(2),    r.retail.LBP.toFixed(0),
         r.office.USD.toFixed(2),    r.office.LBP.toFixed(0),
         r.net.USD.toFixed(2),       r.net.LBP.toFixed(0),
         r.settled ? 'Yes' : 'No',
@@ -622,17 +663,18 @@ export default function DriverDuesPage() {
       styles: { fontSize: 7, cellPadding: 1.2 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 247, 250] },
-      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' }, 11: { halign: 'right' } },
+      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' }, 11: { halign: 'right' }, 12: { halign: 'right' }, 13: { halign: 'right' } },
     })
 
     let y = (doc.lastAutoTable?.finalY ?? 32) + 8
     doc.setFontSize(10); doc.setTextColor(20)
     doc.text(`Orders: ${visible.length}`, marginX, y); y += 6
     for (const c of CURRENCIES) {
-      if (!visibleTotals.collected[c] && !visibleTotals.office[c]) continue
+      if (!visibleTotals.collected[c] && !visibleTotals.office[c] && !visibleTotals.retail[c]) continue
+      const pettyPart  = visibleTotals.retail[c] ? `   Petty cash ${fmtMoney(visibleTotals.retail[c], c)}` : ''
       const officePart = visibleTotals.office[c] ? `   Paid to office ${fmtMoney(visibleTotals.office[c], c)}` : ''
       doc.text(
-        `${c} — Collected ${fmtMoney(visibleTotals.collected[c], c)}${officePart}   Total dues from driver ${fmtMoney(visibleTotals.net[c], c)}`,
+        `${c} — Collected ${fmtMoney(visibleTotals.collected[c], c)}${pettyPart}${officePart}   Balance pending from driver ${fmtMoney(visibleTotals.net[c], c)}`,
         marginX, y)
       y += 5
     }
@@ -640,7 +682,96 @@ export default function DriverDuesPage() {
     doc.save(`driver-dues-${now.toISOString().slice(0, 10)}.pdf`)
   }
 
+  /* Per-settlement money figures (mirrors the History table's own logic), so the
+     PDF shows exactly what's on screen — including the fallback to what customers
+     paid when a settlement stored no currency totals. */
+  function settlementMoney(s) {
+    const totals = s.driver_settlement_currency_totals ?? []
+    const lines  = s.driver_settlement_orders ?? []
+    const hasStored = totals.some(t => Number(t.total_collected) || Number(t.amount_paid) || Number(t.difference))
+    const fallback = {}
+    if (!hasStored) {
+      for (const oid of [...new Set(lines.map(l => l.order_id))]) {
+        const o = orderById[oid]; if (!o) continue
+        for (const [cur, amt] of Object.entries(orderCollectedByCurrency(o))) fallback[cur] = round2((fallback[cur] || 0) + amt)
+      }
+    }
+    const fallbackEntries = Object.entries(fallback).filter(([, amt]) => amt)
+    return {
+      collectedRows: hasStored ? totals.filter(t => Number(t.total_collected)).map(t => [t.currency, Number(t.total_collected)]) : fallbackEntries,
+      receivedRows:  hasStored ? totals.filter(t => Number(t.amount_paid)).map(t => [t.currency, Number(t.amount_paid)]) : fallbackEntries,
+      diffRows:      hasStored ? totals.filter(t => Number(t.difference)).map(t => [t.currency, Number(t.difference)]) : [],
+    }
+  }
+
+  /* ── PDF export — the History tab as currently filtered ──── */
+  function exportHistoryPDF() {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const now = new Date()
+    const marginX = 14
+
+    doc.setFontSize(14); doc.setTextColor(20)
+    doc.text('Driver Settlements — History', marginX, 16)
+    doc.setFontSize(9); doc.setTextColor(110)
+    doc.text(`Generated: ${now.toLocaleString()}`, marginX, 22)
+    doc.text(`Filters — ${activeFilterSummary()}`, marginX, 27)
+
+    const joinRows = rows => rows.length ? rows.map(([cur, amt]) => fmtMoney(amt, cur)).join('  ') : '—'
+    const joinDiff = rows => rows.length
+      ? rows.map(([cur, d]) => `${d < 0 ? 'Short' : 'Over'} ${fmtMoney(Math.abs(d), cur)}`).join('  ')
+      : 'Exact'
+
+    autoTable(doc, {
+      startY: 32,
+      head: [['Date', 'Driver', 'Orders', 'Collected from customers', 'Received from driver', 'Difference', 'Recorded']],
+      body: visibleSettlements.map(s => {
+        const { collectedRows, receivedRows, diffRows } = settlementMoney(s)
+        return [
+          s.settlement_date ?? '—',
+          driverName(s.driver || drivers.find(d => d.id === s.driver_id)),
+          String(s.total_orders ?? ''),
+          joinRows(collectedRows),
+          joinRows(receivedRows),
+          joinDiff(diffRows),
+          s.received_at ? new Date(s.received_at).toLocaleString() : '—',
+        ]
+      }),
+      styles: { fontSize: 8, cellPadding: 1.3 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+    })
+
+    // ── Summary of totals across the (filtered) settlements ──
+    const sumBy = key => {
+      const t = {}
+      for (const s of visibleSettlements) {
+        for (const [cur, amt] of settlementMoney(s)[key]) t[cur] = round2((t[cur] || 0) + amt)
+      }
+      return t
+    }
+    const totCollected = sumBy('collectedRows')
+    const totReceived  = sumBy('receivedRows')
+    const totDiff      = sumBy('diffRows')
+    const totalOrders  = visibleSettlements.reduce((n, s) => n + (Number(s.total_orders) || 0), 0)
+    const curLine = map => CURRENCIES.filter(c => map[c]).map(c => fmtMoney(map[c], c)).join('   ') || '—'
+
+    let y = (doc.lastAutoTable?.finalY ?? 32) + 8
+    doc.setFontSize(11); doc.setTextColor(20)
+    doc.text('Summary', marginX, y); y += 6
+    doc.setFontSize(9); doc.setTextColor(40)
+    doc.text(`Settlements: ${visibleSettlements.length}     Orders: ${totalOrders}`, marginX, y); y += 5
+    doc.text(`Total collected from customers:  ${curLine(totCollected)}`, marginX, y); y += 5
+    doc.text(`Total received from driver:      ${curLine(totReceived)}`, marginX, y); y += 5
+    doc.text(`Total difference:                ${curLine(totDiff)}`, marginX, y); y += 5
+
+    doc.save(`driver-settlements-history-${now.toISOString().slice(0, 10)}.pdf`)
+  }
+
   const busy = loading.orders || dataLoading
+  // Columns in the History table: chevron + 7 data cols, plus (super admin) a
+  // leading select checkbox and a trailing actions cell.
+  const historyColSpan = 8 + (isSuperAdmin ? 2 : 0)
 
   /* ── history filtering (driver / date / search) ──────────── */
 
@@ -769,7 +900,7 @@ export default function DriverDuesPage() {
                     onChange={toggleAll} />
                 )}
               </th>
-              {['Date', 'Order #', 'Driver', 'Customer', 'Total', 'Collected by driver', 'Paid to office', 'Total dues', 'Status'].map(h => (
+              {['Date', 'Order #', 'Driver', 'Customer', 'Collected from customer', 'Petty cash used', 'Balance pending', 'Status'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
               ))}
               <th className="px-4 py-3" />
@@ -777,9 +908,9 @@ export default function DriverDuesPage() {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {busy ? (
-              <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
             ) : visible.map(r => {
               const o = r.order
               const selectable = !r.settled && !o.isclosed && !!filters.driver_id
@@ -798,22 +929,16 @@ export default function DriverDuesPage() {
                   <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(r.driver)}</td>
                   <td className="px-4 py-3 text-slate-300 text-xs">{o.recipient_name ?? <span className="text-slate-600">—</span>}</td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                    {CURRENCIES.filter(c => r.total[c] > 0).map(c => (
-                      <div key={c} className="text-slate-300">{fmtMoney(r.total[c], c)}</div>
-                    ))}
-                    {!CURRENCIES.some(c => r.total[c] > 0) && <span className="text-slate-600">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
                     {CURRENCIES.filter(c => r.collected[c] > 0).map(c => (
                       <div key={c} className="text-green-400">{fmtMoney(r.collected[c], c)}</div>
                     ))}
                     {!CURRENCIES.some(c => r.collected[c] > 0) && <span className="text-slate-600">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                    {CURRENCIES.filter(c => r.office[c] > 0).map(c => (
-                      <div key={c} className="text-sky-400">{fmtMoney(r.office[c], c)}</div>
+                    {CURRENCIES.filter(c => r.retail[c] > 0).map(c => (
+                      <div key={c} className="text-amber-400">{fmtMoney(r.retail[c], c)}</div>
                     ))}
-                    {!CURRENCIES.some(c => r.office[c] > 0) && <span className="text-slate-600">—</span>}
+                    {!CURRENCIES.some(c => r.retail[c] > 0) && <span className="text-slate-600">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap font-medium">
                     {CURRENCIES.filter(c => r.net[c] !== 0).map(c => (
@@ -875,19 +1000,19 @@ export default function DriverDuesPage() {
           </div>
           <div className="flex items-center gap-5 flex-wrap">
             <div className="flex items-center gap-4 flex-wrap">
-              {CURRENCIES.filter(c => visibleTotals.collected[c] || visibleTotals.office[c]).map(c => (
+              {CURRENCIES.filter(c => visibleTotals.collected[c] || visibleTotals.retail[c]).map(c => (
                 <div key={c} className="text-xs text-slate-300">
                   <span className="text-slate-500 uppercase tracking-wider font-semibold mr-1.5">{c}</span>
-                  <span className="text-green-400">Collected {fmtMoney(visibleTotals.collected[c], c)}</span>
-                  {visibleTotals.office[c] > 0 && (<>
+                  <span className="text-green-400">Collected from customer {fmtMoney(visibleTotals.collected[c], c)}</span>
+                  {visibleTotals.retail[c] > 0 && (<>
                     <span className="text-slate-600 mx-1">·</span>
-                    <span className="text-sky-400">To office {fmtMoney(visibleTotals.office[c], c)}</span>
+                    <span className="text-amber-400">Petty cash used {fmtMoney(visibleTotals.retail[c], c)}</span>
                   </>)}
                   <span className="text-slate-600 mx-1">·</span>
-                  <span className="font-semibold text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.75)]">Total dues {fmtMoney(visibleTotals.net[c], c)}</span>
+                  <span className="font-semibold text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.75)]">Balance pending {fmtMoney(visibleTotals.net[c], c)}</span>
                 </div>
               ))}
-              {!CURRENCIES.some(c => visibleTotals.collected[c] || visibleTotals.office[c]) && (
+              {!CURRENCIES.some(c => visibleTotals.collected[c] || visibleTotals.retail[c]) && (
                 <span className="text-sm text-slate-500">No totals</span>
               )}
             </div>
@@ -913,22 +1038,47 @@ export default function DriverDuesPage() {
       </>)}
 
       {/* ── History tab ────────────────────────────────────── */}
-      {tab === 'history' && (
+      {tab === 'history' && (<>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <span className="text-xs text-slate-500">
+            {visibleSettlements.length} settlement{visibleSettlements.length === 1 ? '' : 's'}{hasActiveFilters ? ' (filtered)' : ''}
+            {isSuperAdmin && selectedSettlements.size > 0 && <span className="text-slate-400"> · {selectedSettlements.size} selected</span>}
+          </span>
+          <div className="flex items-center gap-2">
+            {isSuperAdmin && selectedSettlements.size > 0 && (
+              <button className="btn-ghost text-red-400 hover:text-red-300" disabled={deletingSettlements}
+                onClick={() => deleteSettlements([...selectedSettlements])}>
+                <Trash2 className="w-4 h-4" /> {deletingSettlements ? 'Deleting…' : `Delete selected (${selectedSettlements.size})`}
+              </button>
+            )}
+            <button className="btn-ghost text-slate-300" onClick={exportHistoryPDF} disabled={visibleSettlements.length === 0}>
+              <FileDown className="w-4 h-4" /> Export PDF
+            </button>
+          </div>
+        </div>
         <div className="card overflow-x-auto">
           <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="border-b border-surface-border">
+                {isSuperAdmin && (
+                  <th className="px-3 py-3 w-8">
+                    <input type="checkbox"
+                      checked={selectedSettlements.size > 0 && selectedSettlements.size === visibleSettlements.length}
+                      onChange={toggleAllSettlements} title="Select all" />
+                  </th>
+                )}
                 <th className="px-3 py-3 w-8" />
                 {['Date', 'Driver', 'Orders', 'Total collected from customers', 'Total received from driver', 'Difference', 'Recorded'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
+                {isSuperAdmin && <th className="px-4 py-3" />}
               </tr>
             </thead>
             <tbody>
               {historyLoading ? (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+                <tr><td colSpan={historyColSpan} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
               ) : visibleSettlements.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No settlements recorded yet</td></tr>
+                <tr><td colSpan={historyColSpan} className="px-4 py-10 text-center text-slate-500">No settlements recorded yet</td></tr>
               ) : visibleSettlements.map(s => {
                 const isOpen  = expanded.has(s.id)
                 const totals  = s.driver_settlement_currency_totals ?? []
@@ -956,7 +1106,12 @@ export default function DriverDuesPage() {
                 return (
                   <React.Fragment key={s.id}>
                     <tr onClick={() => toggleExpand(s.id)}
-                      className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors cursor-pointer">
+                      className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors cursor-pointer ${selectedSettlements.has(s.id) ? 'bg-red-500/5' : ''}`}>
+                      {isSuperAdmin && (
+                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedSettlements.has(s.id)} onChange={() => toggleSettlement(s.id)} />
+                        </td>
+                      )}
                       <td className="px-3 py-3 text-slate-500">
                         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </td>
@@ -986,11 +1141,19 @@ export default function DriverDuesPage() {
                       <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
                         {s.received_at ? new Date(s.received_at).toLocaleString() : '—'}
                       </td>
+                      {isSuperAdmin && (
+                        <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => deleteSettlements([s.id])} disabled={deletingSettlements}
+                            title="Delete this settlement (super admin)"
+                            className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-40">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                     {isOpen && (
                       <tr className="bg-surface/40">
-                        <td />
-                        <td colSpan={7} className="px-4 py-3">
+                        <td colSpan={historyColSpan} className="px-4 py-3">
                           <div className="rounded-lg border border-surface-border overflow-hidden">
                             <table className="w-full text-xs">
                               <thead>
@@ -1039,7 +1202,7 @@ export default function DriverDuesPage() {
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
 
       {/* "No dues to collect" info — shown when Collect is clicked on an order whose
           driver dues are zero (nothing was collected by the driver). */}
@@ -1175,13 +1338,16 @@ export default function DriverDuesPage() {
 
             {hasDues && (
             <div className="rounded-lg border border-surface-border divide-y divide-surface-border/60">
-              {CURRENCIES.filter(c => collectTotals.collected[c]).map(c => (
+              {CURRENCIES.filter(c => collectTotals.collected[c] || collectTotals.retail[c]).map(c => (
                 <div key={c} className="px-3 py-2.5 space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-slate-500 uppercase tracking-wider text-xs font-semibold">{c}</span>
                     <div className="flex items-center gap-4">
                       <span className="text-green-400 text-xs">Collected {fmtMoney(collectTotals.collected[c], c)}</span>
-                      <span className="text-slate-100 font-semibold">Total dues {fmtMoney(collectTotals.net[c], c)}</span>
+                      {collectTotals.retail[c] > 0 && (
+                        <span className="text-amber-400 text-xs">Petty cash {fmtMoney(collectTotals.retail[c], c)}</span>
+                      )}
+                      <span className="text-slate-100 font-semibold">Balance pending {fmtMoney(collectTotals.net[c], c)}</span>
                     </div>
                   </div>
                   {collectDrivers.length === 1 ? (

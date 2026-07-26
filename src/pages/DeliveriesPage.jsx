@@ -413,13 +413,18 @@ const TOTALS_BREAKDOWN_ROWS = [
   { key: 'localRetail',    label: 'Local retail items' },
   { key: 'externalRetail', label: 'External retail invoices' },
   { key: 'fees',           label: 'Delivery fees' },
-  { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true },
   { key: 'vat',            label: 'VAT' },
+  { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true },
   { key: 'total',          label: 'Total All',                tone: 'strong',  strong: true },
   { key: 'collected',      label: 'Collected from customers', tone: 'emerald' },
   { key: 'balance',        label: 'Balance',                  tone: 'amber' },
   { key: 'fromDriver',     label: 'To collect from driver',   tone: 'teal',    strong: true },
-  { key: 'pending',        label: 'Order Pending',            tone: 'amber' },
+  // Petty cash spent on external retail goods — equals the External retail
+  // invoices total; subtracted when deriving NET AMOUNT (see totalsBreakdown).
+  { key: 'usedPettyCash',  label: 'Used petty cash',          tone: 'rose',    neg: true },
+  // NET AMOUNT = Total All − collected from customer − used petty cash. The
+  // headline figure the user should read (emphasised).
+  { key: 'pending',        label: 'NET AMOUNT',               tone: 'teal',    strong: true, big: true },
 ]
 
 /* Sum payments grouped by currency → { USD, LBP, EUR }. */
@@ -803,7 +808,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // a plain select would drop customers from the picker with no visible error.
     const [{ data: custs }, { data: allc }, { data: prods }, { data: types }, { data: provs }, { data: bt }, { data: cc }] = await Promise.all([
       fetchAllRows(() => supabase.from('contacts')
-        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type,partner_percentage')
+        .select('id,first_name,last_name,mobile,whatsapp_number,email,city,address,contact_type,contact_types,entity_type,company_name,code,account_number,credit_debit_allowed,shop_type,partner_percentage,is_active')
         // Membership is by role tags, so a multi-role contact (e.g. Customer +
         // Partner) shows up here regardless of which type is its primary.
         .overlaps('contact_types', ['customer', 'partner', 'supplier'])
@@ -824,7 +829,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       lookupQ('business_types'),
       lookupQ('contact_categories'),
     ])
-    setCustomers(custs ?? [])
+    // Deactivated contacts are hidden from the order pickers (customer, recipient,
+    // package provider, retail shop). An order being edited still resolves its own
+    // customer via a fallback to o.customer, so a since-deactivated customer stays
+    // visible on that order. Treat null/undefined is_active as active.
+    setCustomers((custs ?? []).filter(c => c.is_active !== false))
     setAllContacts(allc ?? [])
     // Account numbers + credit settlements, needed to enforce each account's
     // limit and expiry when an order is closed. Paged for the same reason the
@@ -1089,14 +1098,24 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     for (const o of filtered) {
       // 2nd-party view: only this contact's packages / external invoices count.
       for (const r of orderAmountBreakdown(o, partyContactId)) {
-        const b = (acc[r.cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, total: 0, collected: 0, balance: 0, fromDriver: 0, pending: 0 })
-        for (const row of TOTALS_BREAKDOWN_ROWS) b[row.key] += (r[row.key] || 0)
+        const b = (acc[r.cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, usedPettyCash: 0, total: 0, collected: 0, balance: 0, fromDriver: 0, pending: 0 })
+        // Total All keeps the full charge (packages + services + local/external
+        // retail + fees + VAT − discount). Used petty cash mirrors external retail
+        // invoices and only comes off the NET AMOUNT below.
+        for (const row of TOTALS_BREAKDOWN_ROWS) {
+          if (row.key === 'usedPettyCash') b.usedPettyCash += (r.externalRetail || 0)
+          else                             b[row.key] += (r[row.key] || 0)
+        }
       }
     }
     const order = [...CURRENCIES, ...Object.keys(acc).filter(c => !CURRENCIES.includes(c))]
     return order.filter(c => acc[c]).map(c => {
       const out = { cur: c }
       for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key])
+      // NET AMOUNT = Total All − collected from customer − used petty cash, where
+      // used petty cash is a negative line — so subtracting it adds it back:
+      //   NET = Total All − collected + usedPettyCash(magnitude)
+      out.pending = round2((acc[c].total || 0) - (acc[c].collected || 0) + (acc[c].usedPettyCash || 0))
       return out
     })
   })()
@@ -1648,6 +1667,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       notes:             payForm.notes?.trim() || null,
       collected_by:      currentUser?.user_id || null,
       collected_by_name: currentUserName,
+      collection_group:  'Call center',   // recorded by an office user
     }])
     if (pe) { setPayError(pe.message); setPaySaving(false); return }
 
@@ -1948,6 +1968,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             ...row,
             collected_by:      currentUser?.user_id || null,
             collected_by_name: currentUserName,
+            collection_group:  'Call center',   // recorded by an office user
           }])
       if (pe) { setError(pe.message); setSaving(false); return }
     }
@@ -2879,7 +2900,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   <tbody>
                     {breakdownRows.map(row => (
                       <tr key={row.key} className={row.strong ? 'border-t border-surface-border/60' : ''}>
-                        <td className={`py-1 pr-4 ${row.strong ? 'text-slate-200 font-medium pt-1.5' : 'text-slate-500'}`}>{row.label}</td>
+                        <td className={`py-1 pr-4 ${row.big ? 'text-[15px] font-bold text-slate-100 pt-2' : row.strong ? 'text-slate-200 font-medium pt-1.5' : 'text-slate-500'}`}>{row.label}</td>
                         {totalsBreakdown.map(r => {
                           const v = r[row.key]
                           const cls =
@@ -2890,7 +2911,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             row.tone === 'amber'   ? (v > 0 ? 'text-amber-300' : 'text-slate-500') :
                                                      'text-slate-300'
                           return (
-                            <td key={r.cur} className={`text-right py-1 pl-4 ${row.strong ? 'pt-1.5' : ''} ${cls}`}>
+                            <td key={r.cur} className={`text-right py-1 pl-4 ${row.big ? 'text-[15px] font-bold pt-2' : row.strong ? 'pt-1.5' : ''} ${cls}`}>
                               {row.neg && v ? '−' : ''}{fmtAmount(Math.abs(v), r.cur)}
                             </td>
                           )
@@ -2917,34 +2938,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             {pendingsSummary.count === 1 ? 'order' : 'orders'}
           </span>
           <div className="flex items-center gap-3 flex-wrap ml-auto">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400">Total <span className="text-slate-500 normal-case">(fees + local retail)</span></span>
-            {CURRENCIES.map(c => {
-              const row = pendingsSummary.rows.find(r => r.cur === c)
-              const total = row ? row.driverCollect : 0   // delivery fees + local retail items
-              if (total <= 0) return null            // only show currencies with an amount
-              return (
-                <div key={c} className="text-sm whitespace-nowrap rounded-lg bg-white/5 border border-white/10 px-2.5 py-1">
-                  <span className="text-slate-400 text-[11px] mr-1">{c}</span>
-                  <span className="font-semibold text-blue-200">{total.toFixed(c === 'LBP' ? 0 : 2)}</span>
-                </div>
-              )
-            })}
-            {pendingsSummary.rows.every(r => r.driverCollect <= 0) && (
-              <span className="text-sm text-slate-500">—</span>
-            )}
-            <span className="text-[11px] uppercase tracking-wider text-slate-400 ml-2">Payments <span className="text-slate-500 normal-case">(collected)</span></span>
-            {CURRENCIES.map(c => {
-              const row = pendingsSummary.rows.find(r => r.cur === c)
-              const paid = row ? row.paid : 0   // total collected from customers
-              if (paid <= 0) return null         // only show currencies with an amount
-              return (
-                <div key={c} className="text-sm whitespace-nowrap rounded-lg bg-white/5 border border-white/10 px-2.5 py-1">
-                  <span className="text-slate-400 text-[11px] mr-1">{c}</span>
-                  <span className="font-semibold text-emerald-300">{paid.toFixed(c === 'LBP' ? 0 : 2)}</span>
-                </div>
-              )
-            })}
-            {pendingsSummary.rows.every(r => r.paid <= 0) && (
+            <span className="text-[11px] uppercase tracking-wider text-[#1dffd5]/80 font-semibold">Net amount</span>
+            {totalsBreakdown.filter(r => r.pending).map(r => (
+              <div key={r.cur} className="text-sm whitespace-nowrap rounded-lg bg-[#1dffd5]/10 border border-[#1dffd5]/30 px-3 py-1">
+                <span className="text-[#1dffd5]/70 text-[11px] mr-1.5">{r.cur}</span>
+                <span className="font-bold text-[15px] text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.6)]">
+                  {fmtAmount(r.pending, r.cur)}
+                </span>
+              </div>
+            ))}
+            {totalsBreakdown.every(r => !r.pending) && (
               <span className="text-sm text-slate-500">—</span>
             )}
           </div>

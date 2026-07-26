@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, Trash2,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -72,6 +72,7 @@ export default function ContactsPage({ type }) {
   const { COMPANY_ID } = useApp()
   const { currentUser, hasRole } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
+  const isSuperAdmin = hasRole('super_admin')   // only the super admin may hard-delete a contact
   const navigate = useNavigate()
 
   const [contacts,  setContacts]  = useState([])
@@ -176,6 +177,8 @@ export default function ContactsPage({ type }) {
 
   /* ── filter ──────────────────────────────────────────────── */
 
+  // Only admins may view inactive/all; normal users always see active only.
+  const effFilter = isAdmin ? filter : 'active'
   const visible = contacts.filter(c => {
     const matchSearch =
       `${c.first_name} ${c.last_name}`.toLowerCase().includes(search.toLowerCase()) ||
@@ -183,8 +186,8 @@ export default function ContactsPage({ type }) {
       c.mobile?.includes(search) ||
       c.email?.toLowerCase().includes(search.toLowerCase())
     const matchFilter =
-      filter === 'all'      ? true :
-      filter === 'active'   ? c.is_active :
+      effFilter === 'all'      ? true :
+      effFilter === 'active'   ? c.is_active :
       !c.is_active
     return matchSearch && matchFilter
   })
@@ -392,6 +395,25 @@ export default function ContactsPage({ type }) {
     setToggling(null)
   }
 
+  /* Super-admin hard delete — only offered for already-deactivated contacts. If the
+     contact is still referenced (orders, packages, invoices, accounts), the DB
+     rejects the delete and the error is surfaced rather than silently failing. */
+  async function deleteContact(c) {
+    if (!isSuperAdmin || c.is_active) return
+    const name = c.company_name?.trim() || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'this contact'
+    if (!window.confirm(`Permanently delete “${name}”?\n\nThis cannot be undone. It will fail if the contact is still linked to any orders or records.`)) return
+    setToggling(c.id)
+    const { error: err } = await supabase.from('contacts').delete().eq('id', c.id)
+    setToggling(null)
+    if (err) {
+      window.alert(/foreign key|violates|referenced/i.test(err.message)
+        ? `Can’t delete “${name}” — it’s still linked to orders or other records.`
+        : `Could not delete “${name}”: ${err.message}`)
+      return
+    }
+    fetchContacts()
+  }
+
   const { Icon, title, color, bg } = cfg
 
   // Entity type (Individual / Company) of the open form — used by the save button.
@@ -466,14 +488,17 @@ export default function ContactsPage({ type }) {
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
-        <div className="flex items-center gap-1">
-          {['active', 'inactive', 'all'].map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
-                filter === f ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
-              }`}>{f}</button>
-          ))}
-        </div>
+        {/* Active/inactive/all toggle — admins only; normal users see active only. */}
+        {isAdmin && (
+          <div className="flex items-center gap-1">
+            {['active', 'inactive', 'all'].map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
+                  filter === f ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
+                }`}>{f}</button>
+            ))}
+          </div>
+        )}
 
         <button className="btn-primary ml-auto" onClick={openAdd}>
           <Plus className="w-4 h-4" /> Add {title.slice(0, -1)}
@@ -571,6 +596,13 @@ export default function ContactsPage({ type }) {
                       className={`btn-ghost p-1.5 ${c.is_active ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-500 hover:text-green-400 hover:bg-green-500/10'}`}>
                       <Power className="w-4 h-4" />
                     </button>
+                    {isSuperAdmin && !c.is_active && (
+                      <button onClick={() => deleteContact(c)} disabled={toggling === c.id}
+                        title="Delete permanently (super admin)"
+                        className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-40">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

@@ -59,7 +59,9 @@ export default function PartnerDuesPage() {
 
   const fetchPayouts = useCallback(async () => {
     setPayLoading(true); setLoadError('')
-    let q = supabase.from('partner_payouts').select('*').order('paid_at', { ascending: false })
+    let q = supabase.from('partner_payouts')
+      .select('*, partner:contacts!partner_id(id, code, company_name, first_name, last_name)')
+      .order('paid_at', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data, error } = await q
     if (error) setLoadError(error.message)
