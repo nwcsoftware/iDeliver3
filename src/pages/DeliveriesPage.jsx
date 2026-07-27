@@ -408,23 +408,24 @@ function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 // orders. `tone` picks a colour; `strong` adds a divider/emphasis; `neg` shows a
 // leading minus (discount is subtracted from the total).
 const TOTALS_BREAKDOWN_ROWS = [
-  { key: 'packages',       label: 'Delivery Packages' },
-  { key: 'services',       label: 'Order Services' },
-  { key: 'localRetail',    label: 'Local retail items' },
-  { key: 'externalRetail', label: 'External retail invoices' },
+  // Components that sum to the Gross amount (in display order). Petty Cash
+  // Reimbursement is the negative counterpart of the local-market invoices.
+  { key: 'packages',       label: 'Delivery packages' },
+  { key: 'services',       label: 'Order services' },
+  { key: 'externalRetail', label: 'Local market invoices' },
+  { key: 'usedPettyCash',  label: 'Petty Cash Reimbursement', tone: 'rose', neg: true, labelCls: 'text-rose-300/90' },
+  { key: 'localRetail',    label: '3asari3 retails' },
   { key: 'fees',           label: 'Delivery fees' },
-  // VAT label uses the order-number colour from the list (brand).
   { key: 'vat',            label: 'VAT',                      labelCls: 'text-brand-400' },
-  // Discount label matches its (rose) amount colour.
+  { key: 'total',          label: 'Gross amount',             tone: 'strong',  strong: true },
+  // Discount sits under the Gross amount as a deduction.
   { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true, labelCls: 'text-rose-300/90' },
-  { key: 'total',          label: 'Total All',                tone: 'strong',  strong: true },
-  { key: 'collected',      label: 'Collected from customers', tone: 'emerald' },
+  { key: 'ordersNet',      label: 'Orders net amount',        tone: 'strong',  strong: true },
+  // Collected split by the payment's collection_group.
+  { key: 'collectedByDriver', label: 'Collected from customer by driver',        tone: 'emerald' },
+  { key: 'collectedByOffice', label: 'Collected from customer at the call center', tone: 'sky' },
   { key: 'balance',        label: 'Balance',                  tone: 'amber' },
-  // Petty cash spent on external retail goods — equals the External retail
-  // invoices total; subtracted when deriving NET AMOUNT (see totalsBreakdown).
-  // Label matches its (rose) amount colour.
-  { key: 'usedPettyCash',  label: 'Used petty cash',          tone: 'rose',    neg: true, labelCls: 'text-rose-300/90' },
-  // NET AMOUNT = Total All (components − used petty cash). The headline figure.
+  // NET AMOUNT to be collected from driver(s) = cash the drivers collected.
   { key: 'pending',        label: 'NET AMOUNT TO BE COLLECTED FROM DRIVER(S)', tone: 'teal', strong: true, big: true },
 ]
 
@@ -1099,29 +1100,40 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      floating bar. Same categories as the per-order amounts popup. */
   const totalsBreakdown = (() => {
     const acc = {}   // cur -> category sums
+    const ensure = cur => (acc[cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, usedPettyCash: 0, total: 0, balance: 0, collectedByDriver: 0, collectedByOffice: 0, pending: 0 })
     for (const o of filtered) {
       // 2nd-party view: only this contact's packages / external invoices count.
       for (const r of orderAmountBreakdown(o, partyContactId)) {
-        const b = (acc[r.cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, usedPettyCash: 0, total: 0, collected: 0, balance: 0, fromDriver: 0, pending: 0 })
-        // Total All keeps the full charge (packages + services + local/external
-        // retail + fees + VAT − discount). Used petty cash mirrors external retail
-        // invoices and only comes off the NET AMOUNT below.
+        const b = ensure(r.cur)
+        // Used petty cash mirrors external retail invoices; the split-collected
+        // rows are summed from payment_collections below.
         for (const row of TOTALS_BREAKDOWN_ROWS) {
-          if (row.key === 'usedPettyCash') b.usedPettyCash += (r.externalRetail || 0)
-          else                             b[row.key] += (r[row.key] || 0)
+          if (row.key === 'usedPettyCash')                                              b.usedPettyCash += (r.externalRetail || 0)
+          else if (row.key === 'collectedByDriver' || row.key === 'collectedByOffice')  { /* below */ }
+          else                                                                          b[row.key] += (r[row.key] || 0)
         }
+      }
+      // Split the order's collected cash by the payment's collection_group.
+      for (const pc of (o.payment_collections ?? [])) {
+        const cur = CURRENCIES.includes(pc.currency) ? pc.currency : (pc.currency || 'USD')
+        const b = ensure(cur)
+        const amt = round2(pc.amount)
+        const grp = String(pc.collection_group || '').trim().toLowerCase()
+        if (grp === 'driver')           b.collectedByDriver += amt
+        else if (grp === 'call center') b.collectedByOffice += amt
       }
     }
     const order = [...CURRENCIES, ...Object.keys(acc).filter(c => !CURRENCIES.includes(c))]
     return order.filter(c => acc[c]).map(c => {
       const out = { cur: c }
-      for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key])
-      // External retail goods are bought with petty cash, so used petty cash nets
-      // them out. Both Total All and NET AMOUNT are:
-      //   Packages + Services + External + Local + Fees + VAT − Discount − Used petty cash
-      const netCharge = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0))
-      out.total   = netCharge
-      out.pending = netCharge
+      for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key] || 0)
+      // Gross amount = total of the component rows ABOVE it — i.e. everything
+      // except the discount, which is shown as a separate deduction underneath.
+      // (orderAmountBreakdown's total already subtracts discount, so add it back.)
+      out.total   = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0) + (acc[c].discount || 0))
+      // Orders net amount = Gross amount − Discount.
+      out.ordersNet = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0))
+      out.pending = round2(acc[c].collectedByDriver || 0)
       return out
     })
   })()
@@ -2913,6 +2925,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           const cls =
                             row.tone === 'strong'  ? 'text-slate-100 font-medium' :
                             row.tone === 'emerald' ? 'text-emerald-300/90' :
+                            row.tone === 'sky'     ? 'text-sky-300/90' :
                             row.tone === 'rose'    ? 'text-rose-300/90' :
                             row.tone === 'teal'    ? 'text-[#1dffd5] font-semibold [text-shadow:0_0_6px_rgba(29,255,213,0.6)]' :
                             row.tone === 'amber'   ? (v > 0 ? 'text-amber-300' : 'text-slate-500') :
@@ -3472,10 +3485,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <tbody>
                       {retailInvoices.length === 0 ? (
                         <tr><td colSpan={partyContactId ? 7 : 9} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
-                      ) : retailInvoices.map((ri, idx) => (
+                      ) : retailInvoices.map((ri, idx) => {
+                        // A saved invoice (has a DB id) is locked: read-only, can't be
+                        // deleted. Only newly-added rows (with a temp _key) stay editable
+                        // until the order is saved. New invoices can always be added.
+                        const riLocked = !!ri._id
+                        return (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           {!partyContactId && (
                           <td className="px-1.5 py-2 align-top">
+                            {riLocked ? (
+                              <div className="text-xs text-slate-200 py-1.5">{ri.shop_name || '—'}</div>
+                            ) : (
                             <ContactCombobox
                               value={ri.contact_id || ''}
                               text={ri.shop_name}
@@ -3505,6 +3526,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                                 if (prevName && prevName.toLowerCase() !== v.toLowerCase()) dropPickupTagIfUnused(prevName, next)
                               }}
                               onAddNew={(name, onCreated) => openNewContact(name, 'supplier', onCreated)} />
+                            )}
                             {(ri.shop_type || ri.contact_code) && (
                               <p className="text-[10px] text-slate-500 mt-0.5 flex gap-2">
                                 {ri.contact_code && <span className="font-mono text-slate-400">{ri.contact_code}</span>}
@@ -3514,29 +3536,33 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           </td>
                           )}
                           <td className="px-1.5 py-2 align-top">
-                            <input className="input py-1.5 text-xs" value={ri.invoice_reference}
+                            <input className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={ri.invoice_reference}
+                              disabled={riLocked}
                               onChange={e => setRetailInvoice(idx, 'invoice_reference', e.target.value)} placeholder="Ref / #" />
                           </td>
                           <td className="px-1.5 py-2 align-top">
-                            <input type="date" className="input py-1.5 text-xs" value={ri.invoice_date}
+                            <input type="date" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={ri.invoice_date}
+                              disabled={riLocked}
                               onChange={e => setRetailInvoice(idx, 'invoice_date', e.target.value)} />
                           </td>
                           <td className="px-1.5 py-2 align-top">
-                            <input type="number" min="0" step="0.01" className="input py-1.5 px-2 text-xs min-w-[110px]" value={ri.invoice_value}
+                            <input type="number" min="0" step="0.01" className="input py-1.5 px-2 text-xs min-w-[110px] disabled:opacity-60 disabled:cursor-not-allowed" value={ri.invoice_value}
+                              disabled={riLocked}
                               onChange={e => setRetailInvoice(idx, 'invoice_value', e.target.value)} placeholder="0.00" />
                           </td>
                           <td className="px-1.5 py-2 align-top">
-                            <select className="input py-1.5 text-xs" value={ri.currency}
+                            <select className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={ri.currency}
+                              disabled={riLocked}
                               onChange={e => setRetailInvoice(idx, 'currency', e.target.value)}>
                               {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
                           {!partyContactId && (
                           <td className="px-1.5 py-2 align-top">
-                            <button type="button" onClick={() => setRetailInvoice(idx, 'is_procurement', !ri.is_procurement)}
+                            <button type="button" disabled={riLocked} onClick={() => setRetailInvoice(idx, 'is_procurement', !ri.is_procurement)}
                               aria-pressed={!!ri.is_procurement}
                               title={ri.is_procurement ? 'We purchased these goods — earns this shop’s commission at month-end' : 'Shop-sent — no commission (delivery fee only)'}
-                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none
+                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none disabled:opacity-60 disabled:cursor-not-allowed
                                 ${ri.is_procurement
                                   ? 'bg-brand-500/15 border-brand-500/40 text-brand-300'
                                   : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
@@ -3546,12 +3572,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           </td>
                           )}
                           <td className="px-1.5 py-2 align-top">
-                            <button type="button" onClick={() => setRetailInvoice(idx, 'paid', !ri.paid)}
+                            <button type="button" disabled={riLocked} onClick={() => setRetailInvoice(idx, 'paid', !ri.paid)}
                               aria-pressed={!!ri.paid}
                               title={ri.paid
                                 ? 'Calculation excluded — settled directly by the customer with the shop'
                                 : 'Using petty cash — counted in the order total'}
-                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none
+                              className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none disabled:opacity-60 disabled:cursor-not-allowed
                                 ${ri.paid
                                   ? 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'
                                   : 'bg-brand-500/15 border-brand-500/40 text-brand-300'}`}>
@@ -3560,20 +3586,25 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             </button>
                           </td>
                           <td className="px-1.5 py-2 align-top">
-                            <select className="input py-1.5 text-xs" value={ri.payment_type}
-                              disabled={!ri.paid}
+                            <select className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={ri.payment_type}
+                              disabled={!ri.paid || riLocked}
                               onChange={e => setRetailInvoice(idx, 'payment_type', e.target.value)}>
                               <option value="">—</option>
                               {PAYMENT_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
                             </select>
                           </td>
                           <td className="px-1.5 py-2 align-top">
-                            <button onClick={() => removeRetailInvoice(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {riLocked ? (
+                              <span title="Saved — locked" className="text-slate-600 inline-flex p-0.5"><Lock className="w-3.5 h-3.5" /></span>
+                            ) : (
+                              <button onClick={() => removeRetailInvoice(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
