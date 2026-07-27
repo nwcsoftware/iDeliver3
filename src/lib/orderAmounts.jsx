@@ -28,8 +28,9 @@ export function orderTotalsByCurrency(o) {
   // Packages already paid directly to the provider don't count toward the order total.
   for (const p of (o.delivery_packages ?? []))     if (!p.paid) add(p.currency || o.currency || 'USD', Number(p.package_price) || 0)
   for (const s of (o.order_services ?? []))         add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
-  // A retail invoice already paid directly to the shop is excluded from the order total.
-  for (const r of (o.retail_goods_invoices ?? []))  if (!r.paid) add(r.currency || 'USD', Number(r.invoice_value) || 0)
+  // A retail invoice flagged exclude_calculation (paid directly by the customer to
+  // the shop) is excluded from the order total.
+  for (const r of (o.retail_goods_invoices ?? []))  if (!r.exclude_calculation) add(r.currency || 'USD', Number(r.invoice_value) || 0)
   const discountCur = o.discount_currency || o.currency
   add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
   add(discountCur, -Math.abs(Number(o.discount_amount) || 0))
@@ -180,8 +181,8 @@ export function orderAmountBreakdown(o, filterContactId = null) {
     if (filterContactId && r.contact_id !== filterContactId) continue
     const amt = Number(r.invoice_value) || 0
     const b = bucket(r.currency || 'USD')
-    if (!r.paid) b.externalRetail += amt
-    b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.paid })
+    if (!r.exclude_calculation) b.externalRetail += amt
+    b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.exclude_calculation })
   }
   if (!filterContactId) {
     if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)

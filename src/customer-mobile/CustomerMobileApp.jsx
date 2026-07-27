@@ -1923,7 +1923,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
         const [invoiceResult, paymentResult] = await Promise.all([
           supabase
             .from('retail_goods_invoices')
-            .select('id, order_id, shop_name, invoice_reference, invoice_date, invoice_value, currency, paid')
+            .select('id, order_id, shop_name, invoice_reference, invoice_date, invoice_value, currency, exclude_calculation')
             .in('order_id', ids),
           supabase
             .from('payment_collections')
@@ -2129,8 +2129,8 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
                     <p className="text-sm font-bold text-slate-950">{invoice.shop_name || t('invoice')}</p>
                     <p className="mt-1 text-xs text-slate-500">{invoice.invoice_reference || t('noReference')} / {invoice.invoice_date || t('noDate')}</p>
                   </div>
-                  <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.paid ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')}>
-                    {invoice.paid ? 'Paid' : t('unpaid')}
+                  <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.exclude_calculation ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')}>
+                    {invoice.exclude_calculation ? 'Paid' : t('unpaid')}
                   </span>
                 </div>
                 <p className="mt-3 text-sm font-semibold">{formatMoney(invoice.invoice_value, invoice.currency)}</p>

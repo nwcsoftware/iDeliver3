@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -16,6 +16,7 @@ const mainNav = [
   { to: '/deliveries',         icon: Package,         label: 'Orders'        },
   { to: '/closed-orders',      icon: PackageCheck,    label: 'Closed Orders' },
   { to: '/driver-dues',        icon: HandCoins,       label: 'Driver Settlements' },
+  { to: '/daily-collection',   icon: Banknote,        label: 'Daily Collection', superOnly: true },
   { to: '/credit-customers',   icon: CreditCard,      label: 'Credit Customers' },
   { to: '/partner-dues',       icon: Handshake,       label: 'Partner Dues' },
   { to: '/cashier-box',        icon: Wallet,          label: 'Cashier Box' },
@@ -181,8 +182,8 @@ export default function Sidebar() {
             {!collapsed && <span>Menu</span>}
           </button>
 
-          {/* Main nav items */}
-          {mainNav.map(({ to, icon, label }) => (
+          {/* Main nav items — super-admin-only entries are hidden for others. */}
+          {mainNav.filter(item => !item.superOnly || isSuperAdmin).map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed}
               onMouseEnter={collapsed ? (e) => showTip(e, label) : undefined}
               onMouseLeave={collapsed ? hideTip : undefined}

@@ -101,7 +101,7 @@ export default function RetailInvoicesPage() {
     const matchType  = !filters.shop_type || inv.shop_type === filters.shop_type
     const matchFrom  = !filters.date_from || (date && date >= filters.date_from)
     const matchTo    = !filters.date_to   || (date && date <= filters.date_to)
-    const matchPaid  = filters.paid === 'all' || (filters.paid === 'paid' ? inv.paid === true : inv.paid !== true)
+    const matchPaid  = filters.paid === 'all' || (filters.paid === 'paid' ? inv.exclude_calculation === true : inv.exclude_calculation !== true)
     const matchComm  = filters.commission === 'all'
       || (filters.commission === 'collected'   ? inv.commission_collected === true
       : /* outstanding */                          isCollectable(inv))
@@ -116,8 +116,8 @@ export default function RetailInvoicesPage() {
     const val = Number(inv.invoice_value) || 0
     const b = acc[cur] || (acc[cur] = { total: 0, paid: 0, balance: 0 })
     b.total += val
-    if (inv.paid) b.paid += val
-    else          b.balance += val
+    if (inv.exclude_calculation) b.paid += val
+    else                         b.balance += val
     return acc
   }, {})
 
@@ -250,7 +250,7 @@ export default function RetailInvoicesPage() {
         inv.invoice_date ?? '—',
         (Number(inv.invoice_value) || 0).toFixed((inv.currency || 'USD') === 'LBP' ? 0 : 2),
         inv.currency ?? 'USD',
-        inv.paid ? 'Paid' : 'Unpaid',
+        inv.exclude_calculation ? 'Paid' : 'Unpaid',
       ]),
       styles: { fontSize: 8, cellPadding: 1.5 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255 },
@@ -412,10 +412,10 @@ export default function RetailInvoicesPage() {
                 <td className="px-4 py-3 text-slate-100 text-xs font-medium">{fmtMoney(inv.invoice_value, inv.currency || 'USD')}</td>
                 <td className="px-4 py-3 text-slate-400 text-xs">{inv.currency ?? 'USD'}</td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium border ${inv.paid
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium border ${inv.exclude_calculation
                     ? 'bg-green-500/10 text-green-400 border-green-500/20'
                     : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>
-                    {inv.paid ? 'Paid' : 'Unpaid'}
+                    {inv.exclude_calculation ? 'Paid' : 'Unpaid'}
                   </span>
                 </td>
                 {/* Commission — only meaningful on "we bought" invoices with an amount */}

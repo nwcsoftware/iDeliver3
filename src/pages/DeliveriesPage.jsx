@@ -1465,7 +1465,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       invoice_date:      ri.invoice_date ? ri.invoice_date.slice(0, 10) : '',
       invoice_value:     ri.invoice_value ?? '',
       currency:          ri.currency ?? 'USD',
-      paid:              !!ri.paid,
+      // DB column renamed to exclude_calculation; the form keeps `paid` in memory.
+      paid:              !!ri.exclude_calculation,
       payment_type:      ri.payment_type ?? '',
       is_procurement:    !!ri.is_procurement,
     })))
@@ -1932,7 +1933,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           invoice_date:      r.invoice_date || new Date().toISOString().slice(0, 10),
           invoice_value:     value,
           currency:          r.currency || 'USD',
-          paid:              !!r.paid,
+          exclude_calculation: !!r.paid,
           payment_type:      r.payment_type || null,
           is_procurement:    isProc,
           commission_rate:   hasRate ? rate : null,
