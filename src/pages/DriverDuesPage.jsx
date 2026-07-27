@@ -172,13 +172,17 @@ export default function DriverDuesPage() {
     if (ids.length === 0) { setSettledIds(new Set()); setDataLoading(false); return }
     setDataLoading(true)
 
-    const CHUNK = 200
+    // Chunk the id list (a single .in(...) with thousands of ids exceeds the URL
+    // limit) but fire the chunks in PARALLEL — sequential awaits made the page
+    // wait on ~14 back-to-back round-trips.
+    const CHUNK = 300
+    const slices = []
+    for (let i = 0; i < ids.length; i += CHUNK) slices.push(ids.slice(i, i + CHUNK))
+    const results = await Promise.all(
+      slices.map(slice => supabase.from('driver_settlement_orders').select('order_id').in('order_id', slice)),
+    )
     const settledSet = new Set()
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const slice = ids.slice(i, i + CHUNK)
-      const { data } = await supabase.from('driver_settlement_orders').select('order_id').in('order_id', slice)
-      for (const r of data ?? []) settledSet.add(r.order_id)
-    }
+    for (const { data } of results) for (const r of data ?? []) settledSet.add(r.order_id)
     setSettledIds(settledSet)
     setDataLoading(false)
   }, [closedOrders])

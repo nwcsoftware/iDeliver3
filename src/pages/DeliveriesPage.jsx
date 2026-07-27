@@ -413,18 +413,19 @@ const TOTALS_BREAKDOWN_ROWS = [
   { key: 'localRetail',    label: 'Local retail items' },
   { key: 'externalRetail', label: 'External retail invoices' },
   { key: 'fees',           label: 'Delivery fees' },
-  { key: 'vat',            label: 'VAT' },
-  { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true },
+  // VAT label uses the order-number colour from the list (brand).
+  { key: 'vat',            label: 'VAT',                      labelCls: 'text-brand-400' },
+  // Discount label matches its (rose) amount colour.
+  { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true, labelCls: 'text-rose-300/90' },
   { key: 'total',          label: 'Total All',                tone: 'strong',  strong: true },
   { key: 'collected',      label: 'Collected from customers', tone: 'emerald' },
   { key: 'balance',        label: 'Balance',                  tone: 'amber' },
-  { key: 'fromDriver',     label: 'To collect from driver',   tone: 'teal',    strong: true },
   // Petty cash spent on external retail goods — equals the External retail
   // invoices total; subtracted when deriving NET AMOUNT (see totalsBreakdown).
-  { key: 'usedPettyCash',  label: 'Used petty cash',          tone: 'rose',    neg: true },
-  // NET AMOUNT = Total All − collected from customer − used petty cash. The
-  // headline figure the user should read (emphasised).
-  { key: 'pending',        label: 'NET AMOUNT',               tone: 'teal',    strong: true, big: true },
+  // Label matches its (rose) amount colour.
+  { key: 'usedPettyCash',  label: 'Used petty cash',          tone: 'rose',    neg: true, labelCls: 'text-rose-300/90' },
+  // NET AMOUNT = Total All (components − used petty cash). The headline figure.
+  { key: 'pending',        label: 'NET AMOUNT TO BE COLLECTED FROM DRIVER(S)', tone: 'teal', strong: true, big: true },
 ]
 
 /* Sum payments grouped by currency → { USD, LBP, EUR }. */
@@ -545,7 +546,10 @@ function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurr
   for (const p of packages) if (!p.paid) add(p.currency || feeCurrency, Number(p.package_price) || 0)
   // Services and external retail invoice references carry their own currency.
   for (const s of services) add(s.service_fees_currency || 'USD', Number(s.service_fees) || 0)
-  for (const r of retailInvoices) add(r.currency || 'USD', Number(r.invoice_value) || 0)
+  // A local-market retail invoice flagged "Paid" was settled directly by the
+  // customer with the shop/partner, so it never touches the order total or its
+  // pending balance (mirrors orderTotalsByCurrency for saved orders).
+  for (const r of retailInvoices) if (!r.paid) add(r.currency || 'USD', Number(r.invoice_value) || 0)
   add(feeCurrency, Number(deliveryFee) || 0)
   // Discount always reduces the total, in its own currency (never adds).
   add(discountCurrency, -Math.abs(Number(discount) || 0))
@@ -1112,10 +1116,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return order.filter(c => acc[c]).map(c => {
       const out = { cur: c }
       for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key])
-      // NET AMOUNT = Total All − collected from customer − used petty cash, where
-      // used petty cash is a negative line — so subtracting it adds it back:
-      //   NET = Total All − collected + usedPettyCash(magnitude)
-      out.pending = round2((acc[c].total || 0) - (acc[c].collected || 0) + (acc[c].usedPettyCash || 0))
+      // External retail goods are bought with petty cash, so used petty cash nets
+      // them out. Both Total All and NET AMOUNT are:
+      //   Packages + Services + External + Local + Fees + VAT − Discount − Used petty cash
+      const netCharge = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0))
+      out.total   = netCharge
+      out.pending = netCharge
       return out
     })
   })()
@@ -2898,9 +2904,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     </tr>
                   </thead>
                   <tbody>
-                    {breakdownRows.map(row => (
-                      <tr key={row.key} className={row.strong ? 'border-t border-surface-border/60' : ''}>
-                        <td className={`py-1 pr-4 ${row.big ? 'text-[15px] font-bold text-slate-100 pt-2' : row.strong ? 'text-slate-200 font-medium pt-1.5' : 'text-slate-500'}`}>{row.label}</td>
+                    {breakdownRows.map((row, ri) => (
+                      <tr key={row.key} className={`${ri % 2 === 1 ? 'bg-white/[0.03]' : ''} ${row.strong ? 'border-t border-surface-border/60' : ''}`}>
+                        <td className={`py-1 pr-4 ${row.big ? 'text-[15px] font-bold pt-2' : row.strong ? 'font-medium pt-1.5' : ''} ${row.labelCls || (row.big ? 'text-slate-100' : row.strong ? 'text-slate-200' : 'text-slate-500')}`}>{row.label}</td>
                         {totalsBreakdown.map(r => {
                           const v = r[row.key]
                           const cls =
@@ -2912,7 +2918,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                                                      'text-slate-300'
                           return (
                             <td key={r.cur} className={`text-right py-1 pl-4 ${row.big ? 'text-[15px] font-bold pt-2' : row.strong ? 'pt-1.5' : ''} ${cls}`}>
-                              {row.neg && v ? '−' : ''}{fmtAmount(Math.abs(v), r.cur)}
+                              {/* Deduction rows (discount, used petty cash) store a positive
+                                  magnitude and always show a leading minus; every other row
+                                  shows its true value so a negative total isn't hidden. */}
+                              {row.neg ? `${v ? '−' : ''}${fmtAmount(Math.abs(v), r.cur)}` : fmtAmount(v, r.cur)}
                             </td>
                           )
                         })}
@@ -2957,7 +2966,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       {/* ── Modal ─────────────────────────────────────────────── */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-5xl flex flex-col" style={{ maxHeight: '92vh' }}>
+          <div className="card w-full max-w-6xl flex flex-col" style={{ maxHeight: '92vh' }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border flex-shrink-0">
@@ -3447,15 +3456,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <thead>
                       <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
                         {/* Warehouse/Shop hidden for 2nd-party users (fixed to them). */}
-                        {!partyContactId && <th className="text-left px-3 py-2 w-[20%]">Warehouse / Shop</th>}
-                        <th className="text-left px-3 py-2 w-[13%]">Invoice Ref</th>
-                        <th className="text-left px-3 py-2 w-[11%]">Date</th>
-                        <th className="text-left px-3 py-2 w-[10%]">Amount</th>
-                        <th className="text-left px-3 py-2 w-[8%]">Currency</th>
+                        {!partyContactId && <th className="text-left px-1.5 py-2 w-[18%]">Warehouse / Shop</th>}
+                        <th className="text-left px-1.5 py-2 w-[12%]">Invoice Ref</th>
+                        <th className="text-left px-1.5 py-2 w-[11%]">Date</th>
+                        <th className="text-left px-1.5 py-2 w-[15%]">Amount</th>
+                        <th className="text-left px-1.5 py-2 w-[8%]">Currency</th>
                         {/* Procurement toggle — staff only. */}
-                        {!partyContactId && <th className="text-left px-3 py-2 w-[12%]">Purchased</th>}
-                        <th className="text-left px-3 py-2 w-[11%]">Paid</th>
-                        <th className="text-left px-3 py-2 w-[13%]">Payment Type</th>
+                        {!partyContactId && <th className="text-left px-1.5 py-2 w-[11%]">Purchased</th>}
+                        <th className="text-left px-1.5 py-2 w-[10%]">Paid</th>
+                        <th className="text-left px-1.5 py-2 w-[11%]">Payment Type</th>
                         <th className="w-[4%]"></th>
                       </tr>
                     </thead>
@@ -3465,7 +3474,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       ) : retailInvoices.map((ri, idx) => (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           {!partyContactId && (
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <ContactCombobox
                               value={ri.contact_id || ''}
                               text={ri.shop_name}
@@ -3503,26 +3512,26 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             )}
                           </td>
                           )}
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <input className="input py-1.5 text-xs" value={ri.invoice_reference}
                               onChange={e => setRetailInvoice(idx, 'invoice_reference', e.target.value)} placeholder="Ref / #" />
                           </td>
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <input type="date" className="input py-1.5 text-xs" value={ri.invoice_date}
                               onChange={e => setRetailInvoice(idx, 'invoice_date', e.target.value)} />
                           </td>
-                          <td className="px-3 py-2 align-top">
-                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={ri.invoice_value}
+                          <td className="px-1.5 py-2 align-top">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 px-2 text-xs min-w-[110px]" value={ri.invoice_value}
                               onChange={e => setRetailInvoice(idx, 'invoice_value', e.target.value)} placeholder="0.00" />
                           </td>
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <select className="input py-1.5 text-xs" value={ri.currency}
                               onChange={e => setRetailInvoice(idx, 'currency', e.target.value)}>
                               {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
                           {!partyContactId && (
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <button type="button" onClick={() => setRetailInvoice(idx, 'is_procurement', !ri.is_procurement)}
                               aria-pressed={!!ri.is_procurement}
                               title={ri.is_procurement ? 'We purchased these goods — earns this shop’s commission at month-end' : 'Shop-sent — no commission (delivery fee only)'}
@@ -3535,19 +3544,21 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             </button>
                           </td>
                           )}
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <button type="button" onClick={() => setRetailInvoice(idx, 'paid', !ri.paid)}
                               aria-pressed={!!ri.paid}
-                              title={ri.paid ? 'Paid directly to shop — excluded from order total' : 'Not paid — counted in order total'}
+                              title={ri.paid
+                                ? 'Calculation excluded — settled directly by the customer with the shop'
+                                : 'Using petty cash — counted in the order total'}
                               className={`inline-flex items-center gap-1.5 w-full justify-center py-1.5 px-2 rounded-lg text-[11px] font-medium border whitespace-nowrap transition-colors select-none
                                 ${ri.paid
-                                  ? 'bg-green-500/15 border-green-500/40 text-green-300'
-                                  : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
-                              {ri.paid ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
-                              {ri.paid ? 'Paid' : 'Not paid'}
+                                  ? 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'
+                                  : 'bg-brand-500/15 border-brand-500/40 text-brand-300'}`}>
+                              {ri.paid ? <Circle className="w-3.5 h-3.5 flex-shrink-0" /> : <Check className="w-3.5 h-3.5 flex-shrink-0" />}
+                              {ri.paid ? 'Calculation Excluded' : 'Using petty cash'}
                             </button>
                           </td>
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <select className="input py-1.5 text-xs" value={ri.payment_type}
                               disabled={!ri.paid}
                               onChange={e => setRetailInvoice(idx, 'payment_type', e.target.value)}>
@@ -3555,7 +3566,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                               {PAYMENT_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
                             </select>
                           </td>
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-1.5 py-2 align-top">
                             <button onClick={() => removeRetailInvoice(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
