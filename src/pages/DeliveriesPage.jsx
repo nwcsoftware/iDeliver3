@@ -413,17 +413,19 @@ const TOTALS_BREAKDOWN_ROWS = [
   { key: 'packages',       label: 'Delivery packages' },
   { key: 'services',       label: 'Order services' },
   { key: 'externalRetail', label: 'Local market invoices' },
-  { key: 'usedPettyCash',  label: 'Petty Cash Reimbursement', tone: 'rose', neg: true, labelCls: 'text-rose-300/90' },
   { key: 'localRetail',    label: '3asari3 retails' },
   { key: 'fees',           label: 'Delivery fees' },
   { key: 'vat',            label: 'VAT',                      labelCls: 'text-brand-400' },
   { key: 'total',          label: 'Gross amount',             tone: 'strong',  strong: true },
-  // Discount sits under the Gross amount as a deduction.
+  // Petty cash reimbursement + discount are deductions between Gross and Orders net.
+  { key: 'usedPettyCash',  label: 'Petty Cash Reimbursement', tone: 'rose', neg: true, labelCls: 'text-rose-300/90' },
   { key: 'discount',       label: 'Discount',                 tone: 'rose',    neg: true, labelCls: 'text-rose-300/90' },
   { key: 'ordersNet',      label: 'Orders net amount',        tone: 'strong',  strong: true },
   // Collected split by the payment's collection_group.
   { key: 'collectedByDriver', label: 'Collected from customer by driver',        tone: 'emerald' },
   { key: 'collectedByOffice', label: 'Collected from customer at the call center', tone: 'sky' },
+  // Petty cash reimbursement also nets into the collections subtotal.
+  { key: 'pettyReimbCollections', label: 'Petty Cash Reimbursement', tone: 'rose', neg: true, labelCls: 'text-rose-300/90' },
   { key: 'totalCollections',  label: 'Total collections',        tone: 'emerald', strong: true },
   { key: 'balance',        label: 'Pending balance',          tone: 'amber' },
 ]
@@ -1112,28 +1114,35 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           else                                                                          b[row.key] += (r[row.key] || 0)
         }
       }
-      // Split the order's collected cash by the payment's collection_group.
+      // Split the order's collected cash by the payment's collection_group. A
+      // payment with no group is attributed to the driver when the order's own
+      // driver recorded it; otherwise it falls into the call-center bucket. This
+      // catch-all guarantees every collected amount is counted (so Total
+      // collections here matches the Daily Collection page total).
       for (const pc of (o.payment_collections ?? [])) {
         const cur = CURRENCIES.includes(pc.currency) ? pc.currency : (pc.currency || 'USD')
         const b = ensure(cur)
         const amt = round2(pc.amount)
         const grp = String(pc.collection_group || '').trim().toLowerCase()
-        if (grp === 'driver')           b.collectedByDriver += amt
-        else if (grp === 'call center') b.collectedByOffice += amt
+        const byOrderDriver = !!pc.collected_by && !!o.driver_id && pc.collected_by === o.driver_id
+        if (grp === 'driver' || (!grp && byOrderDriver)) b.collectedByDriver += amt
+        else                                             b.collectedByOffice += amt
       }
     }
     const order = [...CURRENCIES, ...Object.keys(acc).filter(c => !CURRENCIES.includes(c))]
     return order.filter(c => acc[c]).map(c => {
       const out = { cur: c }
       for (const row of TOTALS_BREAKDOWN_ROWS) out[row.key] = round2(acc[c][row.key] || 0)
-      // Gross amount = total of the component rows ABOVE it — i.e. everything
-      // except the discount, which is shown as a separate deduction underneath.
-      // (orderAmountBreakdown's total already subtracts discount, so add it back.)
-      out.total   = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0) + (acc[c].discount || 0))
-      // Orders net amount = Gross amount − Discount.
+      // Gross amount = total of the component rows ABOVE it (packages + services +
+      // local market invoices + 3asari3 retails + delivery fees + VAT). Discount is
+      // subtracted in acc.total, so add it back here.
+      out.total   = round2((acc[c].total || 0) + (acc[c].discount || 0))
+      // Orders net amount = Gross − Petty cash reimbursement − Discount.
       out.ordersNet = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0))
-      // Total collections = collected by driver + collected at the call center.
-      out.totalCollections = round2((acc[c].collectedByDriver || 0) + (acc[c].collectedByOffice || 0))
+      // Petty cash reimbursement also shown in the collections section (same value).
+      out.pettyReimbCollections = round2(acc[c].usedPettyCash || 0)
+      // Total collections = collected by driver + at the call center − petty cash reimbursement.
+      out.totalCollections = round2((acc[c].collectedByDriver || 0) + (acc[c].collectedByOffice || 0) - (acc[c].usedPettyCash || 0))
       // Pending balance = Orders net amount − Total collections.
       out.balance = round2(out.ordersNet - out.totalCollections)
       out.pending = round2(acc[c].collectedByDriver || 0)
