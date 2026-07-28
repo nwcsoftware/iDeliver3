@@ -3817,10 +3817,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-600">No payments yet — click "Add Payment"</td></tr>
                       ) : payments.map((p, idx) => {
                         // When the "protect other users' payments" restriction is on, a
-                        // saved payment recorded by someone else (e.g. a driver) is
-                        // read-only for the current user — only its owner can edit/delete.
+                        // saved payment is read-only unless it was recorded by the current
+                        // user. Driver-collected payments often have no collected_by id
+                        // (only a Driver group/name), so anything not provably "mine" is
+                        // locked. The super admin is always exempt.
+                        const mine = !!p.collected_by && !!currentUser?.user_id && p.collected_by === currentUser.user_id
                         const pLocked = appSettings.protectOthersPayments === true
-                          && !!p._id && !!p.collected_by && p.collected_by !== currentUser?.user_id
+                          && !isSuperAdmin
+                          && !!p._id && !mine
                         return (
                         <tr key={p._id ?? p._key ?? idx} className="border-t border-surface-border/50">
                           <td className="px-3 py-2">
