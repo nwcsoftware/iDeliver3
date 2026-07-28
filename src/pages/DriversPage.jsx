@@ -356,6 +356,13 @@ export default function DriversPage() {
   }
 
   async function handleSave() {
+    // New driver may be given a login (username + password) here — validate before
+    // creating anything so we don't insert a driver and then reject the credentials.
+    const wantCreds = modal === 'add' && isAdmin && usernameInput.trim() !== ''
+    if (wantCreds) {
+      if (usernameInput.trim().length < 3) { setCredError('Username must be at least 3 characters.'); setCredOpen(true); return }
+      if (pwInput.length < PW_MIN)         { setCredError(`Password must be at least ${PW_MIN} characters.`); setCredOpen(true); return }
+    }
     setSaving(true)
     // Auto-generate the driver account number before saving (kept if already set).
     let accountNumber = form.account_number
@@ -387,6 +394,22 @@ export default function DriversPage() {
           30000, 'Saving the driver',
         )
         if (error) throw error
+        // Set the driver's login now that the contact exists. If it fails (e.g.
+        // username taken) the driver is still saved — surface it so the admin can
+        // fix the login by reopening the driver.
+        if (wantCreds) {
+          const { error: ce } = await supabase.rpc('admin_set_driver_credentials', {
+            p_contact_id:   data.id,
+            p_username:     usernameInput.trim(),
+            p_new_password: pwInput,
+          })
+          if (ce) {
+            const msg = ce.message || String(ce)
+            alert(/USERNAME_TAKEN/.test(msg)
+              ? 'Driver saved, but that username is already used by another contact — set a different one by reopening the driver.'
+              : `Driver saved, but setting the login failed: ${msg}`)
+          }
+        }
         await syncPettyCash(data.id)
         await syncAssignments(data.id)
         await fetchDrivers()
@@ -768,8 +791,10 @@ export default function DriversPage() {
                 )}
               </div>
 
-              {/* Driver user account & security — collapsible, admin only */}
-              {modal !== 'add' && isAdmin && (
+              {/* Driver user account & security — collapsible, admin only.
+                  On a new driver the username & password are entered here and saved
+                  together with the driver when you click "Add Driver". */}
+              {isAdmin && (
                 <div className="border border-surface-border rounded-lg overflow-hidden">
                   <button type="button" onClick={() => setCredOpen(o => !o)}
                     className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
@@ -791,7 +816,30 @@ export default function DriversPage() {
 
                       <div>
                         <label className="label">Password</label>
-                        {!editingPw ? (
+                        {modal === 'add' ? (
+                          <>
+                            {/* New driver — type or generate the password; it's saved with the driver. */}
+                            <div className="relative">
+                              <input type={showPw ? 'text' : 'password'} value={pwInput} autoComplete="new-password"
+                                onChange={e => { setPwInput(e.target.value); setCredError('') }}
+                                placeholder={`At least ${PW_MIN} characters`}
+                                className="input font-mono pr-10" />
+                              <button type="button" onClick={() => setShowPw(s => !s)}
+                                title={showPw ? 'Hide' : 'Show'}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200">
+                                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between mt-1">
+                              <p className={`text-[10px] ${pwInput && pwInput.length < PW_MIN ? 'text-red-400' : 'text-slate-600'}`}>
+                                Leave username &amp; password blank to add the driver without a login. Minimum {PW_MIN} characters.
+                              </p>
+                              <button type="button"
+                                onClick={() => { setPwInput(generatePassword(PW_MIN)); setShowPw(true); setCredError('') }}
+                                className="text-[11px] text-brand-400 hover:text-brand-300">Generate</button>
+                            </div>
+                          </>
+                        ) : !editingPw ? (
                           <>
                             {/* Existing password is hidden and cannot be read — shown masked. */}
                             <input type="password" readOnly autoComplete="off"
@@ -832,6 +880,7 @@ export default function DriversPage() {
                         )}
                       </div>
 
+                      {modal !== 'add' && (
                       <div className="flex items-center gap-3 flex-wrap">
                         {!editingPw ? (
                           <button type="button" onClick={startPasswordReset} disabled={!usernameInput.trim()}
@@ -850,6 +899,7 @@ export default function DriversPage() {
                           </>
                         )}
                       </div>
+                      )}
 
                       {newPassword && (
                         <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 space-y-1">
