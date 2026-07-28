@@ -50,6 +50,15 @@ const DEFAULT_APP_SETTINGS = {
   // recent orders; financial pages call loadFullOrderHistory() to pull everything.
   // 0 = unlimited (load the whole table, the pre-window behaviour).
   ordersWindowDays: 90,
+  // Restriction (super-admin only): when true, a local-market retail invoice is
+  // locked once the order is saved (cannot be edited/deleted, only new ones
+  // added). When false, saved invoices stay editable until the order is closed.
+  lockSavedLocalInvoices: true,
+  // Restriction (super-admin only): when true, a saved payment can only be
+  // edited/deleted by the user who recorded it — so a call-center user can't
+  // touch a driver's (or another user's) collected payment. When false, anyone
+  // can edit/delete any payment.
+  protectOthersPayments: false,
 }
 function readAppSettings() {
   try {

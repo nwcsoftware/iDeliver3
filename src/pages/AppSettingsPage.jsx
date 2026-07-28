@@ -1,11 +1,19 @@
 import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock, Database } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
 export default function AppSettingsPage() {
   const { appSettings, updateAppSettings } = useApp()
+  const { hasRole } = useAuth()
+  const isSuperAdmin = hasRole('super_admin')
+
+  // Restriction: lock a local-market invoice once its order is saved (super admin).
+  const lockInvoices = appSettings.lockSavedLocalInvoices !== false
+  // Restriction: a saved payment can only be edited/deleted by whoever recorded it.
+  const protectPayments = appSettings.protectOthersPayments === true
 
   // Order-confirmation reminder (minutes). Edited as a draft string so the field
   // can be cleared while typing; saved (clamped to a whole number ≥ 0) on Save.
@@ -222,6 +230,81 @@ export default function AppSettingsPage() {
             or refresh.
           </p>
         </div>
+
+        {/* Restriction — lock saved local-market invoices (super admin only) */}
+        {isSuperAdmin && (
+          <div className="card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <Lock className="w-4 h-4 text-amber-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Restriction — lock saved local-market invoices</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  When <span className="text-slate-300 font-medium">on</span>, a local-market invoice becomes
+                  read-only once the order is saved — it can no longer be edited or deleted, only new invoices
+                  can be added. When <span className="text-slate-300 font-medium">off</span>, saved invoices
+                  stay editable until the order is closed. A closed order always locks everything.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => updateAppSettings({ lockSavedLocalInvoices: !lockInvoices })}
+              aria-pressed={lockInvoices}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                lockInvoices
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                  : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}
+            >
+              <Lock className="w-4 h-4" />
+              Restriction is {lockInvoices ? 'ON' : 'OFF'}
+            </button>
+
+            <p className="text-[11px] text-slate-500">
+              Only the super admin can change this. It takes effect immediately in the order form.
+            </p>
+          </div>
+        )}
+
+        {/* Restriction — protect other users' payments (super admin only) */}
+        {isSuperAdmin && (
+          <div className="card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <Lock className="w-4 h-4 text-amber-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Restriction — protect other users' payments</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  When <span className="text-slate-300 font-medium">on</span>, a saved payment can only be
+                  edited or deleted by the user who recorded it — so a call-center user can't change or remove
+                  a payment collected by a driver (or another user). Each user still manages their own
+                  payments. When <span className="text-slate-300 font-medium">off</span>, anyone can edit or
+                  delete any payment.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => updateAppSettings({ protectOthersPayments: !protectPayments })}
+              aria-pressed={protectPayments}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                protectPayments
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                  : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}
+            >
+              <Lock className="w-4 h-4" />
+              Restriction is {protectPayments ? 'ON' : 'OFF'}
+            </button>
+
+            <p className="text-[11px] text-slate-500">
+              Only the super admin can change this. It takes effect immediately in the order form.
+            </p>
+          </div>
+        )}
 
       </div>
     </div>

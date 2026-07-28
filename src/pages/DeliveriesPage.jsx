@@ -424,9 +424,8 @@ const TOTALS_BREAKDOWN_ROWS = [
   // Collected split by the payment's collection_group.
   { key: 'collectedByDriver', label: 'Collected from customer by driver',        tone: 'emerald' },
   { key: 'collectedByOffice', label: 'Collected from customer at the call center', tone: 'sky' },
-  { key: 'balance',        label: 'Balance',                  tone: 'amber' },
-  // NET AMOUNT to be collected from driver(s) = cash the drivers collected.
-  { key: 'pending',        label: 'NET AMOUNT TO BE COLLECTED FROM DRIVER(S)', tone: 'teal', strong: true, big: true },
+  { key: 'totalCollections',  label: 'Total collections',        tone: 'emerald', strong: true },
+  { key: 'balance',        label: 'Pending balance',          tone: 'amber' },
 ]
 
 /* Sum payments grouped by currency → { USD, LBP, EUR }. */
@@ -1133,6 +1132,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       out.total   = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0) + (acc[c].discount || 0))
       // Orders net amount = Gross amount − Discount.
       out.ordersNet = round2((acc[c].total || 0) - (acc[c].usedPettyCash || 0))
+      // Total collections = collected by driver + collected at the call center.
+      out.totalCollections = round2((acc[c].collectedByDriver || 0) + (acc[c].collectedByOffice || 0))
+      // Pending balance = Orders net amount − Total collections.
+      out.balance = round2(out.ordersNet - out.totalCollections)
       out.pending = round2(acc[c].collectedByDriver || 0)
       return out
     })
@@ -1484,7 +1487,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })))
     const { data: payData } = await supabase
       .from('payment_collections')
-      .select('id,collection_type,amount,currency,collected_at,notes')
+      .select('id,collection_type,amount,currency,collected_at,notes,collected_by,collected_by_name,collection_group')
       .eq('order_id', o.id)
       .order('collected_at')
     const mappedPayments = (payData ?? []).map(pc => {
@@ -1495,6 +1498,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         amount:   round2(pc.amount) || '',
         paid_at:  pc.collected_at ? pc.collected_at.slice(0, 10) : '',
         notes:    pc.notes ?? '',
+        collected_by:      pc.collected_by ?? null,
+        collected_by_name: pc.collected_by_name ?? '',
+        collection_group:  pc.collection_group ?? '',
       }
     })
     setPayments(mappedPayments)
@@ -2943,6 +2949,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     ))}
                   </tbody>
                 </table>
+
+                {/* 3asari3 NET amount — framed, stands apart from the rows above. */}
+                <div className="mt-3 rounded-lg border-2 border-fuchsia-500/40 bg-fuchsia-500/10 px-4 py-2.5">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <span className="text-sm font-bold text-fuchsia-200 uppercase tracking-wide">3asari3 NET amount</span>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      {totalsBreakdown.map(r => (
+                        <span key={r.cur} className="tabular-nums text-[15px] font-bold text-fuchsia-200 whitespace-nowrap">
+                          <span className="text-fuchsia-300/60 text-[11px] mr-1.5">{r.cur}</span>
+                          {fmtAmount(round2((r.localRetail || 0) + (r.fees || 0)), r.cur)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-fuchsia-300/60 mt-0.5">3asari3 retails + Delivery fees</p>
+                </div>
               </div>
             )}
           </div>
@@ -2960,19 +2982,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             <span className="font-semibold text-slate-100">{pendingsSummary.count}</span>
             {pendingsSummary.count === 1 ? 'order' : 'orders'}
           </span>
-          <div className="flex items-center gap-3 flex-wrap ml-auto">
-            <span className="text-[11px] uppercase tracking-wider text-[#1dffd5]/80 font-semibold">Net amount</span>
-            {totalsBreakdown.filter(r => r.pending).map(r => (
-              <div key={r.cur} className="text-sm whitespace-nowrap rounded-lg bg-[#1dffd5]/10 border border-[#1dffd5]/30 px-3 py-1">
-                <span className="text-[#1dffd5]/70 text-[11px] mr-1.5">{r.cur}</span>
-                <span className="font-bold text-[15px] text-[#1dffd5] [text-shadow:0_0_6px_rgba(29,255,213,0.6)]">
-                  {fmtAmount(r.pending, r.cur)}
-                </span>
+          <div className="flex items-center gap-4 flex-wrap ml-auto">
+            {[
+              { key: 'ordersNet',        label: 'Orders net amount', cls: 'text-slate-100',   border: 'border-white/15 bg-white/5' },
+              { key: 'totalCollections', label: 'Total collections', cls: 'text-emerald-300', border: 'border-emerald-500/30 bg-emerald-500/10' },
+              { key: 'balance',          label: 'Pending balance',   cls: 'text-amber-300',   border: 'border-amber-500/30 bg-amber-500/10' },
+            ].map(m => (
+              <div key={m.key} className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{m.label}</span>
+                {totalsBreakdown.filter(r => r[m.key]).map(r => (
+                  <div key={r.cur} className={`text-sm whitespace-nowrap rounded-lg border px-2.5 py-1 ${m.border}`}>
+                    <span className="text-slate-400 text-[11px] mr-1">{r.cur}</span>
+                    <span className={`font-bold ${m.cls}`}>{fmtAmount(r[m.key], r.cur)}</span>
+                  </div>
+                ))}
+                {totalsBreakdown.every(r => !r[m.key]) && <span className="text-sm text-slate-600">—</span>}
               </div>
             ))}
-            {totalsBreakdown.every(r => !r.pending) && (
-              <span className="text-sm text-slate-500">—</span>
-            )}
           </div>
         </div>
       </div>
@@ -3486,10 +3512,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       {retailInvoices.length === 0 ? (
                         <tr><td colSpan={partyContactId ? 7 : 9} className="px-3 py-6 text-center text-slate-600">No invoices — click "Add Invoice"</td></tr>
                       ) : retailInvoices.map((ri, idx) => {
-                        // A saved invoice (has a DB id) is locked: read-only, can't be
-                        // deleted. Only newly-added rows (with a temp _key) stay editable
-                        // until the order is saved. New invoices can always be added.
-                        const riLocked = !!ri._id
+                        // A saved invoice (has a DB id) is locked ONLY when the
+                        // "restriction" app setting is on: read-only, can't be deleted;
+                        // new rows stay editable. With the restriction off, saved rows
+                        // remain editable until the order is closed (the surrounding
+                        // fieldset already disables everything on a closed order).
+                        const riLocked = appSettings.lockSavedLocalInvoices !== false && !!ri._id
                         return (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           {!partyContactId && (
@@ -3787,39 +3815,58 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <tbody>
                       {payments.length === 0 ? (
                         <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-600">No payments yet — click "Add Payment"</td></tr>
-                      ) : payments.map((p, idx) => (
+                      ) : payments.map((p, idx) => {
+                        // When the "protect other users' payments" restriction is on, a
+                        // saved payment recorded by someone else (e.g. a driver) is
+                        // read-only for the current user — only its owner can edit/delete.
+                        const pLocked = appSettings.protectOthersPayments === true
+                          && !!p._id && !!p.collected_by && p.collected_by !== currentUser?.user_id
+                        return (
                         <tr key={p._id ?? p._key ?? idx} className="border-t border-surface-border/50">
                           <td className="px-3 py-2">
-                            <select className="input py-1.5 text-xs" value={p.method}
+                            <select className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.method}
+                              disabled={pLocked}
                               onChange={e => setPayment(idx, 'method', e.target.value)}>
                               {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                             </select>
+                            {pLocked && p.collected_by_name && (
+                              <p className="text-[10px] text-slate-500 mt-0.5">by {p.collected_by_name}</p>
+                            )}
                           </td>
                           <td className="px-3 py-2">
-                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs" value={p.amount}
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.amount}
+                              disabled={pLocked}
                               onChange={e => setPayment(idx, 'amount', e.target.value)} placeholder="0.00" />
                           </td>
                           <td className="px-3 py-2">
-                            <select className="input py-1.5 text-xs" value={p.currency}
+                            <select className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.currency}
+                              disabled={pLocked}
                               onChange={e => setPayment(idx, 'currency', e.target.value)}>
                               {PAYMENT_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
                           <td className="px-3 py-2">
-                            <input type="date" className="input py-1.5 text-xs" value={p.paid_at}
+                            <input type="date" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.paid_at}
+                              disabled={pLocked}
                               onChange={e => setPayment(idx, 'paid_at', e.target.value)} />
                           </td>
                           <td className="px-3 py-2">
-                            <input className="input py-1.5 text-xs" value={p.notes}
+                            <input className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.notes}
+                              disabled={pLocked}
                               onChange={e => setPayment(idx, 'notes', e.target.value)} placeholder="Optional" />
                           </td>
                           <td className="px-3 py-2">
-                            <button onClick={() => removePayment(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {pLocked ? (
+                              <span title={`Collected by ${p.collected_by_name || 'another user'} — locked`} className="text-slate-600 inline-flex p-0.5"><Lock className="w-3.5 h-3.5" /></span>
+                            ) : (
+                              <button onClick={() => removePayment(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
