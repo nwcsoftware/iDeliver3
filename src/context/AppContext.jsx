@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 
@@ -67,6 +67,14 @@ function readAppSettings() {
   } catch { return { ...DEFAULT_APP_SETTINGS } }
 }
 
+// The super-admin RESTRICTION settings are company-wide policy, not per-device
+// preferences: when a super admin flips them they must apply to every signed-in
+// user everywhere (any device, any location). These keys are therefore stored
+// server-side (app_global_settings) and mirrored down to every client in
+// realtime, overriding the local copy. All other keys stay per-device.
+const GLOBAL_SETTINGS_ID  = 'global'
+const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments']
+
 // Normalize a contact row into a driver-shaped object for UI consumption
 function normalizeDriver(c) {
   return {
@@ -103,16 +111,73 @@ export function AppProvider({ children }) {
   }, [userId])
   const toggleShowSummary = useCallback(() => setShowSummary(p => !p), [setShowSummary])
 
-  // App-wide settings (persisted locally). `updateAppSettings` accepts a partial
-  // object (or updater fn) and merges it, so each setting can be saved on its own.
-  const [appSettings, setAppSettingsState] = useState(readAppSettings)
-  const updateAppSettings = useCallback((partial) => {
-    setAppSettingsState(prev => {
-      const next = { ...prev, ...(typeof partial === 'function' ? partial(prev) : partial) }
-      try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next)) } catch {}
-      return next
-    })
+  // App-wide settings. Per-device preferences live in localStorage; the super-admin
+  // restriction keys (GLOBAL_SETTING_KEYS) live server-side so they apply to every
+  // signed-in user everywhere. `appSettings` below is the merged view; the global
+  // keys override the local copy.
+  const [localSettings, setLocalSettingsState] = useState(readAppSettings)
+  const [globalSettings, setGlobalSettings]    = useState(null)   // null until first server load
+
+  // Load the global restriction settings from the server, and keep every client in
+  // sync via realtime — a super admin toggling on one device updates all others.
+  const fetchGlobalSettings = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('app_global_settings')
+      .select('settings')
+      .eq('id', GLOBAL_SETTINGS_ID)
+      .maybeSingle()
+    if (error) return   // table may not exist yet (migration not run) — fall back to local
+    setGlobalSettings(data?.settings || {})
   }, [])
+
+  useEffect(() => {
+    fetchGlobalSettings()
+    const ch = supabase
+      .channel('app-global-settings-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_global_settings' }, fetchGlobalSettings)
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [fetchGlobalSettings])
+
+  // Merged settings: local as the base, with any server-set restriction keys
+  // overriding. Until the global row loads (globalSettings === null) the local
+  // copy is used so the UI is never blocked.
+  const appSettings = useMemo(() => {
+    const overlay = {}
+    const g = globalSettings || {}
+    for (const k of GLOBAL_SETTING_KEYS) if (k in g) overlay[k] = g[k]
+    return { ...localSettings, ...overlay }
+  }, [localSettings, globalSettings])
+
+  // `updateAppSettings` accepts a partial object (or updater fn) and routes each
+  // key to the right store: restriction keys are written server-side (applying to
+  // all users everywhere), everything else stays on this device.
+  const updateAppSettings = useCallback((partial) => {
+    const patch = typeof partial === 'function' ? partial(appSettings) : partial
+    const globalPatch = {}
+    const localPatch  = {}
+    for (const [k, v] of Object.entries(patch)) {
+      if (GLOBAL_SETTING_KEYS.includes(k)) globalPatch[k] = v
+      else                                 localPatch[k]  = v
+    }
+    if (Object.keys(globalPatch).length) {
+      const nextGlobal = { ...(globalSettings || {}), ...globalPatch }
+      setGlobalSettings(nextGlobal)   // optimistic; realtime confirms for other clients
+      supabase.from('app_global_settings')
+        .upsert(
+          { id: GLOBAL_SETTINGS_ID, settings: nextGlobal, updated_at: new Date().toISOString(), updated_by: currentUser?.user_id ?? null },
+          { onConflict: 'id' },
+        )
+        .then(({ error }) => { if (error) fetchGlobalSettings() })   // revert to server truth on failure
+    }
+    if (Object.keys(localPatch).length) {
+      setLocalSettingsState(prev => {
+        const next = { ...prev, ...localPatch }
+        try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next)) } catch {}
+        return next
+      })
+    }
+  }, [appSettings, globalSettings, currentUser?.user_id, fetchGlobalSettings])
 
   // Recent-window size (days) for the shared order load, mirrored into a ref so
   // fetchOrders can read it without becoming a new function on every settings edit

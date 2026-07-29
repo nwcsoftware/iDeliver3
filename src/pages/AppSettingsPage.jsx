@@ -263,7 +263,9 @@ export default function AppSettingsPage() {
             </button>
 
             <p className="text-[11px] text-slate-500">
-              Only the super admin can change this. It takes effect immediately in the order form.
+              Only the super admin can change this. It is a company-wide policy — it applies to
+              <span className="text-slate-400"> every signed-in user on any device or location</span>,
+              and takes effect immediately.
             </p>
           </div>
         )}
@@ -301,7 +303,9 @@ export default function AppSettingsPage() {
             </button>
 
             <p className="text-[11px] text-slate-500">
-              Only the super admin can change this. It takes effect immediately in the order form.
+              Only the super admin can change this. It is a company-wide policy — it applies to
+              <span className="text-slate-400"> every signed-in user on any device or location</span>,
+              and takes effect immediately.
             </p>
           </div>
         )}
