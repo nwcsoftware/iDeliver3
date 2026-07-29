@@ -2,12 +2,43 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   UserCog, UserPlus, Search, Shield, X, Loader, AlertCircle,
-  KeyRound, Power, PowerOff, Pencil, Eye, EyeOff,
+  KeyRound, Power, PowerOff, Pencil, Eye, EyeOff, Copy, Check, RefreshCw, Wand2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
+
+const PW_MIN = 8
+
+// A random, easy-to-read password (no ambiguous chars like O/0, l/1).
+function generatePassword(len = 12) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(len)
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < len; i++) bytes[i] = Math.floor(Math.random() * 256)
+  let out = ''
+  for (let i = 0; i < len; i++) out += chars[bytes[i] % chars.length]
+  return out
+}
+
+// Reduce any text to a clean username fragment (letters/digits only, lower-case).
+function slugUser(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 20)
+}
+
+// Suggest a username from a name/email base, made unique against `taken`.
+function suggestUsername(base, taken) {
+  const set = new Set((taken || []).map(u => String(u).toLowerCase()))
+  let root = slugUser(base) || 'user'
+  if (root.length < 3) root = `${root}user`.slice(0, 20)
+  if (!set.has(root)) return root
+  for (let i = 2; i < 1000; i++) {
+    const cand = `${root}${i}`.slice(0, 22)
+    if (!set.has(cand)) return cand
+  }
+  return `${root}${Date.now().toString().slice(-4)}`
+}
 
 // Roles an admin may assign (super_admin is intentionally excluded).
 const ASSIGNABLE_ROLES = [
@@ -70,6 +101,17 @@ export default function UserAccountsPage() {
   const [resetPw,  setResetPw]  = useState('')
   const [resetErr, setResetErr] = useState('')
   const [resetBusy, setResetBusy] = useState(false)
+
+  // Credentials shown once, right after an account is created, so the super admin
+  // can copy and hand them over (the password can never be read again afterwards).
+  const [created, setCreated] = useState(null)     // { username, password }
+  const [copied,  setCopied]  = useState('')        // which field was last copied
+
+  // Copy text to the clipboard with a brief "copied" flash on the matching button.
+  async function copy(text, key) {
+    try { await navigator.clipboard.writeText(String(text ?? '')) } catch { /* ignore */ }
+    setCopied(key); setTimeout(() => setCopied(c => (c === key ? '' : c)), 1500)
+  }
 
   const [busyId, setBusyId] = useState(null)       // row with an in-flight status toggle
 
@@ -158,7 +200,10 @@ export default function UserAccountsPage() {
 
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
-    setForm(EMPTY_USER); setFormErr(''); setShowPw(false); setModal('add')
+    // Start with a ready-to-use strong password so the admin can just create &
+    // share, or replace it. Shown in clear since it's a brand-new temporary one.
+    setForm({ ...EMPTY_USER, password: generatePassword() })
+    setFormErr(''); setShowPw(true); setModal('add')
   }
   function openEdit(u) {
     setForm({ username: u.username, email: u.email ?? '', mobile: u.mobile ?? '', role: u.role, status: u.status, password: '', contact_id: u.contact_id ?? '' })
@@ -215,6 +260,9 @@ export default function UserAccountsPage() {
 
     setSaving(false)
     if (rpcError) { setFormErr(friendlyError(rpcError.message)); return }
+    // On a new account, surface the credentials once so they can be copied and
+    // handed to the user — the password can't be retrieved later.
+    if (modal === 'add') setCreated({ username: form.username.trim(), password: form.password })
     closeModal()
     fetchUsers()
   }
@@ -372,10 +420,31 @@ export default function UserAccountsPage() {
                 </div>
               )}
               <div>
-                <label className="label">Username *</label>
-                <input className="input" value={form.username}
-                  onChange={e => { setForm(f => ({ ...f, username: e.target.value })); setFormErr('') }}
-                  placeholder="jdoe" autoFocus />
+                <div className="flex items-center justify-between">
+                  <label className="label">Username *</label>
+                  {modal === 'add' && (
+                    <button type="button"
+                      onClick={() => {
+                        const base = form.email || (form.mobile ? `cc${form.mobile.replace(/\D/g, '').slice(-4)}` : 'cc')
+                        setForm(f => ({ ...f, username: suggestUsername(base.split('@')[0], users.map(u => u.username)) }))
+                        setFormErr('')
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
+                      <Wand2 className="w-3 h-3" /> Suggest
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <input className="input pr-10" value={form.username}
+                    onChange={e => { setForm(f => ({ ...f, username: e.target.value })); setFormErr('') }}
+                    placeholder="jdoe" autoFocus autoComplete="off" />
+                  {form.username && (
+                    <button type="button" onClick={() => copy(form.username, 'u')} title="Copy username"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>
+                      {copied === 'u' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  )}
+                </div>
                 <p className="text-[11px] text-slate-500 mt-1">Set by the administrator. The user cannot change this.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -438,15 +507,30 @@ export default function UserAccountsPage() {
 
               {modal === 'add' && (
                 <div>
-                  <label className="label">Temporary password *</label>
-                  <div className="relative">
-                    <input type={showPw ? 'text' : 'password'} className="input pr-10" value={form.password}
-                      onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setFormErr('') }}
-                      placeholder="At least 8 characters" autoComplete="new-password" />
-                    <button type="button" onClick={() => setShowPw(s => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>
-                      {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <div className="flex items-center justify-between">
+                    <label className="label">Temporary password *</label>
+                    <button type="button"
+                      onClick={() => { setForm(f => ({ ...f, password: generatePassword() })); setShowPw(true); setFormErr('') }}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
+                      <RefreshCw className="w-3 h-3" /> Generate
                     </button>
+                  </div>
+                  <div className="relative">
+                    <input type={showPw ? 'text' : 'password'} className="input pr-16 font-mono" value={form.password}
+                      onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setFormErr('') }}
+                      placeholder={`At least ${PW_MIN} characters`} autoComplete="new-password" />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                      {form.password && (
+                        <button type="button" onClick={() => copy(form.password, 'p')} title="Copy password"
+                          className="text-slate-500 hover:text-slate-300" tabIndex={-1}>
+                          {copied === 'p' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setShowPw(s => !s)}
+                        className="text-slate-500 hover:text-slate-300" tabIndex={-1}>
+                        {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">The user must change this on first sign-in.</p>
                 </div>
@@ -510,6 +594,51 @@ export default function UserAccountsPage() {
               <button onClick={doReset} disabled={resetBusy} className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
                 {resetBusy ? <><Loader className="w-4 h-4 animate-spin" /> Saving…</> : 'Set Password'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Account created — credentials to hand over (shown once) ── */}
+      {created && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="card w-full max-w-sm flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-400" /> Account created
+              </h3>
+              <button onClick={() => setCreated(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-slate-400 text-xs">
+                Share these with the user now — the password is shown only this once and
+                cannot be read again. They’ll be asked to change it on first sign-in.
+              </p>
+              {[
+                { label: 'Username', value: created.username, key: 'cu' },
+                { label: 'Temporary password', value: created.password, key: 'cp' },
+              ].map(row => (
+                <div key={row.key}>
+                  <label className="label">{row.label}</label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2 rounded-lg bg-surface-hover border border-surface-border text-slate-100 text-sm font-mono break-all">
+                      {row.value}
+                    </code>
+                    <button type="button" onClick={() => copy(row.value, row.key)} title={`Copy ${row.label.toLowerCase()}`}
+                      className="btn-ghost p-2 border border-surface-border text-slate-400 hover:text-slate-100">
+                      {copied === row.key ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between gap-2 px-5 py-4 border-t border-surface-border">
+              <button
+                onClick={() => copy(`Username: ${created.username}\nPassword: ${created.password}`, 'both')}
+                className="btn-ghost px-4 py-2 text-sm border border-surface-border inline-flex items-center gap-2">
+                {copied === 'both' ? <><Check className="w-4 h-4 text-green-400" /> Copied</> : <><Copy className="w-4 h-4" /> Copy both</>}
+              </button>
+              <button onClick={() => setCreated(null)} className="btn-primary px-4 py-2 text-sm">Done</button>
             </div>
           </div>
         </div>

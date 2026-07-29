@@ -8,7 +8,7 @@ import { Wallet, ArrowDownCircle, ArrowUpCircle, Scale, Download, Calendar, Refr
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { fmtAmount } from '../lib/orderAmounts'
+import { fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import { buildPartnerDues, partnerName as partnerDisplayName } from '../lib/partnerDues'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
@@ -58,9 +58,13 @@ const PARTY_CATS = [
 ]
 
 /* Daily Cashier Box — the cash that moved through the office for CLOSED orders.
-   IN  = payments collected directly by an office user (collected_by_name set).
-   OUT = third-party costs the office paid on the order: external retail invoices,
-         delivery packages and order services.
+   IN  = every payment collected on the order (payment_collections). The box only
+         shows CLOSED orders, and an order closes when the driver hands his cash
+         over at settlement, so all its payments — driver- AND office-collected —
+         are physically in the box by then.
+   OUT = third-party costs paid on the order: petty-cash retail purchases (external
+         retail invoices, excluding those flagged "paid" — settled directly by the
+         customer with the shop, so they never touched the box), and order services.
    Only closed orders count, dated by when the order was closed (closed_at). */
 export default function CashierBoxPage() {
   const { orders, loading, COMPANY_ID, loadFullOrderHistory } = useApp()
@@ -132,26 +136,32 @@ export default function CashierBoxPage() {
       const partyNm  = partyName(o.customer) || o.main_account || '—'
       const partyId  = o.customer?.id || o.customer_id || partyNm
 
-      // IN — payments with a collector name. A named payment by anyone other than
-      // the order's own driver is a call-center / office collection; that portion
-      // is tracked separately on each line (office) for the breakdown.
+      // IN — every payment collected on the order. The order is closed, so all of
+      // its cash (driver- and office-collected) is now in the box. The office
+      // portion (collected directly by a call-center user, not the driver) is
+      // tracked separately on each line for the "collected by call center" column.
       for (const p of (o.payment_collections ?? [])) {
-        if (!p.collected_by_name) continue
         const amt = round2(p.amount)
-        const byOfficeUser = !(o.driver_id && p.collected_by === o.driver_id)
+        if (!amt) continue
+        const byDriver = paymentByDriver(p, o)
+        const who = (p.collected_by_name || '').trim()
+          || (byDriver ? (`${o.driver?.first_name ?? ''} ${o.driver?.last_name ?? ''}`.trim() || 'Driver') : 'Office')
         out.push({
           day, order: o.order_number, recipient: o.recipient_name, cat, partyId, party: partyNm,
-          dir: 'in', desc: `Payment collected · ${p.collected_by_name}`,
-          cur: norm(p.currency), amount: amt, office: byOfficeUser ? amt : 0,
+          dir: 'in', desc: `Payment collected · ${who}`,
+          cur: norm(p.currency), amount: amt, office: byDriver ? 0 : amt,
         })
       }
-      // OUT — external retail invoices.
+      // OUT — petty-cash retail purchases. Invoices flagged "paid" (exclude_calculation)
+      // were settled directly by the customer with the shop, so the box never paid
+      // them — they're skipped here.
       for (const r of (o.retail_goods_invoices ?? [])) {
+        if (r.exclude_calculation) continue
         const amt = round2(r.invoice_value)
         if (!amt) continue
         out.push({
           day, order: o.order_number, recipient: o.recipient_name, cat, partyId, party: partyNm,
-          dir: 'out', desc: `Retail purchase${r.shop_name ? ` · ${r.shop_name}` : ''}`,
+          dir: 'out', desc: `Petty cash · retail purchase${r.shop_name ? ` · ${r.shop_name}` : ''}`,
           cur: norm(r.currency), amount: amt,
         })
       }

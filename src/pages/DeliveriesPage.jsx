@@ -652,9 +652,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }, [])
   const { currentUser, hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
-  // Only admins may set the delivery status by hand; a normal (call-center) user
-  // can't — it's driven by the driver app / order lifecycle instead.
+  // Only admins may set the order/delivery status by hand; a normal (call-center)
+  // user can't — both are driven by the driver app / order lifecycle instead.
   const canEditDeliveryStatus = hasRole('super_admin', 'admin')
+  const canEditOrderStatus    = canEditDeliveryStatus   // same roles govern the order status
+  // Super-admin restriction toggles (lock saved local-market invoices / protect
+  // other users' payments) apply only to normal users. Admins and super admins are
+  // exempt — they may always edit/delete saved invoices and any payment.
+  const canBypassRestrictions = hasRole('super_admin', 'admin')
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
@@ -1798,7 +1803,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // requirements at save-time so an order can never be locked while ineligible
     // (status Completed, delivery Delivered, and fully collected / zero pending —
     // payment waived only for credit orders / credit-allowed customers).
-    if (close && (alreadyClosed || !canClose)) {
+    // A super admin can always lock an order; everyone else must meet the
+    // requirements above.
+    if (close && (alreadyClosed || (!canClose && !isSuperAdmin))) {
       return setError(alreadyClosed
         ? 'This order is already closed.'
         : 'Cannot close — order must be: ' + closeRequirements.join(', ') + '.')
@@ -1822,9 +1829,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         : derivePaymentStatus(paidCur, totals)
     // Money collection state, derived from payments (driver-collected cash recorded as payments).
     const collectionStatus = isFree ? COLLECTION_FULL : collectionFromPayStatus(derivePaymentStatus(paidCur, totals))
-    // "Mark Closed" locks the order via the isclosed flag.
+    // "Mark Closed" locks the order via the isclosed flag. closed_by_name records
+    // who locked it (shown as the lock indicator; only a super admin can unlock).
     const closeCols = close
-      ? { isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null }
+      ? { isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null, closed_by_name: currentUserName }
       : {}
 
     // New-order source: an order counts as an "outside" partner/supplier order
@@ -2066,6 +2074,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   function openPopover(type, order, e) {
     rememberOrder(order.id)
     if (isRowLocked(order)) return
+    // Order status is set by the driver app — only admins/super admins may change
+    // it by hand. Backstops the hidden list button.
+    if (type === 'status' && !canEditOrderStatus) return
     // Nothing can be done to an order until it's confirmed — only the confirm
     // toggle ('online') stays available. Backstops the disabled buttons.
     if (type !== 'online' && !isConfirmed(order)) return
@@ -2222,19 +2233,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // edit modal's "Mark Closed" sets.
   async function markClosed(o) {
     rememberOrder(o.id)
-    if (!canQuickClose(o)) return
+    // A super admin can always lock an order; everyone else only when it's fully
+    // collected and delivered (canQuickClose).
+    if (!canQuickClose(o) && !isSuperAdmin) return
     setToggling(o.id)
     await supabase.from('delivery_orders').update({
       isclosed:  true,
       closed_at: new Date().toISOString(),
       closed_by: currentUser?.user_id || null,
+      closed_by_name: currentUserName,
     }).eq('id', o.id)
     await fetchOrders()
     setToggling(null)
   }
 
   // Super-admin only: reopen a closed order — clears the isclosed lock (and its
-  // closed_at/closed_by stamps) so the order can be edited/settled again.
+  // closed_at/closed_by stamps) so the order can be edited/settled again. Admins
+  // and regular users can lock an order but can never unlock one.
   async function reopenClosed(o) {
     rememberOrder(o.id)
     if (!isSuperAdmin || !o.isclosed) return
@@ -2243,9 +2258,40 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       isclosed:  false,
       closed_at: null,
       closed_by: null,
+      closed_by_name: null,
     }).eq('id', o.id)
     await fetchOrders()
     setToggling(null)
+  }
+
+  // Unlock the order currently open in the modal (super admin only) and reflect it
+  // in the open modal at once, so it becomes editable without reopening.
+  async function unlockCurrentOrder() {
+    if (!isSuperAdmin || !modal || modal === 'add' || !modal.isclosed) return
+    await reopenClosed(modal)
+    setModal(m => (m && m !== 'add')
+      ? { ...m, isclosed: false, closed_at: null, closed_by: null, closed_by_name: null }
+      : m)
+  }
+
+  // Quick-lock the order open in the modal (super admin only). This is a standalone
+  // action — it locks the order directly regardless of its state (completed or not,
+  // collected or not), without running the save/eligibility flow, so a super admin
+  // can instantly freeze an order against any further edits by users or admins.
+  async function quickLockCurrentOrder() {
+    if (!isSuperAdmin || !modal || modal === 'add' || modal.isclosed) return
+    setToggling(modal.id)
+    await supabase.from('delivery_orders').update({
+      isclosed:  true,
+      closed_at: new Date().toISOString(),
+      closed_by: currentUser?.user_id || null,
+      closed_by_name: currentUserName,
+    }).eq('id', modal.id)
+    await fetchOrders()
+    setToggling(null)
+    setModal(m => (m && m !== 'add')
+      ? { ...m, isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null, closed_by_name: currentUserName }
+      : m)
   }
 
   async function copyNum(num) {
@@ -2715,8 +2761,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     )
                   })()}
                   {o.isclosed && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1 ml-1">
-                      <Lock className="w-3 h-3" /> Closed
+                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1 ml-1"
+                      title={o.closed_by_name ? `Locked by ${o.closed_by_name}` : 'Locked'}>
+                      <Lock className="w-3 h-3" /> {o.closed_by_name ? `Locked by ${o.closed_by_name}` : 'Closed'}
                     </span>
                   )}
                 </td>
@@ -2809,8 +2856,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3">
-                  {partyContactId ? (
-                    /* 2nd-party users can't change order/delivery status — view only. */
+                  {partyContactId || !canEditOrderStatus ? (
+                    /* 2nd-party users and normal (call-center) users can't change the
+                       order status — it's set by the driver app. View only. */
                     <Badge status={normalizeStatus(o.status)} />
                   ) : (
                     <button type="button" disabled={isRowLocked(o) || !isConfirmed(o)}
@@ -2875,9 +2923,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       <Edit2 className="w-4 h-4" />
                     </button>
                     {!closed && !o.isclosed && !isDeactivated(o) && (
-                      <button onClick={() => markClosed(o)} disabled={toggling === o.id || !canQuickClose(o)}
-                        title={canQuickClose(o)
-                          ? (isCreditCustomerOrder(o) && !isFullyPaid(o) ? 'Mark as closed (credit customer — balance settled later)' : 'Mark as closed')
+                      <button onClick={() => markClosed(o)} disabled={toggling === o.id || (!canQuickClose(o) && !isSuperAdmin)}
+                        title={(canQuickClose(o) || isSuperAdmin)
+                          ? (isSuperAdmin && !canQuickClose(o) ? 'Lock order (super admin)' : isCreditCustomerOrder(o) && !isFullyPaid(o) ? 'Mark as closed (credit customer — balance settled later)' : 'Mark as closed')
                           : (isCreditCustomerOrder(o) ? 'Can close once delivery status is Delivered' : 'Can close only when fully collected and delivery status is Delivered')}
                         className="btn-ghost p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
                         <Lock className="w-4 h-4" />
@@ -3034,7 +3082,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {orderLocked && (
                 <div className="flex items-center gap-2 text-amber-300 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
                   <Lock className="w-4 h-4 flex-shrink-0" />
-                  This order is closed and locked — no changes can be made.
+                  This order is locked{alreadyClosed && modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''} — no changes can be made
+                  {alreadyClosed ? '. Only a super admin can unlock it.' : '.'}
                 </div>
               )}
 
@@ -3419,12 +3468,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   <div>
                     <label className="label">Order Status</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.status} onChange={e => setOrderStatus(e.target.value)}
-                      disabled={!!partyContactId}>
+                      disabled={!!partyContactId || !canEditOrderStatus}>
                       {!ORDER_STATUS_OPTIONS.some(o => o.value === form.status) && form.status && (
                         <option value={form.status}>{form.status.replace(/_/g, ' ')}</option>
                       )}
                       {ORDER_STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                    {!partyContactId && !canEditOrderStatus && (
+                      <p className="text-[11px] text-slate-500 mt-1">Set automatically — only an admin can change it.</p>
+                    )}
                   </div>
                   <div>
                     <label className="label">Delivery Status</label>
@@ -3526,7 +3578,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         // new rows stay editable. With the restriction off, saved rows
                         // remain editable until the order is closed (the surrounding
                         // fieldset already disables everything on a closed order).
-                        const riLocked = appSettings.lockSavedLocalInvoices !== false && !!ri._id
+                        const riLocked = appSettings.lockSavedLocalInvoices !== false && !!ri._id && !canBypassRestrictions
                         return (
                         <tr key={ri._id ?? ri._key ?? idx} className="border-t border-surface-border/50">
                           {!partyContactId && (
@@ -3829,10 +3881,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         // saved payment is read-only unless it was recorded by the current
                         // user. Driver-collected payments often have no collected_by id
                         // (only a Driver group/name), so anything not provably "mine" is
-                        // locked. The super admin is always exempt.
+                        // locked. Admins and super admins are always exempt.
                         const mine = !!p.collected_by && !!currentUser?.user_id && p.collected_by === currentUser.user_id
                         const pLocked = appSettings.protectOthersPayments === true
-                          && !isSuperAdmin
+                          && !canBypassRestrictions
                           && !!p._id && !mine
                         return (
                         <tr key={p._id ?? p._key ?? idx} className="border-t border-surface-border/50">
@@ -3955,21 +4007,42 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 </div>
               )}
               <div className="flex gap-3 justify-end items-center">
-                {modal !== 'add' && (
+                {/* Far left — Mark Closed / locked indicator for admins & normal users. */}
+                {modal !== 'add' && !isSuperAdmin && (alreadyClosed ? (
+                  <span className="mr-auto inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-400">
+                    <Lock className="w-4 h-4" /> Locked{modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''}
+                  </span>
+                ) : (
                   <button
                     type="button"
                     onClick={() => handleSave({ close: true })}
-                    disabled={saving || alreadyClosed || !canClose}
-                    title={
-                      alreadyClosed ? 'Order is already closed'
-                      : canClose    ? 'Mark this order as closed'
-                      : 'Requires: ' + closeRequirements.join(', ')
-                    }
+                    disabled={saving || !canClose}
+                    title={canClose ? 'Mark this order as closed (lock)' : 'Requires: ' + closeRequirements.join(', ')}
                     className="mr-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
                                bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15
                                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-500/10">
-                    <Lock className="w-4 h-4" />
-                    {alreadyClosed ? 'Closed' : 'Mark Closed'}
+                    <Lock className="w-4 h-4" /> Mark Closed
+                  </button>
+                ))}
+
+                {/* Standalone quick Lock / Unlock — SUPER ADMIN ONLY. Freezes the
+                    order immediately, in any state, with no save/eligibility. */}
+                {modal !== 'add' && isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={alreadyClosed ? unlockCurrentOrder : quickLockCurrentOrder}
+                    disabled={saving || toggling === modal.id}
+                    title={alreadyClosed
+                      ? 'Unlock this order (super admin)'
+                      : 'Lock this order to prevent any further changes (super admin)'}
+                    className={`mx-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                               disabled:opacity-40 disabled:cursor-not-allowed ${
+                                 alreadyClosed
+                                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'
+                                   : 'bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15'}`}>
+                    {alreadyClosed
+                      ? <><Unlock className="w-4 h-4" /> Unlock order</>
+                      : <><Lock className="w-4 h-4" /> Lock order</>}
                   </button>
                 )}
                 <button className="btn-ghost" onClick={closeModal}>{orderLocked ? 'Close' : 'Cancel'}</button>

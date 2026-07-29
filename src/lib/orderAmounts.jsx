@@ -50,46 +50,54 @@ export function orderCollectedByCurrency(o) {
   return c
 }
 
-/* Per-currency amount the DRIVER collected from the customer = payments NOT taken
-   by an office user. A payment stamped with collected_by_name was paid to the
-   office directly, so the driver never handled that cash and it's left out of the
-   driver settlement. Legacy payments (no collector name) count as driver-collected. */
+/* Whether a payment was collected by the DRIVER (vs. directly by an office user).
+   The channel is read primarily from collection_group, matching the Credit
+   Customers and Deliveries pages: 'Driver' → driver; 'Call center' / 'Office' →
+   office. When no group is stamped (legacy rows) fall back to the collector id/name:
+   the order's own driver (matched collected_by) or a payment with no collector name
+   at all counts as driver-collected; a named payment by anyone else is office.
+   This matters for credit-customer orders — the driver app stamps
+   collection_group='Driver' but often leaves collected_by null, so without the
+   group check the driver's collection would be misread as an office payment and
+   the order would never surface in his settlement. */
+export function paymentByDriver(p, o) {
+  const grp = String(p.collection_group || '').trim().toLowerCase()
+  if (grp === 'driver') return true
+  if (grp === 'call center' || grp === 'office') return false
+  return !p.collected_by_name || (!!o.driver_id && p.collected_by === o.driver_id)
+}
+
+/* Per-currency amount the DRIVER collected from the customer. */
 export function orderDriverCollectedByCurrency(o) {
   const c = {}
   for (const p of (o.payment_collections ?? [])) {
-    // Driver-collected = the order's own driver took the cash. The driver app stamps
-    // the driver's contact id (collected_by) + name; legacy driver payments carry no
-    // collector name at all. A named payment by anyone else is an office collection.
-    const byDriver = !p.collected_by_name || (o.driver_id && p.collected_by === o.driver_id)
-    if (!byDriver) continue
+    if (!paymentByDriver(p, o)) continue
     const cur = p.currency || 'USD'
     c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
   }
   return c
 }
 
-/* Per-currency amount paid DIRECTLY to the office = payments stamped with a
-   collector name (an office user took the cash). The mirror of
-   orderDriverCollectedByCurrency: this money never passed through the driver, so
-   there's nothing to collect from them for it — it's shown separately on the
-   Driver Settlements screen. */
+/* Per-currency amount paid DIRECTLY to the office (an office user took the cash).
+   The mirror of orderDriverCollectedByCurrency: this money never passed through the
+   driver, so there's nothing to collect from them for it — it's shown separately on
+   the Driver Settlements screen. */
 export function orderOfficeCollectedByCurrency(o) {
   const c = {}
   for (const p of (o.payment_collections ?? [])) {
-    if (!p.collected_by_name) continue                        // no name = driver-collected
-    if (o.driver_id && p.collected_by === o.driver_id) continue   // the order's driver, not office
+    if (paymentByDriver(p, o)) continue
     const cur = p.currency || 'USD'
     c[cur] = (c[cur] || 0) + (Number(p.amount) || 0)
   }
   return c
 }
 
-/* Distinct names of office users who collected payments on an order (those with a
-   collected_by_name), for showing "Collected by <name>" in the amounts summary. */
+/* Distinct names of office users who collected payments on an order, for showing
+   "Collected by <name>" in the amounts summary. */
 export function orderCollectorNames(o) {
   const names = []
   for (const p of (o.payment_collections ?? [])) {
-    if (o.driver_id && p.collected_by === o.driver_id) continue   // the driver, not an office collector
+    if (paymentByDriver(p, o)) continue   // the driver, not an office collector
     const n = (p.collected_by_name || '').trim()
     if (n && !names.includes(n)) names.push(n)
   }

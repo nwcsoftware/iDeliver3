@@ -102,6 +102,8 @@ export default function DriverDuesPage() {
   // Driver balances span the whole history, so pull every order (beyond the window).
   useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const isSuperAdmin = hasRole('super_admin')
+  // Name recorded as the one who locked (closed) an order, for the lock indicator.
+  const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
   // Who may back-/forward-date the "Collect & close as of" settlement date.
   // Admins get this alongside super admins; everyone else settles as of today.
   const canBackdateSettlement = hasRole('super_admin', 'admin')
@@ -567,6 +569,7 @@ export default function DriverDuesPage() {
           isclosed:       true,
           closed_at:      settleAt,
           closed_by:      currentUser?.user_id || null,
+          closed_by_name: currentUserName,
           payment_status: 'paid_to_office',
         })
         .in('id', closedIds)
@@ -603,7 +606,7 @@ export default function DriverDuesPage() {
     const closedAt = `${day}T12:00:00`
     const { error } = await supabase
       .from('delivery_orders')
-      .update({ isclosed: true, closed_at: closedAt, closed_by: currentUser?.user_id || null })
+      .update({ isclosed: true, closed_at: closedAt, closed_by: currentUser?.user_id || null, closed_by_name: currentUserName })
       .eq('id', orderId)
     setClosingId(null)
     if (!error) await fetchOrders()
@@ -616,7 +619,7 @@ export default function DriverDuesPage() {
     setClosingId(orderId)
     const { error } = await supabase
       .from('delivery_orders')
-      .update({ isclosed: false, closed_at: null, closed_by: null })
+      .update({ isclosed: false, closed_at: null, closed_by: null, closed_by_name: null })
       .eq('id', orderId)
     setClosingId(null)
     if (!error) await fetchOrders()
