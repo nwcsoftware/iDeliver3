@@ -285,9 +285,13 @@ export default function DriverDuesPage() {
     for (const c of CURRENCIES) office[c] = round2(officeCur[c])
     // Petty cash used = total of the order's external retail invoices
     // (retail_goods_invoices), summed per currency from the order's own data.
+    // An invoice flagged "Paid" (exclude_calculation) was settled directly by the
+    // customer with the shop — the driver never spent petty cash on it, so it must
+    // NOT reduce the outstanding amount owed by the driver and is skipped here.
     const retail    = emptyCur()
     const invoices  = o.retail_goods_invoices ?? []
     for (const r of invoices) {
+      if (r.exclude_calculation) continue
       const cur = CURRENCIES.includes(r.currency) ? r.currency : 'USD'
       retail[cur] += round2(r.invoice_value)
     }
@@ -892,6 +896,15 @@ export default function DriverDuesPage() {
       {/* ── To Collect tab ─────────────────────────────────── */}
       {tab === 'collect' && (<>
 
+      {/* Selected driver name — shown only when a specific driver is filtered
+          (nothing when "All drivers" is selected). */}
+      {filters.driver_id && (
+        <div className="flex items-center gap-2 px-1">
+          <span className="text-xs uppercase tracking-wider text-slate-500">Driver</span>
+          <span className="text-sm font-semibold text-slate-100">{selectedDriverName}</span>
+        </div>
+      )}
+
       {/* List */}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm min-w-[1100px]">
@@ -904,7 +917,7 @@ export default function DriverDuesPage() {
                     onChange={toggleAll} />
                 )}
               </th>
-              {['Date', 'Order #', 'Driver', 'Customer', 'Collected from customer', 'Petty cash used', 'Balance pending', 'Status'].map(h => (
+              {['Date', 'Order #', 'Customer', 'Order value', 'Collected from customer', 'Petty cash used', 'Outstanding amount from driver'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
               ))}
               <th className="px-4 py-3" />
@@ -912,9 +925,9 @@ export default function DriverDuesPage() {
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {busy ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
             ) : visible.map(r => {
               const o = r.order
               const selectable = !r.settled && !o.isclosed && !!filters.driver_id
@@ -930,8 +943,13 @@ export default function DriverDuesPage() {
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{orderDate(o) || '—'}</td>
                   <td className="px-4 py-3 whitespace-nowrap font-mono text-xs text-brand-400">{o.order_number ?? '—'}</td>
-                  <td className="px-4 py-3 text-slate-200 text-xs whitespace-nowrap">{driverName(r.driver)}</td>
                   <td className="px-4 py-3 text-slate-300 text-xs">{o.recipient_name ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
+                    {CURRENCIES.filter(c => r.total[c] > 0).map(c => (
+                      <div key={c} className="text-slate-200">{fmtMoney(r.total[c], c)}</div>
+                    ))}
+                    {!CURRENCIES.some(c => r.total[c] > 0) && <span className="text-slate-600">—</span>}
+                  </td>
                   <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
                     {CURRENCIES.filter(c => r.collected[c] > 0).map(c => (
                       <div key={c} className="text-green-400">{fmtMoney(r.collected[c], c)}</div>
@@ -949,13 +967,6 @@ export default function DriverDuesPage() {
                       <div key={c} className="text-slate-100">{fmtMoney(r.net[c], c)}</div>
                     ))}
                     {r.net.USD === 0 && r.net.LBP === 0 && <span className="text-slate-600">—</span>}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    {o.isclosed
-                      ? <span className="px-2 py-0.5 rounded text-xs font-medium border bg-slate-600/15 text-slate-300 border-slate-600/30 inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Closed</span>
-                      : r.settled
-                      ? <span className="px-2 py-0.5 rounded text-xs font-medium border bg-green-600/10 text-green-300 border-green-600/20 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Collected</span>
-                      : <span className="px-2 py-0.5 rounded text-xs font-medium border bg-amber-600/10 text-amber-300 border-amber-600/20">Outstanding</span>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right">
                     <div className="flex items-center justify-end gap-1">
