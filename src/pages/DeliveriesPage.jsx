@@ -17,7 +17,7 @@ import {
   resolveSubAccount, subAccountBalance, checkSubAccountCharge,
   isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
 } from '../lib/subAccounts'
-import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount } from '../lib/orderAmounts'
+import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
@@ -99,7 +99,7 @@ function normalizeStatus(s) {
 // A deactivated order = cancelled or failed. Such orders (and closed ones) are
 // locked: no edit, payment, status change or driver assignment from the list.
 function isDeactivated(o) { return ['cancelled', 'failed'].includes(o?.status) }
-function isRowLocked(o)   { return o?.isclosed === true || isDeactivated(o) }
+function isRowLocked(o)   { return o?.isclosed === true || o?.is_locked === true || isDeactivated(o) }
 
 // Once the driver has picked the order up (delivery status past "Awaiting
 // Pickup"), the assigned driver can no longer be changed.
@@ -131,6 +131,73 @@ function isFlagged(o) { return o?.is_flagged === true }
 
 // Is this order's customer a credit customer (allowed to owe a balance)?
 function isCreditCustomerOrder(o) { return o?.customer?.credit_debit_allowed === true }
+
+// "Ads & Services" (Story) orders: a lightweight order nature stored in the same
+// delivery_orders table with order_type = 'Story'. They carry no route, driver,
+// delivery status, packages, market invoices, third-party services or delivery
+// fee — just a customer, order status, scheduled date, their line items + payment.
+const STORY_ORDER_TYPE = 'Story'
+function isStoryOrder(o) { return (o?.order_type || '').trim().toLowerCase() === STORY_ORDER_TYPE.toLowerCase() }
+
+// Data-integrity checks for the daily-orders "Check orders" audit popup. Returns a
+// list of human-readable warnings for one order (empty = no issues).
+function orderWarnings(o) {
+  const w = []
+  if (isDeactivated(o)) return w                         // cancelled/failed: not audited
+  const story     = isStoryOrder(o)                      // no delivery concept
+  const completed = normalizeStatus(o?.status) === 'completed'
+  const delivered = story ? true : o?.delivery_status === 'Delivered'   // story: N/A → treat as met
+  const free      = o?.is_free_order === true
+
+  const r2     = n => Math.round((Number(n) || 0) * 100) / 100
+  const totals = orderTotalsByCurrency(o)
+  const paid   = orderCollectedByCurrency(o)
+  const curs   = new Set([...Object.keys(totals), ...Object.keys(paid)])
+  const totalPositive  = [...curs].some(c => r2(totals[c]) > 0)
+  // Fully collected = there's a real total and no currency is short.
+  const fullyCollected = totalPositive && [...curs].every(c => r2(paid[c]) >= r2(totals[c]) - 0.009)
+
+  // 1) Normal (non-credit, non-free) customers pay cash. Credit customers may
+  //    legitimately close unpaid / partially paid, so they're skipped here.
+  //    • If a payment exists, the total must match it — flag any mismatch.
+  //    • If NO payment exists, it's only a problem once the scheduled time has
+  //      passed (a future/in-progress order simply hasn't been collected yet).
+  if (!isCreditCustomerOrder(o) && !free) {
+    const hasPayments = [...curs].some(c => r2(paid[c]) > 0)
+    if (hasPayments) {
+      const diffs = []
+      for (const c of curs) {
+        const t = r2(totals[c]); const p = r2(paid[c])
+        if (Math.abs(t - p) > 0.009) diffs.push(`${c}: total ${fmtAmount(t, c)} ≠ collected ${fmtAmount(p, c)}`)
+      }
+      if (diffs.length) w.push(`Total ≠ payments — ${diffs.join('; ')}`)
+    } else if (totalPositive) {
+      const dl = orderDeadline(o)
+      if (dl && dl.getTime() < Date.now()) {
+        w.push('No payment recorded and the scheduled time has passed')
+      }
+    }
+  }
+  // 2) Order marked Completed while the goods aren't Delivered yet.
+  if (completed && !delivered) {
+    w.push(`Order status is Completed but delivery status is “${o?.delivery_status || '—'}” (not Delivered)`)
+  }
+  // 3) Order closed while it isn't Delivered and/or isn't Completed.
+  if (o?.isclosed === true && (!delivered || !completed)) {
+    const parts = []
+    if (!delivered) parts.push(`delivery status is “${o?.delivery_status || '—'}” (not Delivered)`)
+    if (!completed) parts.push(`order status is “${normalizeStatus(o?.status) || '—'}” (not Completed)`)
+    w.push(`Order is closed but ${parts.join(' and ')}`)
+  }
+  // 4) Money fully collected, but the order isn't Completed and/or not Delivered.
+  if (!free && fullyCollected && (!completed || !delivered)) {
+    const parts = []
+    if (!completed) parts.push(`order status is “${normalizeStatus(o?.status) || '—'}” (not Completed)`)
+    if (!delivered) parts.push(`delivery status is “${o?.delivery_status || '—'}” (not Delivered)`)
+    w.push(`Money fully collected but ${parts.join(' and ')}`)
+  }
+  return w
+}
 
 // Quick "Mark Closed" from the list is allowed once the materials are Delivered.
 // Normally the money must also be fully collected, but a credit customer may close
@@ -627,6 +694,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     pendingScrollRef.current = id
     try { sessionStorage.setItem(RESTORE_KEY, id) } catch { /* storage unavailable */ }
   }
+  // Immediately scroll a daily-list row into view and flash it (used by the audit
+  // popup's order-number link — the row is already rendered, no reload needed).
+  function focusOrderRow(id) {
+    if (!id) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`order-row-${id}`)
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      setFlashOrderId(id)
+      setTimeout(() => setFlashOrderId(f => (f === id ? null : f)), 2500)
+    })
+  }
   // After the list finishes (re)loading, scroll the pending order into view + flash.
   useEffect(() => {
     if (loading.orders || orders.length === 0) return
@@ -715,6 +793,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [confirmFilter, setConfirmFilter] = useState('all')   // all | confirmed | unconfirmed
   const [sort,      setSort]      = useState({ col: null, dir: null })  // column sort: asc | desc | null
   const [modal,     setModal]     = useState(null)
+  // Super-admin "lock order" reason prompt: holds the reason text while the small
+  // confirm dialog is open (null = closed).
+  const [lockPrompt, setLockPrompt] = useState(null)   // { reason } | null
+  // "Check orders" audit popup (daily list): flags orders with data issues.
+  const [auditOpen, setAuditOpen] = useState(false)
   const [mapOpen,   setMapOpen]   = useState(false)   // delivery-address map picker
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
@@ -774,6 +857,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [dateTo,               setDateTo]               = useState(localTodayStr())
   // Closed Orders date grouping — null until the first load picks a default.
   const [openGroups,           setOpenGroups]           = useState(null)
+  // Daily list groups (Delivery Orders / Ads & Services) — tracks which are
+  // COLLAPSED (both open by default).
+  const [collapsedGroups,      setCollapsedGroups]      = useState(() => new Set())
   const [pendingsOpen,         setPendingsOpen]         = useState(false)
   const [totalsExpanded,       setTotalsExpanded]       = useState(false)  // floating-bar breakdown panel
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
@@ -1000,6 +1086,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       && matchScheduledDate(o)
   })
 
+  // Orders in the current (filtered) list that have data-integrity issues, for the
+  // "Check orders" audit popup.
+  const auditRows = useMemo(() => {
+    const rows = []
+    for (const o of filtered) {
+      const warnings = orderWarnings(o)
+      if (warnings.length) rows.push({ o, warnings })
+    }
+    return rows
+  }, [filtered])
+
   const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
     setDriverFilter(''); setCustomerFilter(''); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
@@ -1070,15 +1167,30 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }, [closed, loading.orders, groups, openGroups])
 
   const openGroupSet = openGroups ?? new Set(['this_week'])
-  const renderGroups = closed
-    ? groups.map(g => ({ ...g, open: openGroupSet.has(g.key) }))
-    : [{ key: 'all', label: null, orders: sorted, open: true }]
-
   const toggleGroup = key => setOpenGroups(prev => {
     const next = new Set(prev ?? openGroupSet)
     next.has(key) ? next.delete(key) : next.add(key)
     return next
   })
+  const toggleDailyGroup = key => setCollapsedGroups(prev => {
+    const next = new Set(prev)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
+
+  // Closed Orders: date groups (Outlook-style). Daily list: split into
+  // "Delivery Orders" and "Ads & Services" (Story), both collapsible with counts,
+  // both fed from the already-filtered `sorted` set so they respect every filter.
+  const renderGroups = closed
+    ? groups.map(g => ({ ...g, open: openGroupSet.has(g.key), showHeader: true, onToggle: () => toggleGroup(g.key) }))
+    : (() => {
+        const story  = sorted.filter(isStoryOrder)
+        const normal = sorted.filter(o => !isStoryOrder(o))
+        const out = [{ key: 'orders', label: 'Delivery Orders', orders: normal, open: !collapsedGroups.has('orders'), showHeader: true, onToggle: () => toggleDailyGroup('orders') }]
+        // Only surface the Ads & Services group when such orders exist in the view.
+        if (story.length) out.push({ key: 'story', label: 'Ads & Services', orders: story, open: !collapsedGroups.has('story'), showHeader: true, onToggle: () => toggleDailyGroup('story') })
+        return out
+      })()
 
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
   const pendingsSummary = (() => {
@@ -1119,19 +1231,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           else                                                                          b[row.key] += (r[row.key] || 0)
         }
       }
-      // Split the order's collected cash by the payment's collection_group. A
-      // payment with no group is attributed to the driver when the order's own
-      // driver recorded it; otherwise it falls into the call-center bucket. This
-      // catch-all guarantees every collected amount is counted (so Total
-      // collections here matches the Daily Collection page total).
+      // Split the order's collected cash into driver vs call-center using the same
+      // paymentByDriver rule as Driver Settlements and the Cashier Box, so the
+      // attribution is consistent everywhere (legacy driver payments with no id /
+      // no group are still counted as driver). Every payment lands in one bucket,
+      // so Total collections here matches the Daily Collection page total.
       for (const pc of (o.payment_collections ?? [])) {
         const cur = CURRENCIES.includes(pc.currency) ? pc.currency : (pc.currency || 'USD')
         const b = ensure(cur)
         const amt = round2(pc.amount)
-        const grp = String(pc.collection_group || '').trim().toLowerCase()
-        const byOrderDriver = !!pc.collected_by && !!o.driver_id && pc.collected_by === o.driver_id
-        if (grp === 'driver' || (!grp && byOrderDriver)) b.collectedByDriver += amt
-        else                                             b.collectedByOffice += amt
+        if (paymentByDriver(pc, o)) b.collectedByDriver += amt
+        else                        b.collectedByOffice += amt
       }
     }
     const order = [...CURRENCIES, ...Object.keys(acc).filter(c => !CURRENCIES.includes(c))]
@@ -1443,6 +1553,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // entered manually — never seeded from the 2nd-party's own contact.
       setForm(f => ({ ...f, recipient_name: '', recipient_mobile: '', recipient_whatsapp: '', delivery_address: '', delivery_lat: '', delivery_lng: '' }))
     }
+  }
+
+  // Open the simplified "Ads & Services" (Story) order form. Same modal, but the
+  // order_type is fixed to 'Story' which hides route/driver/delivery/packages/etc.
+  function openAddStory() {
+    savedOrderIdRef.current = null
+    setForm({ ...getEmptyForm(), order_type: STORY_ORDER_TYPE, scheduled_time_from: '', scheduled_time_to: '', delivery_status: null, pickup_address: '', delivery_address: '' })
+    setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
+    setPackages([]); setOrigPackageIds([])
+    setServices([]); setOrigServiceIds([])
+    setSectionsOpen(defaultNewSections())
+    setCustomerInput(''); setError(''); setModal('add')
   }
 
   async function openEdit(o) {
@@ -1768,8 +1890,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       return setError('This order is confirmed and can no longer be edited.')
     }
     if (!form.recipient_name.trim())   return setError('Recipient name is required.')
-    if (!form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
-    if (!form.delivery_address.trim()) return setError('Delivery address is required.')
+    // Story (ads/services) orders have no route — mobile & delivery address aren't
+    // required (there's nothing to deliver).
+    if (!isStory && !form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
+    if (!isStory && !form.delivery_address.trim()) return setError('Delivery address is required.')
     if (!form.customer_id)             return setError('Please select a customer.')
     // Closing is what puts a charge on the account, so the account's terms (cash
     // vs credit, limit, expiry) are enforced here rather than on every save. The
@@ -2274,23 +2398,49 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       : m)
   }
 
-  // Quick-lock the order open in the modal (super admin only). This is a standalone
-  // action — it locks the order directly regardless of its state (completed or not,
-  // collected or not), without running the save/eligibility flow, so a super admin
-  // can instantly freeze an order against any further edits by users or admins.
-  async function quickLockCurrentOrder() {
-    if (!isSuperAdmin || !modal || modal === 'add' || modal.isclosed) return
+  // Super-admin "lock order" (is_locked) — a standalone freeze, separate from
+  // closing. It stamps who locked it (is_locked_by) and the reason (why_is_locked),
+  // stored server-side so the lock applies to every signed-in user everywhere and
+  // propagates via realtime. Regardless of the order's state.
+  async function applyOrderLock(reason) {
+    if (!isSuperAdmin || !modal || modal === 'add' || modal.is_locked) return
+    const why = (reason || '').trim() || null
     setToggling(modal.id)
-    await supabase.from('delivery_orders').update({
-      isclosed:  true,
-      closed_at: new Date().toISOString(),
-      closed_by: currentUser?.user_id || null,
-      closed_by_name: currentUserName,
+    const { error: e } = await supabase.from('delivery_orders').update({
+      is_locked:     true,
+      is_locked_by:  currentUserName,
+      why_is_locked: why,
     }).eq('id', modal.id)
-    await fetchOrders()
     setToggling(null)
+    // Surface a write failure (e.g. the is_locked columns not yet visible to the
+    // API) instead of pretending the lock stuck — otherwise other users would
+    // never see it because it never reached the database.
+    if (e) {
+      setError(/column .* does not exist|schema cache|is_locked/i.test(e.message)
+        ? 'Lock columns are not available in the API yet. Run: NOTIFY pgrst, \'reload schema\'; in Supabase, then try again.'
+        : (e.message || 'Could not lock the order.'))
+      return
+    }
+    await fetchOrders()
     setModal(m => (m && m !== 'add')
-      ? { ...m, isclosed: true, closed_at: new Date().toISOString(), closed_by: currentUser?.user_id || null, closed_by_name: currentUserName }
+      ? { ...m, is_locked: true, is_locked_by: currentUserName, why_is_locked: why }
+      : m)
+  }
+
+  // Remove the super-admin lock (super admin only). Clears the locker + reason.
+  async function removeOrderLock() {
+    if (!isSuperAdmin || !modal || modal === 'add' || !modal.is_locked) return
+    setToggling(modal.id)
+    const { error: e } = await supabase.from('delivery_orders').update({
+      is_locked:     false,
+      is_locked_by:  null,
+      why_is_locked: null,
+    }).eq('id', modal.id)
+    setToggling(null)
+    if (e) { setError(e.message || 'Could not unlock the order.'); return }
+    await fetchOrders()
+    setModal(m => (m && m !== 'add')
+      ? { ...m, is_locked: false, is_locked_by: null, why_is_locked: null }
       : m)
   }
 
@@ -2384,8 +2534,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const collectionFromCustomer = collectionFromPayStatus(paymentStatus)
 
   // A closed OR deactivated (cancelled/failed) order is locked: view-only, no edits.
-  const orderLocked   = modal && modal !== 'add' && (modal.isclosed === true || isDeactivated(modal))
+  const orderLocked   = modal && modal !== 'add' && (modal.isclosed === true || modal.is_locked === true || isDeactivated(modal))
   const alreadyClosed = modal && modal !== 'add' && modal.isclosed === true
+  // Separate super-admin "lock order" (is_locked) — distinct from closing.
+  const isLockedNow   = modal && modal !== 'add' && modal.is_locked === true
+  // Is the order in the modal an "Ads & Services" (Story) order? Drives which
+  // sections are shown (no route/driver/delivery/packages/market/services/fee).
+  const isStory       = isStoryOrder(form)
   // Credit customers may close an order with an unpaid balance (it becomes a
   // receivable). Detect credit from the picker list AND, as a fallback, from the
   // order's own joined customer — the credit contact may not be in the picker list
@@ -2443,7 +2598,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     closeRequirements.push('fully paid (no pending dues)')
   }
   if (form.status !== 'completed')          closeRequirements.push('order status Completed')
-  if (form.delivery_status !== 'Delivered') closeRequirements.push('delivery status Delivered')
+  // Story (ads/services) orders have no delivery status, so it isn't required.
+  if (!isStory && form.delivery_status !== 'Delivered') closeRequirements.push('delivery status Delivered')
   const canClose = closeRequirements.length === 0
   const paySummary    = CURRENCIES
     .map(c => ({ cur: c, total: round2(totals[c] || 0), paid: round2(paidByCur[c] || 0) }))
@@ -2540,6 +2696,26 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           </div>
           {!closed && (
             <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => setAuditOpen(true)}
+                title="Check the daily orders for possible errors"
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  auditRows.length
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'
+                    : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'}`}>
+                <AlertTriangle className="w-4 h-4" /> Check orders
+                {auditRows.length > 0 && (
+                  <span className="ml-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                    {auditRows.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={openAddStory}
+                title="New ads / services (Story) order — no route or delivery"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/15 transition-colors">
+                <Tag className="w-4 h-4" /> Add Ad
+              </button>
               <button className="btn-primary" onClick={openAdd}>
                 <Plus className="w-4 h-4" /> Add Order
               </button>
@@ -2677,11 +2853,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             ) : sorted.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : renderGroups.flatMap(g => [
-              // Group header — click to expand/collapse. Only on Closed Orders.
-              ...(closed ? [(
+              // Group header — click to expand/collapse (Closed Orders date groups
+              // and the daily Delivery Orders / Ads & Services groups).
+              ...(g.showHeader ? [(
                 <tr key={`group-${g.key}`} className="bg-surface-hover/40 border-y border-surface-border">
                   <td colSpan={partyContactId ? 8 : 10} className="px-0 py-0">
-                    <button type="button" onClick={() => toggleGroup(g.key)}
+                    <button type="button" onClick={g.onToggle}
                       className="w-full flex items-center gap-2 px-4 py-2 hover:bg-surface-hover/60 transition-colors text-left">
                       {g.open
                         ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
@@ -2762,8 +2939,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   })()}
                   {o.isclosed && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-green-400 mt-1 ml-1"
-                      title={o.closed_by_name ? `Locked by ${o.closed_by_name}` : 'Locked'}>
-                      <Lock className="w-3 h-3" /> {o.closed_by_name ? `Locked by ${o.closed_by_name}` : 'Closed'}
+                      title={o.closed_by_name ? `Closed by ${o.closed_by_name}` : 'Closed'}>
+                      <Lock className="w-3 h-3" /> {o.closed_by_name ? `Closed by ${o.closed_by_name}` : 'Closed'}
+                    </span>
+                  )}
+                  {o.is_locked && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-rose-400 mt-1 ml-1"
+                      title={`Locked${o.is_locked_by ? ` by ${o.is_locked_by}` : ''}${o.why_is_locked ? ` — ${o.why_is_locked}` : ''}`}>
+                      <Lock className="w-3 h-3" /> {o.is_locked_by ? `Locked by ${o.is_locked_by}` : 'Locked'}
                     </span>
                   )}
                 </td>
@@ -3070,7 +3253,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <Package className="w-4 h-4 text-brand-400" />
                 {modal === 'add'
-                  ? 'New Order'
+                  ? (isStory ? 'New Ad / Service (Story)' : 'New Order')
                   : `Edit — ${modal.order_number}`}
               </h2>
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
@@ -3079,7 +3262,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
-              {orderLocked && (
+              {isLockedNow && (
+                <div className="flex items-start gap-2 text-rose-300 text-sm bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+                  <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    This order is locked{modal.is_locked_by ? ` by ${modal.is_locked_by}` : ''} — no changes can be made. Only a super admin can unlock it.
+                    {modal.why_is_locked && (
+                      <div className="text-rose-300/80 text-xs mt-0.5">Reason: {modal.why_is_locked}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {orderLocked && !isLockedNow && (
                 <div className="flex items-center gap-2 text-amber-300 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
                   <Lock className="w-4 h-4 flex-shrink-0" />
                   This order is locked{alreadyClosed && modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''} — no changes can be made
@@ -3094,7 +3288,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 <div>
                   <div className="flex items-center justify-between">
                     <label className="label">Order Type</label>
-                    {!addingType && !partyContactId && (
+                    {!addingType && !partyContactId && !isStory && (
                       <button type="button" onClick={() => { setAddingType(true); setNewTypeName('') }}
                         className="text-[11px] text-brand-400 hover:text-brand-300 mb-1">
                         <Plus className="w-3 h-3 inline -mt-0.5" /> New type
@@ -3128,8 +3322,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       </button>
                     </div>
                   ) : (
-                    <select className="input" value={form.order_type || ''}
-                      onChange={e => fld('order_type', e.target.value)}>
+                    <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.order_type || ''}
+                      onChange={e => fld('order_type', e.target.value)} disabled={isStory}
+                      title={isStory ? 'Fixed for Ads & Services (Story) orders' : undefined}>
                       <option value="">—</option>
                       {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                       {orderTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
@@ -3138,6 +3333,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         && !orderTypes.some(t => t.name === form.order_type)
                         && <option value={form.order_type}>{form.order_type}</option>}
                     </select>
+                  )}
+                  {isStory && (
+                    <p className="text-[11px] text-slate-500 mt-1">Fixed to <span className="text-fuchsia-300 font-medium">Story</span> for ads &amp; services orders.</p>
                   )}
                 </div>
               </CollapsibleSection>
@@ -3360,7 +3558,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </CollapsibleSection>
 
               {/* ── Route ─────────────────────────────────────── */}
-              <CollapsibleSection title="Route" open={sectionsOpen.route} onToggle={v => toggleSection('route', v)}>
+              <CollapsibleSection title={isStory ? 'Schedule' : 'Route'} open={sectionsOpen.route} onToggle={v => toggleSection('route', v)}>
+                {!isStory && (
                 <div className="grid grid-cols-2 gap-3">
                   {/* 2nd-party (supplier/partner) users may select & type addresses
                       but not add/edit/delete the shared saved-location list. */}
@@ -3392,12 +3591,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       </button>
                     } />
                 </div>
+                )}
                 <div className="flex items-end gap-5">
                   <div className="w-36 flex-shrink-0">
                     <label className="label">Scheduled Date</label>
                     <input type="date" className="input" value={form.scheduled_date}
                       onChange={e => fld('scheduled_date', e.target.value)} />
                   </div>
+                  {!isStory && (<>
                   <div className="flex-1 min-w-0">
                   <TimeField
                     label="Pickup Time"
@@ -3416,6 +3617,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     rightButtons={[[10,'+10'],[60,'+1h']]}
                   />
                   </div>
+                  </>)}
                 </div>
               </CollapsibleSection>
 
@@ -3450,6 +3652,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   <p className="text-[11px] text-slate-500 mb-2">View only — assignment &amp; status are managed by the operations team.</p>
                 )}
                 <div className="grid grid-cols-2 gap-3">
+                  {!isStory && (
                   <div>
                     <label className="label">Driver</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed"
@@ -3465,6 +3668,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       <p className="text-[11px] text-slate-500 mt-1">Locked — driver already picked up the order.</p>
                     )}
                   </div>
+                  )}
                   <div>
                     <label className="label">Order Status</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.status} onChange={e => setOrderStatus(e.target.value)}
@@ -3478,6 +3682,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       <p className="text-[11px] text-slate-500 mt-1">Set automatically — only an admin can change it.</p>
                     )}
                   </div>
+                  {!isStory && (
                   <div>
                     <label className="label">Delivery Status</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.delivery_status} onChange={e => fld('delivery_status', e.target.value)}
@@ -3488,6 +3693,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       <p className="text-[11px] text-slate-500 mt-1">Set automatically — only an admin can change it.</p>
                     )}
                   </div>
+                  )}
                   {/* Hidden for 2nd-party (supplier/partner) users. */}
                   {!partyContactId && (
                   <div>
@@ -3503,7 +3709,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 </div>
               </CollapsibleSection>
 
-              {/* ── Delivery Packages (always shown) ──────────── */}
+              {/* ── Delivery Packages (hidden for Story/ads orders) ─ */}
+              {!isStory && (
               <CollapsibleSection title={`Delivery Packages (${packagesQty})`} open={sectionsOpen.packages} onToggle={v => toggleSection('packages', v)}
                 right={
                   <button type="button" onClick={addPackage}
@@ -3516,10 +3723,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   hideProvider={!!partyContactId} fixedProviderName={partyContactName}
                   customerName={customerInput.trim()} embedded onAdd={addPackage} />
               </CollapsibleSection>
+              )}
 
               {/* ── Order Services ────────────────────────────── */}
-              {/* Hidden for 2nd-party (supplier/partner) users. */}
-              {!partyContactId && (
+              {/* Hidden for 2nd-party (supplier/partner) users and Story orders. */}
+              {!partyContactId && !isStory && (
               <CollapsibleSection title={`Third party services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
                 right={
                   <button type="button" onClick={() => { openSection('services'); setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }]) }}
@@ -3535,6 +3743,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               )}
 
               {/* ── External Retails Invoices References (retail_goods_invoices) ── */}
+              {!isStory && (
               <CollapsibleSection title={`Local market invoices (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
                 right={
                   <button type="button" onClick={() => { openSection('retail_invoices'); addRetailInvoice() }}
@@ -3698,6 +3907,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </table>
                 </div>
               </CollapsibleSection>
+              )}
 
               {/* Pricing sections */}
               {/* ── Items ─────────────────────────────────────── */}
@@ -3771,20 +3981,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </CollapsibleSection>
               )}
 
-              {/* ── Delivery Fees & Totals ─────────────────────── */}
+              {/* ── Delivery Fees & Totals (hidden for Story/ads orders) ─ */}
+              {!isStory && (
               <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={true} onToggle={() => {}}>
 
                 {/* Editable fee/discount inputs — hidden for 2nd-party
                     (supplier/partner) users, who see only the totals summary. */}
                 {!partyContactId && (
                 <div className="grid grid-cols-4 gap-3">
+                  {!isStory && (
                   <div>
                     <label className="label">Delivery Fee</label>
                     <input type="number" min="0" step="0.01" className="input" value={form.delivery_fee}
                       onChange={e => fld('delivery_fee', e.target.value)} placeholder="0.00" />
                   </div>
+                  )}
                   <div>
-                    <label className="label">Fee Currency</label>
+                    <label className="label">{isStory ? 'Currency' : 'Fee Currency'}</label>
                     <select className="input" value={form.currency} onChange={e => fld('currency', e.target.value)}>
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
@@ -3849,6 +4062,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </label>
                 )}
               </CollapsibleSection>
+              )}
 
               {/* ── Payments ──────────────────────────────────── */}
               {/* Hidden for 2nd-party (supplier/partner) users. */}
@@ -4008,42 +4222,62 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               )}
               <div className="flex gap-3 justify-end items-center">
                 {/* Far left — Mark Closed / locked indicator for admins & normal users. */}
-                {modal !== 'add' && !isSuperAdmin && (alreadyClosed ? (
-                  <span className="mr-auto inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-400">
-                    <Lock className="w-4 h-4" /> Locked{modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''}
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => handleSave({ close: true })}
-                    disabled={saving || !canClose}
-                    title={canClose ? 'Mark this order as closed (lock)' : 'Requires: ' + closeRequirements.join(', ')}
-                    className="mr-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
-                               bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15
-                               disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-500/10">
-                    <Lock className="w-4 h-4" /> Mark Closed
-                  </button>
-                ))}
+                {modal !== 'add' && (
+                  <div className="mr-auto flex items-center gap-2 flex-wrap">
+                    {/* Close control (isclosed). Super admin can always close and can
+                        reopen a closed order; others close only when eligible. */}
+                    {alreadyClosed ? (
+                      isSuperAdmin ? (
+                        <button type="button" onClick={unlockCurrentOrder} disabled={saving || toggling === modal.id}
+                          title="Reopen this closed order (super admin)"
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                                     bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15
+                                     disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Unlock className="w-4 h-4" /> Reopen
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-400">
+                          <Lock className="w-4 h-4" /> Closed{modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''}
+                        </span>
+                      )
+                    ) : (
+                      <button type="button" onClick={() => handleSave({ close: true })}
+                        disabled={saving || (!canClose && !isSuperAdmin)}
+                        title={canClose ? 'Mark this order as closed' : isSuperAdmin ? 'Mark as closed (super admin)' : 'Requires: ' + closeRequirements.join(', ')}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                                   bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15
+                                   disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-500/10">
+                        <Lock className="w-4 h-4" /> Mark Closed
+                      </button>
+                    )}
 
-                {/* Standalone quick Lock / Unlock — SUPER ADMIN ONLY. Freezes the
-                    order immediately, in any state, with no save/eligibility. */}
-                {modal !== 'add' && isSuperAdmin && (
-                  <button
-                    type="button"
-                    onClick={alreadyClosed ? unlockCurrentOrder : quickLockCurrentOrder}
-                    disabled={saving || toggling === modal.id}
-                    title={alreadyClosed
-                      ? 'Unlock this order (super admin)'
-                      : 'Lock this order to prevent any further changes (super admin)'}
-                    className={`mx-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
-                               disabled:opacity-40 disabled:cursor-not-allowed ${
-                                 alreadyClosed
-                                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'
-                                   : 'bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15'}`}>
-                    {alreadyClosed
-                      ? <><Unlock className="w-4 h-4" /> Unlock order</>
-                      : <><Lock className="w-4 h-4" /> Lock order</>}
-                  </button>
+                    {/* Lock order (is_locked) — SUPER ADMIN ONLY, beside Mark Closed.
+                        Freezes the order everywhere; only a super admin can unlock. */}
+                    {isSuperAdmin ? (
+                      isLockedNow ? (
+                        <button type="button" onClick={removeOrderLock} disabled={saving || toggling === modal.id}
+                          title={`Unlock this order${modal.is_locked_by ? ` — locked by ${modal.is_locked_by}` : ''}`}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                                     bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15
+                                     disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Unlock className="w-4 h-4" /> Unlock order
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => setLockPrompt({ reason: '' })} disabled={saving || toggling === modal.id}
+                          title="Lock this order to prevent any further changes (super admin)"
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                                     bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/15
+                                     disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Lock className="w-4 h-4" /> Lock order
+                        </button>
+                      )
+                    ) : isLockedNow ? (
+                      <span className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-rose-300/80"
+                        title={modal.why_is_locked || ''}>
+                        <Lock className="w-4 h-4" /> Locked{modal.is_locked_by ? ` by ${modal.is_locked_by}` : ''}
+                      </span>
+                    ) : null}
+                  </div>
                 )}
                 <button className="btn-ghost" onClick={closeModal}>{orderLocked ? 'Close' : 'Cancel'}</button>
                 {!orderLocked && (
@@ -4053,6 +4287,128 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Daily orders check (audit popup) ───────────────────── */}
+      {auditOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="card w-full max-w-4xl flex flex-col" style={{ maxHeight: '85vh' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400" /> Daily orders check
+                <span className="text-slate-500 font-normal">· {auditRows.length} issue{auditRows.length === 1 ? '' : 's'}</span>
+              </h3>
+              <button onClick={() => setAuditOpen(false)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {auditRows.length === 0 ? (
+                <div className="px-5 py-14 text-center text-slate-500 flex flex-col items-center gap-2">
+                  <CheckCircle2 className="w-9 h-9 text-green-500/70" />
+                  No issues found in the current list.
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface z-10">
+                    <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
+                      <th className="px-4 py-2.5 font-medium">Order #</th>
+                      <th className="px-4 py-2.5 font-medium">Customer</th>
+                      <th className="px-4 py-2.5 font-medium">Driver</th>
+                      <th className="px-4 py-2.5 font-medium">Source</th>
+                      <th className="px-4 py-2.5 font-medium">Status</th>
+                      <th className="px-4 py-2.5 font-medium">Payment</th>
+                      <th className="px-4 py-2.5 font-medium">Warning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditRows.map(({ o, warnings }) => {
+                      const cust = o.customer
+                        ? (o.customer.company_name || `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''}`.trim() || o.recipient_name || '—')
+                        : (o.recipient_name || '—')
+                      const drv = o.driver ? (`${o.driver.first_name ?? ''} ${o.driver.last_name ?? ''}`.trim() || '—') : '—'
+                      return (
+                        <tr key={o.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 align-top">
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <button type="button"
+                              onClick={() => { setAuditOpen(false); focusOrderRow(o.id) }}
+                              title="Go to this order in the list"
+                              className="font-mono text-xs text-brand-400 hover:text-brand-300 hover:underline">
+                              {o.order_number ?? '—'}
+                            </button>
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-300">{cust}</td>
+                          <td className="px-4 py-2.5 text-slate-300">{drv}</td>
+                          <td className="px-4 py-2.5 text-slate-400 text-xs">{o.order_source || '—'}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <div className="flex flex-col gap-1">
+                              <Badge status={normalizeStatus(o.status)} />
+                              <span className="text-[11px] text-slate-400">{o.delivery_status || '—'}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <div className="flex flex-col gap-1">
+                              <Badge status={o.payment_status} />
+                              <span className="text-[11px] text-slate-400">{collectionFromPayStatus(o.payment_status)}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="space-y-1">
+                              {warnings.map((wm, i) => (
+                                <div key={i} className="flex items-start gap-1.5 text-amber-300 text-xs">
+                                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                                  <span>{wm}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="flex justify-between items-center px-5 py-3 border-t border-surface-border">
+              <span className="text-[11px] text-slate-500">Click an order number to jump to it in the list. Checks the orders currently listed (respects filters).</span>
+              <button onClick={() => setAuditOpen(false)} className="btn-primary px-4 py-2 text-sm">Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Lock reason prompt (super admin) ───────────────────── */}
+      {lockPrompt && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="card w-full max-w-sm flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <Lock className="w-4 h-4 text-rose-400" /> Lock order
+              </h3>
+              <button onClick={() => setLockPrompt(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-slate-400 text-xs">
+                This freezes the order for everyone — only a super admin can unlock it.
+                Add a short reason (shown to anyone who opens it).
+              </p>
+              <div>
+                <label className="label">Reason for locking</label>
+                <textarea className="input resize-none" rows={3} autoFocus
+                  value={lockPrompt.reason}
+                  onChange={e => setLockPrompt({ reason: e.target.value })}
+                  placeholder="e.g. Under review — do not modify" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
+              <button onClick={() => setLockPrompt(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button
+                onClick={async () => { const reason = lockPrompt.reason; setLockPrompt(null); await applyOrderLock(reason) }}
+                disabled={!lockPrompt.reason.trim()}
+                className="btn-primary px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                <Lock className="w-4 h-4" /> Lock order
+              </button>
             </div>
           </div>
         </div>
