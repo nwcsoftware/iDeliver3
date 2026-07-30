@@ -4,7 +4,7 @@ import {
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, Unlock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
-  Eye, Pin, PinOff, User, Building, Handshake,
+  Eye, Pin, PinOff, User, Building, Handshake, Megaphone, MegaphoneOff,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
@@ -372,6 +372,55 @@ function adjustTime(t, deltaMinutes) {
 }
 
 const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
+// A row in the Ads subform (Story orders). start_at/end_at are 'YYYY-MM-DDTHH:mm'
+// strings from datetime-local inputs; converted to ISO on save.
+const EMPTY_AD = { platform: '', start_at: '', end_at: '', price: 0, currency: 'USD', notes: '' }
+// Top platforms offered as suggestions in the ad "Platform" tag field. The user
+// can pick several (as tags) and/or type their own.
+const AD_PLATFORMS = [
+  'Instagram', 'Facebook', 'WhatsApp Story', 'TikTok', 'YouTube',
+  'Snapchat', 'X (Twitter)', 'LinkedIn', 'Telegram', 'Pinterest',
+  'Threads', 'Reddit', 'Facebook Story', 'Instagram Story', 'Google Ads',
+]
+// Platforms are stored on the ad as a comma-separated string; edited as tags.
+const splitPlatforms = s => (s || '').split(',').map(x => x.trim()).filter(Boolean)
+const joinPlatforms  = arr => arr.join(', ')
+
+// Live run status of an ad from its start/end (accepts ISO or datetime-local
+// strings). Scheduled = not started yet; Active = running now; Expired = past end.
+function adStatus(start, end) {
+  const now = Date.now()
+  const s = start ? new Date(start).getTime() : NaN
+  const e = end   ? new Date(end).getTime()   : NaN
+  if (!isNaN(s) && now < s) return { label: 'Scheduled', cls: 'bg-sky-500/10 text-sky-300 border-sky-500/30' }
+  if (!isNaN(e) && now > e) return { label: 'Expired',   cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' }
+  if (!isNaN(s) || !isNaN(e)) return { label: 'Active',  cls: 'bg-green-500/10 text-green-300 border-green-500/30' }
+  return null
+}
+
+// Roll an order's ads up to a single state for the list icon: 'active' (any ad
+// running now), 'scheduled' (none active but at least one not started), 'ended'
+// (has ads but all finished), or 'none' (no ads).
+function orderAdState(o) {
+  const list = o?.ads ?? []
+  if (!list.length) return 'none'
+  let hasActive = false, hasScheduled = false
+  for (const a of list) {
+    const st = adStatus(a.start_at, a.end_at)?.label
+    if (st === 'Active') hasActive = true
+    else if (st === 'Scheduled') hasScheduled = true
+  }
+  return hasActive ? 'active' : hasScheduled ? 'scheduled' : 'ended'
+}
+
+// ISO timestamp → 'YYYY-MM-DDTHH:mm' in local time, for datetime-local inputs.
+function isoToLocalInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 // is_procurement defaults to true — a local-market retail invoice is "We bought"
 // unless the user flips it to Shop-sent. (2nd-party/shop-sent orders force it
@@ -605,11 +654,13 @@ function lineTotal(it) {
 }
 
 function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurrency = feeCurrency,
-                    packages = [], services = [], retailInvoices = []) {
+                    packages = [], services = [], retailInvoices = [], ads = []) {
   const t = { USD: 0, LBP: 0, EUR: 0 }
   const add = (cur, n) => { t[cur in t ? cur : 'USD'] += n }
   // Per-item line totals already apply each item's own discount in its currency.
   for (const it of items) add(it.currency || 'USD', lineTotal(it))
+  // Ads (Story orders): each ad's price counts toward the order total.
+  for (const a of ads) add(a.currency || 'USD', Number(a.price) || 0)
   // Packages carry their own currency. A package already paid directly to its
   // provider is excluded from the order total.
   for (const p of packages) if (!p.paid) add(p.currency || feeCurrency, Number(p.package_price) || 0)
@@ -631,9 +682,9 @@ function SectionLabel({ children }) {
 }
 
 // Order-form sections, in display order. Used to collapse/expand each block.
-const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'packages', 'services', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
+const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'ads', 'packages', 'services', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
 // Sections expanded by default on a new order; the rest start collapsed.
-const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'notes']
+const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'ads', 'notes']
 const allSectionsClosed = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, false]))
 const allSectionsOpen   = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, true]))
 const defaultNewSections = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, DEFAULT_OPEN_SECTIONS.includes(s)]))
@@ -798,9 +849,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [lockPrompt, setLockPrompt] = useState(null)   // { reason } | null
   // "Check orders" audit popup (daily list): flags orders with data issues.
   const [auditOpen, setAuditOpen] = useState(false)
+  // Ads due to start that the user chose to ignore this session (by ad id), so the
+  // start reminder stops nagging for them until the app reloads.
+  const [adsIgnored, setAdsIgnored] = useState(() => new Set())
+  const [adActivating, setAdActivating] = useState(null)   // ad id with an in-flight activate
   const [mapOpen,   setMapOpen]   = useState(false)   // delivery-address map picker
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
+  const [ads,       setAds]       = useState([])             // ads rows (Story orders)
+  const [origAdIds, setOrigAdIds] = useState([])            // ad ids loaded on edit (to diff on save)
   const [retailInvoices, setRetailInvoices] = useState([])   // retail_goods_invoices
   const [packages,       setPackages]       = useState([])
   const [origPackageIds, setOrigPackageIds] = useState([])
@@ -1097,6 +1154,38 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return rows
   }, [filtered])
 
+  // Ads whose start time has arrived but aren't activated yet — the app reminds the
+  // user to start them. Excludes already-confirmed, expired, and session-ignored ads.
+  const adsDue = useMemo(() => {
+    if (closed || partyContactId) return []
+    const out = []
+    for (const o of orders) {
+      for (const a of (o.ads ?? [])) {
+        if (a.confirmed_ads || adsIgnored.has(a.id)) continue
+        const s = a.start_at ? new Date(a.start_at).getTime() : NaN
+        const e = a.end_at   ? new Date(a.end_at).getTime()   : NaN
+        if (isNaN(s) || now < s) continue          // no start, or not time yet
+        if (!isNaN(e) && now > e) continue          // already expired
+        out.push({ ad: a, order: o })
+      }
+    }
+    return out
+  }, [orders, now, adsIgnored, closed, partyContactId])
+
+  // Activate an ad now: mark it confirmed (locks its start) and refresh. The ad is
+  // dropped from the reminder IMMEDIATELY and UNCONDITIONALLY (before/ regardless of
+  // the network round-trip) so the popup closes at once and never re-shows this
+  // session — the DB write + refetch then persist the confirmation.
+  async function activateAd(adId) {
+    setAdsIgnored(prev => new Set(prev).add(adId))
+    setAdActivating(adId)
+    const { error } = await supabase.from('ads').update({ confirmed_ads: true }).eq('id', adId)
+    setAdActivating(null)
+    if (error) { setError(`Could not activate the ad: ${error.message}`) }
+    await fetchOrders()
+  }
+  const ignoreAd = adId => setAdsIgnored(prev => new Set(prev).add(adId))
+
   const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
     setDriverFilter(''); setCustomerFilter(''); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
@@ -1186,9 +1275,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     : (() => {
         const story  = sorted.filter(isStoryOrder)
         const normal = sorted.filter(o => !isStoryOrder(o))
-        const out = [{ key: 'orders', label: 'Delivery Orders', orders: normal, open: !collapsedGroups.has('orders'), showHeader: true, onToggle: () => toggleDailyGroup('orders') }]
-        // Only surface the Ads & Services group when such orders exist in the view.
+        const out = []
+        // Ads & Services (Story) group sits ABOVE the Delivery Orders group; only
+        // shown when such orders exist in the current view.
         if (story.length) out.push({ key: 'story', label: 'Ads & Services', orders: story, open: !collapsedGroups.has('story'), showHeader: true, onToggle: () => toggleDailyGroup('story') })
+        out.push({ key: 'orders', label: 'Delivery Orders', orders: normal, open: !collapsedGroups.has('orders'), showHeader: true, onToggle: () => toggleDailyGroup('orders') })
         return out
       })()
 
@@ -1541,6 +1632,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
+    setAds([]); setOrigAdIds([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
     setCustomerInput(''); setError(''); setModal('add')
     // 2nd-party (supplier/partner) users: the customer is always their own linked
@@ -1563,6 +1655,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
+    setAds([]); setOrigAdIds([])
     setSectionsOpen(defaultNewSections())
     setCustomerInput(''); setError(''); setModal('add')
   }
@@ -1621,6 +1714,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       payment_type:      ri.payment_type ?? '',
       is_procurement:    !!ri.is_procurement,
     })))
+    const { data: adData } = await supabase
+      .from('ads')
+      .select('*')
+      .eq('order_id', o.id)
+      .order('created_at')
+    setAds((adData ?? []).map(a => ({
+      _id:      a.id,
+      platform: a.platform ?? '',
+      start_at: isoToLocalInput(a.start_at),
+      end_at:   isoToLocalInput(a.end_at),
+      price:    a.price ?? 0,
+      currency: a.currency ?? 'USD',
+      notes:    a.notes ?? '',
+      confirmed: !!a.confirmed_ads,
+    })))
+    setOrigAdIds((adData ?? []).map(a => a.id))
     const { data: payData } = await supabase
       .from('payment_collections')
       .select('id,collection_type,amount,currency,collected_at,notes,collected_by,collected_by_name,collection_group')
@@ -1753,6 +1862,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
+    setAds([]); setOrigAdIds([])
     setCustomerInput(''); setCustomerDropdownOpen(false)
   }
 
@@ -1862,6 +1972,26 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
   }
 
+  /* ── ads helpers (Story orders) ──────────────────────────── */
+  // A new ad defaults to starting now and ending 24 hours later.
+  function addAd() {
+    const now = Date.now()
+    setAds(p => [...p, {
+      ...EMPTY_AD,
+      start_at: isoToLocalInput(new Date(now).toISOString()),
+      end_at:   isoToLocalInput(new Date(now + 24 * 60 * 60 * 1000).toISOString()),
+      _key: now,
+    }])
+  }
+  function removeAd(i) {
+    setAds(p => {
+      // An expired ad can no longer be deleted.
+      if (adStatus(p[i]?.start_at, p[i]?.end_at)?.label === 'Expired') return p
+      return p.filter((_, idx) => idx !== i)
+    })
+  }
+  function setAd(i, k, v) { setAds(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next }) }
+
   /* Retail goods invoices (retail_goods_invoices). */
   function addRetailInvoice() {
     // 2nd-party users: the shop is always their own linked contact.
@@ -1938,7 +2068,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setSaving(true); setError('')
 
     const isFree = !!form.is_free_order
-    const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+    const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads)
     // A free order is stored at zero total regardless of the items it carries.
     const totals = isFree ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
     const itemsInPrimary = items.filter(it => it.currency === form.currency).reduce((s, it) => s + lineTotal(it), 0)
@@ -2029,11 +2159,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     const recovering = modal === 'add' && !!savedOrderIdRef.current
 
     let orderCompanyId = (modal !== 'add' && modal?.company_id) || COMPANY_ID || null
+    let orderNumber    = (modal !== 'add' && modal?.order_number) || null
     if (!orderId) {
-      const { data, error: e } = await supabase.from('delivery_orders').insert([payload]).select('id, company_id').single()
+      const { data, error: e } = await supabase.from('delivery_orders').insert([payload]).select('id, company_id, order_number').single()
       if (e) { setError(e.message); setSaving(false); return }
       orderId = data.id
       orderCompanyId = data.company_id || orderCompanyId   // inherit company from the saved order
+      orderNumber    = data.order_number || orderNumber
       savedOrderIdRef.current = orderId
       rememberOrder(orderId)   // return to the new order after a refresh
     } else {
@@ -2068,6 +2200,33 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       }))
       const { error: ie } = await supabase.from('order_items').insert(rows)
       if (ie) { setError(ie.message); setSaving(false); return }
+    }
+
+    // Ads (Story orders) — replace the set outright (delete then insert). Denormalize
+    // the order number + customer number/name onto each ad row.
+    await supabase.from('ads').delete().eq('order_id', orderId)
+    if (ads.length > 0) {
+      const cust       = customers.find(c => c.id === form.customer_id)
+      const custNumber = form.main_account || cust?.account_number || cust?.code || null
+      const custName   = cust ? (cust.company_name || `${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || null) : (form.recipient_name?.trim() || null)
+      const adRows = ads.map(a => ({
+        order_id:        orderId,
+        order_number:    orderNumber,
+        customer_id:     form.customer_id || null,
+        customer_number: custNumber,
+        customer_name:   custName,
+        platform:        a.platform?.trim() || null,
+        start_at:        a.start_at ? new Date(a.start_at).toISOString() : null,
+        end_at:          a.end_at   ? new Date(a.end_at).toISOString()   : null,
+        price:           Number(a.price) || 0,
+        currency:        a.currency || 'USD',
+        notes:           a.notes?.trim() || null,
+        confirmed_ads:   !!a.confirmed,
+        created_by:      currentUser?.user_id || null,
+        ...(orderCompanyId ? { company_id: orderCompanyId } : {}),
+      }))
+      const { error: ae } = await supabase.from('ads').insert(adRows)
+      if (ae) { setError(ae.message); setSaving(false); return }
     }
 
     // Retail goods invoices — only rows with a shop selected. Procurement is now
@@ -2478,12 +2637,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   /* ── totals (live) ───────────────────────────────────────── */
 
-  const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices)
+  const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads)
   // A free order is waived to zero even when it carries items. rawTotals keeps the
   // real value so we can warn before flipping the toggle on a non-zero order.
   const totals    = form.is_free_order ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
   const rawHasValue = CURRENCIES.some(c => round2(rawTotals[c] || 0) > 0)
-  const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || Number(form.delivery_fee) > 0
+  const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || ads.length > 0 || Number(form.delivery_fee) > 0
 
   // Every order uses the same full form regardless of the customer; the picker
   // always lists all customers (credit handling is derived from the customer).
@@ -2989,6 +3148,31 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3 text-slate-400 text-xs">
+                  {isStoryOrder(o) ? (
+                    /* Ads & Services (Story): no driver — show an ad-status icon +
+                       the number of ads. An active ad pulses; otherwise it's muted. */
+                    (() => {
+                      const cnt   = (o.ads ?? []).length
+                      const state = orderAdState(o)
+                      const icon = state === 'active' ? (
+                        <span className="relative inline-flex" title="An ad is running now">
+                          <span className="absolute inline-flex w-full h-full rounded-full bg-green-400/40 animate-ping" />
+                          <Megaphone className="relative w-4 h-4 text-green-400" />
+                        </span>
+                      ) : state === 'scheduled' ? (
+                        <Megaphone className="w-4 h-4 text-sky-400" title="Ad scheduled — not started yet" />
+                      ) : state === 'ended' ? (
+                        <MegaphoneOff className="w-4 h-4 text-slate-500" title="Ads ended — none active" />
+                      ) : (
+                        <MegaphoneOff className="w-4 h-4 text-slate-600" title="No ads" />
+                      )
+                      return (
+                        <span className="inline-flex items-center gap-1.5 text-slate-300">
+                          {icon}{cnt} Ad{cnt === 1 ? '' : 's'}
+                        </span>
+                      )
+                    })()
+                  ) : (
                   <div className="flex items-center gap-1.5">
                     <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId || !isConfirmed(o)}
                       onClick={(e) => openPopover('driver', o, e)}
@@ -3003,9 +3187,25 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       )}
                     </div>
                   </div>
+                  )}
                 </td>
                 {!partyContactId && (
                 <td className="px-4 py-3">
+                  {isStoryOrder(o) ? (
+                    /* Ads & Services (Story): no delivery fee — show the services total. */
+                    (() => {
+                      const t = orderTotalsByCurrency(o)
+                      const rows = CURRENCIES.filter(c => (t[c] || 0) !== 0)
+                      return rows.length ? (
+                        <div>
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider">Total services</p>
+                          {rows.map(c => (
+                            <p key={c} className="text-slate-200 text-xs font-mono tracking-wider">{fmtMoney(t[c], c)} {c}</p>
+                          ))}
+                        </div>
+                      ) : <span className="text-slate-600 text-[11px]">—</span>
+                    })()
+                  ) : (<>
                   <button type="button" disabled={isRowLocked(o) || !isConfirmed(o)}
                     onClick={(e) => openPopover('fee', o, e)}
                     title={o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to edit the fee' : 'Edit delivery fee'}
@@ -3021,6 +3221,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       Discount : {fmtMoney(Math.abs(Number(o.discount_amount)), o.discount_currency || o.currency)} {o.discount_currency || o.currency || 'USD'}
                     </p>
                   )}
+                  </>)}
                 </td>
                 )}
                 {/* Notes — delivery description (order details) + special instructions */}
@@ -3909,11 +4110,100 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </CollapsibleSection>
               )}
 
+              {/* ── Ads (Story orders only) ───────────────────── */}
+              {isStory && (
+              <CollapsibleSection title={`Ads (${ads.length})`} accent="fuchsia" open={ads.length > 0 ? true : sectionsOpen.ads} onToggle={v => toggleSection('ads', v)}
+                right={
+                  <button type="button" onClick={() => { openSection('ads'); addAd() }}
+                    className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                    <Plus className="w-3 h-3" /> Add Ad
+                  </button>
+                }>
+                {ads.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-2">No ads yet. Click “Add Ad” to add one.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                          <th className="px-1.5 py-1 font-medium">Platform</th>
+                          <th className="px-1.5 py-1 font-medium">Start (date &amp; time)</th>
+                          <th className="px-1.5 py-1 font-medium">End (date &amp; time)</th>
+                          <th className="px-1.5 py-1 font-medium text-right">Price</th>
+                          <th className="px-1.5 py-1 font-medium">Cur</th>
+                          <th className="px-1.5 py-1 font-medium">Status</th>
+                          <th className="px-1.5 py-1" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ads.map((a, idx) => (
+                          <tr key={a._id ?? a._key ?? idx} className="border-t border-surface-border/50">
+                            <td className="px-1.5 py-2 align-top min-w-[220px]">
+                              <TagLocationField
+                                tags={splitPlatforms(a.platform)}
+                                setTags={arr => setAd(idx, 'platform', joinPlatforms(arr))}
+                                suggestions={AD_PLATFORMS}
+                                placeholder="Add platform…"
+                                Icon={Megaphone} />
+                            </td>
+                            <td className="px-1.5 py-2 align-top">
+                              <input type="datetime-local" className="input py-1.5 text-xs h-[38px] disabled:opacity-60 disabled:cursor-not-allowed" value={a.start_at}
+                                disabled={a.confirmed}
+                                title={a.confirmed ? 'Activated — start date/time is locked' : undefined}
+                                onChange={e => setAd(idx, 'start_at', e.target.value)} />
+                              {a.confirmed && <p className="text-[10px] text-green-400 mt-0.5">Activated · locked</p>}
+                            </td>
+                            <td className="px-1.5 py-2 align-top">
+                              <input type="datetime-local" className="input py-1.5 text-xs h-[38px]" value={a.end_at}
+                                onChange={e => setAd(idx, 'end_at', e.target.value)} />
+                            </td>
+                            <td className="px-1.5 py-2 align-top">
+                              <input type="number" min="0" step="0.01" className="input py-1.5 text-xs text-right min-w-[90px] h-[38px]" value={a.price}
+                                onChange={e => setAd(idx, 'price', e.target.value)} placeholder="0.00" />
+                            </td>
+                            <td className="px-1.5 py-2 align-top">
+                              <select className="input py-1.5 text-xs h-[38px]" value={a.currency} onChange={e => setAd(idx, 'currency', e.target.value)}>
+                                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-1.5 py-2 align-top whitespace-nowrap">
+                              <div className="flex items-center h-[38px]">
+                                {(() => {
+                                  const st = adStatus(a.start_at, a.end_at)
+                                  return st
+                                    ? <span className={`text-[11px] border rounded px-2 py-0.5 ${st.cls}`}>{st.label}</span>
+                                    : <span className="text-slate-600 text-xs">—</span>
+                                })()}
+                              </div>
+                            </td>
+                            <td className="px-1.5 py-2 align-top">
+                              <div className="flex items-center h-[38px]">
+                                {(() => {
+                                  const expired = adStatus(a.start_at, a.end_at)?.label === 'Expired'
+                                  return (
+                                    <button type="button" onClick={() => removeAd(idx)} disabled={expired}
+                                      className="text-slate-600 hover:text-red-400 transition-colors p-0.5 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-600"
+                                      title={expired ? 'Expired ads cannot be deleted' : 'Remove ad'}>
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )
+                                })()}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CollapsibleSection>
+              )}
+
               {/* Pricing sections */}
               {/* ── Items ─────────────────────────────────────── */}
-              {/* Hidden for 2nd-party (supplier/partner) users. */}
+              {/* Hidden for 2nd-party (supplier/partner) users and Story (ads) orders. */}
               <div id="order-section-items" className="scroll-mt-4" />
-              {!partyContactId && (
+              {!partyContactId && !isStory && (
               <CollapsibleSection title={`3asari3 retails and services (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
                 right={
                   <button type="button" onClick={() => { openSection('items'); addItem() }}
@@ -3981,13 +4271,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </CollapsibleSection>
               )}
 
-              {/* ── Delivery Fees & Totals (hidden for Story/ads orders) ─ */}
-              {!isStory && (
-              <CollapsibleSection title="Delivery & Totals" accent="fuchsia" open={true} onToggle={() => {}}>
+              {/* ── Delivery Fees & Totals ─────────────────────── */}
+              <CollapsibleSection title={isStory ? 'Totals' : 'Delivery & Totals'} accent="fuchsia" open={true} onToggle={() => {}}>
 
                 {/* Editable fee/discount inputs — hidden for 2nd-party
-                    (supplier/partner) users, who see only the totals summary. */}
-                {!partyContactId && (
+                    (supplier/partner) users and Story orders (which show only totals). */}
+                {!partyContactId && !isStory && (
                 <div className="grid grid-cols-4 gap-3">
                   {!isStory && (
                   <div>
@@ -4029,7 +4318,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           <p className={`text-xl font-bold ${isPrimary ? 'text-brand-300' : 'text-slate-200'}`}>
                             {val.toFixed(curr === 'LBP' ? 0 : 2)}
                           </p>
-                          {isPrimary && <p className="text-[10px] text-slate-500 mt-0.5">items + packages + services + retail + fee − discount + vat</p>}
+                          {isPrimary && !isStory && <p className="text-[10px] text-slate-500 mt-0.5">items + packages + services + retail + fee − discount + vat</p>}
                         </div>
                       )
                     })}
@@ -4062,7 +4351,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </label>
                 )}
               </CollapsibleSection>
-              )}
 
               {/* ── Payments ──────────────────────────────────── */}
               {/* Hidden for 2nd-party (supplier/partner) users. */}
@@ -4288,6 +4576,46 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Ads ready-to-start reminder (floating) ─────────────── */}
+      {adsDue.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[75] w-[360px] max-w-[92vw] card border border-fuchsia-500/30 shadow-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-border bg-fuchsia-500/10">
+            <Megaphone className="w-4 h-4 text-fuchsia-300 flex-shrink-0" />
+            <span className="text-sm font-semibold text-slate-100">Ads ready to start</span>
+            <span className="ml-auto text-[11px] text-fuchsia-200 bg-fuchsia-500/15 border border-fuchsia-500/30 rounded-full px-2 py-0.5">{adsDue.length}</span>
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto divide-y divide-surface-border/60">
+            {adsDue.map(({ ad, order }) => {
+              const cust = order.customer
+                ? (order.customer.company_name || `${order.customer.first_name ?? ''} ${order.customer.last_name ?? ''}`.trim() || order.recipient_name || '—')
+                : (order.recipient_name || '—')
+              return (
+                <div key={ad.id} className="px-4 py-3 space-y-2">
+                  <div className="text-xs">
+                    <button type="button" onClick={() => openEdit(order)} className="font-mono text-brand-400 hover:underline">{order.order_number}</button>
+                    <span className="text-slate-400"> · {cust}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    {ad.platform ? <span className="text-slate-300">{ad.platform}</span> : 'Ad'} — starts {isoToLocalInput(ad.start_at).replace('T', ' ')}
+                  </div>
+                  <p className="text-[11px] text-slate-500">This ad is scheduled to start now.</p>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => activateAd(ad.id)} disabled={adActivating === ad.id}
+                      className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
+                      <Check className="w-3.5 h-3.5" /> {adActivating === ad.id ? 'Activating…' : 'Activate now'}
+                    </button>
+                    <button onClick={() => ignoreAd(ad.id)}
+                      className="btn-ghost px-3 py-1.5 text-xs border border-surface-border text-slate-400 hover:text-slate-200">
+                      Ignore
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

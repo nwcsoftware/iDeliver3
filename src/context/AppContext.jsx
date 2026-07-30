@@ -18,7 +18,8 @@ const ORDER_SELECT = `
   delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(id, code, company_name, first_name, last_name)),
   order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
   retail_goods_invoices(id, invoice_value, currency, exclude_calculation, shop_name, contact_id, is_procurement, commission_amount, commission_collected, commission_collected_at),
-  payment_collections(amount, currency, collected_by_name, collected_by, collection_group)
+  payment_collections(amount, currency, collected_by_name, collected_by, collection_group),
+  ads(id, price, currency, platform, start_at, end_at, confirmed_ads)
 `
 
 // Per-user UI preference: whether the order amounts summary popup is shown.

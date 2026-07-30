@@ -31,6 +31,8 @@ export function orderTotalsByCurrency(o) {
   // A retail invoice flagged exclude_calculation (paid directly by the customer to
   // the shop) is excluded from the order total.
   for (const r of (o.retail_goods_invoices ?? []))  if (!r.exclude_calculation) add(r.currency || 'USD', Number(r.invoice_value) || 0)
+  // Ads (Story orders): each ad's price is part of the order total.
+  for (const a of (o.ads ?? []))                    add(a.currency || 'USD', Number(a.price) || 0)
   const discountCur = o.discount_currency || o.currency
   add(o.currency, Number(o.delivery_fee) > 0 ? Number(o.delivery_fee) : 0)
   add(discountCur, -Math.abs(Number(o.discount_amount) || 0))

@@ -26,6 +26,7 @@ import { MapPin, Plus, X, Pencil } from 'lucide-react'
 export default function TagLocationField({
   label, required = false, tags = [], setTags, suggestions = [], onAddNew,
   onEditSuggestion, onDeleteSuggestion, placeholder = 'Add location…', labelRight = null,
+  Icon = MapPin,
 }) {
   const [open, setOpen]   = useState(false)
   const [query, setQuery] = useState('')
@@ -113,10 +114,12 @@ export default function TagLocationField({
 
   return (
     <div className="relative" ref={wrapRef}>
-      <div className="flex items-center justify-between">
-        <label className={`label ${required ? 'text-fuchsia-300' : ''}`}>{label}{required ? ' *' : ''}</label>
-        {labelRight}
-      </div>
+      {(label || labelRight) && (
+        <div className="flex items-center justify-between">
+          <label className={`label ${required ? 'text-fuchsia-300' : ''}`}>{label}{required ? ' *' : ''}</label>
+          {labelRight}
+        </div>
+      )}
 
       {/* Field box — chips + inline input */}
       <div ref={boxRef}
@@ -124,7 +127,7 @@ export default function TagLocationField({
         onClick={() => { setOpen(true); inputRef.current?.focus() }}>
         {tags.map(t => (
           <span key={t} className="inline-flex items-center gap-1 max-w-full bg-brand-600/20 border border-brand-600/40 text-brand-200 rounded-md pl-1.5 pr-1 py-0.5 text-xs">
-            <MapPin className="w-3 h-3 flex-shrink-0 opacity-70" />
+            <Icon className="w-3 h-3 flex-shrink-0 opacity-70" />
             <span className="truncate">{t}</span>
             <button type="button" onClick={e => { e.stopPropagation(); removeTag(t) }}
               className="flex-shrink-0 hover:text-red-300" title="Remove"><X className="w-3 h-3" /></button>
@@ -165,7 +168,7 @@ export default function TagLocationField({
                     className="group flex items-center gap-1 bg-surface-hover border border-surface-border rounded-md pl-2 pr-1 py-1 hover:border-brand-600/50 transition-colors">
                     <button type="button" onMouseDown={e => { e.preventDefault(); addTag(s) }}
                       className="flex-1 min-w-0 inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-slate-100 text-left">
-                      <MapPin className="w-3 h-3 flex-shrink-0 opacity-60" />
+                      <Icon className="w-3 h-3 flex-shrink-0 opacity-60" />
                       <span className="truncate">{s}</span>
                     </button>
                     {onEditSuggestion && (
