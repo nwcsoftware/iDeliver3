@@ -1242,6 +1242,32 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return arr
   })()
 
+  // Ads & Services (Story) orders always appear in the daily list regardless of the
+  // status/confirm/payment/flag/driver/customer/date/type filters — they're matched
+  // only by the search box (plus ownership + not-closed). Sorted like the main list.
+  const storyRows = useMemo(() => {
+    const q = search.toLowerCase()
+    const list = orders.filter(o => {
+      if (!isStoryOrder(o)) return false
+      if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(o.id))) return false
+      if (closed ? o.isclosed !== true : o.isclosed === true) return false
+      return !search || [
+        o.order_number, o.recipient_name, o.recipient_mobile, o.recipient_whatsapp,
+        o.delivery_address, o.pickup_address, o.main_account,
+        o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
+        o.customer?.account_number,
+      ].some(v => String(v ?? '').toLowerCase().includes(q))
+    })
+    const get = sort.col && SORT_GETTERS[sort.col]
+    if (!get || !sort.dir) return list
+    return [...list].sort((a, b) => {
+      const va = get(a), vb = get(b)
+      const cmp = (typeof va === 'number' && typeof vb === 'number')
+        ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
+      return sort.dir === 'asc' ? cmp : -cmp
+    })
+  }, [orders, search, partyContactId, ownedOrderIds, closed, sort])
+
   /* Closed Orders is grouped by date, Outlook-style. Only the open group renders
      its rows, which is what keeps the page quick — there are far more closed
      orders than fit comfortably in one list. */
@@ -1268,12 +1294,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   })
 
   // Closed Orders: date groups (Outlook-style). Daily list: split into
-  // "Delivery Orders" and "Ads & Services" (Story), both collapsible with counts,
-  // both fed from the already-filtered `sorted` set so they respect every filter.
+  // "Delivery Orders" (respects every filter) and "Ads & Services" (Story — search
+  // only, via storyRows), both collapsible with counts.
   const renderGroups = closed
     ? groups.map(g => ({ ...g, open: openGroupSet.has(g.key), showHeader: true, onToggle: () => toggleGroup(g.key) }))
     : (() => {
-        const story  = sorted.filter(isStoryOrder)
+        const story  = storyRows
         const normal = sorted.filter(o => !isStoryOrder(o))
         const out = []
         // Ads & Services (Story) group sits ABOVE the Delivery Orders group; only
@@ -1985,8 +2011,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
   function removeAd(i) {
     setAds(p => {
-      // An expired ad can no longer be deleted.
-      if (adStatus(p[i]?.start_at, p[i]?.end_at)?.label === 'Expired') return p
+      const a = p[i]
+      // An expired ad can no longer be deleted. A confirmed (activated) ad can only
+      // be deleted by an admin / super admin.
+      if (adStatus(a?.start_at, a?.end_at)?.label === 'Expired') return p
+      if (a?.confirmed && !canBypassRestrictions) return p
       return p.filter((_, idx) => idx !== i)
     })
   }
@@ -3009,7 +3038,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders && orders.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : sorted.length === 0 ? (
+            ) : (sorted.length === 0 && (closed || storyRows.length === 0)) ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : renderGroups.flatMap(g => [
               // Group header — click to expand/collapse (Closed Orders date groups
@@ -3042,13 +3071,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 onMouseMove={(e) => placeHoverPanel(hoverPanelRef.current, e.clientX, e.clientY)}
                 className={`border-b border-surface-border/50 transition-colors ${
                 flashOrderId === o.id ? '!bg-brand-500/20 ' : ''}${
-                isDeactivated(o)            ? 'opacity-50 hover:bg-surface-hover/40'
+                isStoryOrder(o)             ? 'hover:bg-surface-hover/40'
+                : isDeactivated(o)          ? 'opacity-50 hover:bg-surface-hover/40'
                 : isActiveInProgress(o, now) ? 'hover:bg-surface-hover/40'
                 : isOverdue(o)              ? 'bg-red-500/10 hover:bg-red-500/20'
                 : isApproachingStart(o, highlightLeadMins, now)
                                             ? 'bg-red-500/10 hover:bg-red-500/20'
                 :                            'hover:bg-surface-hover/40'} ${
-                (isPastDeliveryEnd(o, now) || (normalizeStatus(o.status) === 'in_progress' && isOverdue(o)))
+                isStoryOrder(o)
+                  ? (isConfirmed(o) ? '' : '[&_*]:!text-fuchsia-300')
+                : (isPastDeliveryEnd(o, now) || (normalizeStatus(o.status) === 'in_progress' && isOverdue(o)))
                   ? '[&_*]:!text-[#fa8072]'
                   : isActiveInProgress(o, now)
                   ? '[&_*]:!text-brand-400'
@@ -3240,6 +3272,27 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   ) : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3">
+                  {isStoryOrder(o) ? (
+                    /* Ads & Services (Story): no order/delivery status — instead show
+                       a box with how many of the order's ads are currently active. */
+                    (() => {
+                      const list = o.ads ?? []
+                      const active = list.filter(a => adStatus(a.start_at, a.end_at)?.label === 'Active').length
+                      const on = active > 0
+                      return (
+                        <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-lg px-2.5 py-1 ${
+                          on ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-slate-500/10 border-slate-500/30 text-slate-400'}`}>
+                          {on
+                            ? <span className="relative flex w-2 h-2">
+                                <span className="absolute inline-flex w-full h-full rounded-full bg-green-400/60 animate-ping" />
+                                <span className="relative inline-flex w-2 h-2 rounded-full bg-green-400" />
+                              </span>
+                            : <span className="w-2 h-2 rounded-full bg-slate-600" />}
+                          {active} of {list.length} active
+                        </span>
+                      )
+                    })()
+                  ) : (<>
                   {partyContactId || !canEditOrderStatus ? (
                     /* 2nd-party users and normal (call-center) users can't change the
                        order status — it's set by the driver app. View only. */
@@ -3253,6 +3306,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     </button>
                   )}
                   {o.delivery_status && <p className="text-slate-500 text-[11px] mt-1">{o.delivery_status}</p>}
+                  </>)}
                 </td>
                 {!partyContactId && (
                 <td className="px-4 py-3">
@@ -4136,7 +4190,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         </tr>
                       </thead>
                       <tbody>
-                        {ads.map((a, idx) => (
+                        {ads.map((a, idx) => {
+                          // A confirmed (activated) ad is locked to normal users —
+                          // only admins / super admins can edit or delete it.
+                          const adLocked = !!a.confirmed && !canBypassRestrictions
+                          const expired  = adStatus(a.start_at, a.end_at)?.label === 'Expired'
+                          const noDelete = adLocked || expired
+                          return (
                           <tr key={a._id ?? a._key ?? idx} className="border-t border-surface-border/50">
                             <td className="px-1.5 py-2 align-top min-w-[220px]">
                               <TagLocationField
@@ -4144,25 +4204,30 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                                 setTags={arr => setAd(idx, 'platform', joinPlatforms(arr))}
                                 suggestions={AD_PLATFORMS}
                                 placeholder="Add platform…"
-                                Icon={Megaphone} />
+                                Icon={Megaphone}
+                                disabled={adLocked} />
                             </td>
                             <td className="px-1.5 py-2 align-top">
                               <input type="datetime-local" className="input py-1.5 text-xs h-[38px] disabled:opacity-60 disabled:cursor-not-allowed" value={a.start_at}
-                                disabled={a.confirmed}
-                                title={a.confirmed ? 'Activated — start date/time is locked' : undefined}
+                                disabled={adLocked}
+                                title={adLocked ? 'Confirmed — only an admin can change it' : undefined}
                                 onChange={e => setAd(idx, 'start_at', e.target.value)} />
-                              {a.confirmed && <p className="text-[10px] text-green-400 mt-0.5">Activated · locked</p>}
+                              {a.confirmed && <p className="text-[10px] text-green-400 mt-0.5">Confirmed{adLocked ? ' · locked' : ''}</p>}
                             </td>
                             <td className="px-1.5 py-2 align-top">
-                              <input type="datetime-local" className="input py-1.5 text-xs h-[38px]" value={a.end_at}
+                              <input type="datetime-local" className="input py-1.5 text-xs h-[38px] disabled:opacity-60 disabled:cursor-not-allowed" value={a.end_at}
+                                disabled={adLocked}
                                 onChange={e => setAd(idx, 'end_at', e.target.value)} />
                             </td>
                             <td className="px-1.5 py-2 align-top">
-                              <input type="number" min="0" step="0.01" className="input py-1.5 text-xs text-right min-w-[90px] h-[38px]" value={a.price}
+                              <input type="number" min="0" step="0.01" className="input py-1.5 text-xs text-right min-w-[90px] h-[38px] disabled:opacity-60 disabled:cursor-not-allowed" value={a.price}
+                                disabled={adLocked}
                                 onChange={e => setAd(idx, 'price', e.target.value)} placeholder="0.00" />
                             </td>
                             <td className="px-1.5 py-2 align-top">
-                              <select className="input py-1.5 text-xs h-[38px]" value={a.currency} onChange={e => setAd(idx, 'currency', e.target.value)}>
+                              <select className="input py-1.5 text-xs h-[38px] disabled:opacity-60 disabled:cursor-not-allowed" value={a.currency}
+                                disabled={adLocked}
+                                onChange={e => setAd(idx, 'currency', e.target.value)}>
                                 {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                               </select>
                             </td>
@@ -4178,20 +4243,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             </td>
                             <td className="px-1.5 py-2 align-top">
                               <div className="flex items-center h-[38px]">
-                                {(() => {
-                                  const expired = adStatus(a.start_at, a.end_at)?.label === 'Expired'
-                                  return (
-                                    <button type="button" onClick={() => removeAd(idx)} disabled={expired}
-                                      className="text-slate-600 hover:text-red-400 transition-colors p-0.5 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-600"
-                                      title={expired ? 'Expired ads cannot be deleted' : 'Remove ad'}>
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )
-                                })()}
+                                <button type="button" onClick={() => removeAd(idx)} disabled={noDelete}
+                                  className="text-slate-600 hover:text-red-400 transition-colors p-0.5 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-600"
+                                  title={expired ? 'Expired ads cannot be deleted' : adLocked ? 'Confirmed — only an admin can delete it' : 'Remove ad'}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

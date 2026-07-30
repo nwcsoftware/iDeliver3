@@ -26,7 +26,7 @@ import { MapPin, Plus, X, Pencil } from 'lucide-react'
 export default function TagLocationField({
   label, required = false, tags = [], setTags, suggestions = [], onAddNew,
   onEditSuggestion, onDeleteSuggestion, placeholder = 'Add location…', labelRight = null,
-  Icon = MapPin,
+  Icon = MapPin, disabled = false,
 }) {
   const [open, setOpen]   = useState(false)
   const [query, setQuery] = useState('')
@@ -123,26 +123,31 @@ export default function TagLocationField({
 
       {/* Field box — chips + inline input */}
       <div ref={boxRef}
-        className="input min-h-[38px] flex flex-wrap items-center gap-1.5 cursor-text py-1.5"
-        onClick={() => { setOpen(true); inputRef.current?.focus() }}>
+        className={`input min-h-[38px] flex flex-wrap items-center gap-1.5 py-1.5 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-text'}`}
+        onClick={() => { if (disabled) return; setOpen(true); inputRef.current?.focus() }}>
         {tags.map(t => (
           <span key={t} className="inline-flex items-center gap-1 max-w-full bg-brand-600/20 border border-brand-600/40 text-brand-200 rounded-md pl-1.5 pr-1 py-0.5 text-xs">
             <Icon className="w-3 h-3 flex-shrink-0 opacity-70" />
             <span className="truncate">{t}</span>
-            <button type="button" onClick={e => { e.stopPropagation(); removeTag(t) }}
-              className="flex-shrink-0 hover:text-red-300" title="Remove"><X className="w-3 h-3" /></button>
+            {!disabled && (
+              <button type="button" onClick={e => { e.stopPropagation(); removeTag(t) }}
+                className="flex-shrink-0 hover:text-red-300" title="Remove"><X className="w-3 h-3" /></button>
+            )}
           </span>
         ))}
-        <input ref={inputRef}
-          className="flex-1 min-w-[90px] bg-transparent outline-none text-sm placeholder:text-slate-600"
-          placeholder={tags.length === 0 ? placeholder : ''}
-          value={query}
-          onFocus={() => setOpen(true)}
-          onChange={e => { setQuery(e.target.value); setOpen(true) }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); commitTyped() }
-            else if (e.key === 'Backspace' && !query && tags.length) removeTag(tags[tags.length - 1])
-          }} />
+        {!disabled && (
+          <input ref={inputRef}
+            className="flex-1 min-w-[90px] bg-transparent outline-none text-sm placeholder:text-slate-600"
+            placeholder={tags.length === 0 ? placeholder : ''}
+            value={query}
+            onFocus={() => setOpen(true)}
+            onChange={e => { setQuery(e.target.value); setOpen(true) }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitTyped() }
+              else if (e.key === 'Backspace' && !query && tags.length) removeTag(tags[tags.length - 1])
+            }} />
+        )}
+        {disabled && tags.length === 0 && <span className="text-sm text-slate-600">—</span>}
       </div>
 
       {/* Quick-pick popup — fixed so it floats above the section frame */}
