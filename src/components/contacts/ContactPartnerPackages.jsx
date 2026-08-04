@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Package, AlertCircle } from 'lucide-react'
+import { Package, AlertCircle, FileDown } from 'lucide-react'
+import { jsPDF } from 'jspdf'
+import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../../lib/supabase'
 import { fetchOrdersByIds } from '../../lib/packageOrders'
+import { formatAccountNumber } from '../../lib/accountNumber'
 import { useApp } from '../../context/AppContext'
 
 /* Read-only list of every delivery package this partner has provided, joined to
@@ -22,7 +25,13 @@ function fmtMoney(value, currency) {
   })}`
 }
 
-export default function ContactPartnerPackages({ contactId }) {
+/* Multi-currency amounts print as "120.00 USD + 2,000,000 LBP". */
+function fmtCurMap(map) {
+  const parts = CURRENCIES.filter(c => round2(map?.[c] || 0) !== 0).map(c => fmtMoney(map[c], c))
+  return parts.join(' + ')
+}
+
+export default function ContactPartnerPackages({ contactId, contactName = 'Partner', accountNumber = '' }) {
   const { COMPANY_ID } = useApp()
   const [rows,      setRows]      = useState([])
   const [loading,   setLoading]   = useState(true)
@@ -81,18 +90,153 @@ export default function ContactPartnerPackages({ contactId }) {
   }, [visible])
   const totalCurs = CURRENCIES.filter(c => totals[c])
 
+  /* ── daily summary of the same packages ─────────────────────
+     One line per delivery date: how many package lines and units went out that
+     day, what they came to, how much was paid directly to the partner, and the
+     day's balance, with a running balance carrying forward. Built from exactly
+     the rows on screen, so it follows the Delivered-only / All-orders toggle. */
+  const dailySummary = useMemo(() => {
+    const byDate = new Map()
+    const seenOrders = new Map()          // date → Set(order ids), so an order's
+                                          // fee/collections are counted once even
+                                          // when it carries several packages
+    for (const r of visible) {
+      const d = (r.order?.closed_at || r.order?.scheduled_date || r.order?.created_at || '').slice(0, 10) || '—'
+      let e = byDate.get(d)
+      if (!e) {
+        e = { date: d, orders: 0, packages: 0, qty: 0, delivered: {}, fees: {}, collected: {}, paidPartner: {} }
+        byDate.set(d, e); seenOrders.set(d, new Set())
+      }
+      const cur = r.currency || r.order?.currency || 'USD'
+      const amt = round2(r.package_price)
+      e.packages += 1
+      e.qty      += Number(r.quantity) || 1
+      e.delivered[cur] = round2((e.delivered[cur] || 0) + amt)
+      // "Paid to partner" = packages already settled with the partner.
+      if (r.paid) e.paidPartner[cur] = round2((e.paidPartner[cur] || 0) + amt)
+
+      // Order-level figures: delivery fee charged and cash collected from the
+      // customer — added once per order, not once per package.
+      const oid = r.order?.id
+      if (oid && !seenOrders.get(d).has(oid)) {
+        seenOrders.get(d).add(oid)
+        e.orders += 1
+        const ocur = r.order?.currency || 'USD'
+        const fee  = round2(r.order?.delivery_fee)
+        if (fee) e.fees[ocur] = round2((e.fees[ocur] || 0) + fee)
+        for (const pc of (r.order?.payment_collections ?? [])) {
+          const pcur = CURRENCIES.includes(pc.currency) ? pc.currency : 'USD'
+          const pamt = round2(pc.amount)
+          if (pamt) e.collected[pcur] = round2((e.collected[pcur] || 0) + pamt)
+        }
+      }
+    }
+    const rows = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    const running = {}
+    for (const e of rows) {
+      // Balance dues = total packages − paid to partner.
+      e.balance = {}
+      for (const c of CURRENCIES) {
+        const net = round2((e.delivered[c] || 0) - (e.paidPartner[c] || 0))
+        if (net !== 0) e.balance[c] = net
+        running[c] = round2((running[c] || 0) + net)
+      }
+      e.runningBalance = { ...running }
+    }
+    return rows
+  }, [visible])
+
+  function exportSummaryPDF() {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const now = new Date()
+    const marginX = 14
+
+    doc.setFontSize(14); doc.setTextColor(20)
+    doc.text('Partner Packages — Daily Summary', marginX, 16)
+    doc.setFontSize(10); doc.setTextColor(40)
+    doc.text(contactName, marginX, 23)
+    doc.setFontSize(9); doc.setTextColor(110)
+    if (accountNumber) doc.text(`Account: ${formatAccountNumber(accountNumber)}`, marginX, 28)
+    doc.text(`Generated: ${now.toLocaleString()}   |   ${onlyDelivered ? 'Delivered packages only' : 'All orders (open included)'}`, marginX, 33)
+
+    const totalPkgs = dailySummary.reduce((n, e) => n + e.packages, 0)
+    const totalQty  = dailySummary.reduce((n, e) => n + e.qty, 0)
+
+    // Column totals across the whole report.
+    const sumOf = key => {
+      const t = {}
+      for (const e of dailySummary) for (const c of CURRENCIES) {
+        const v = round2(e[key]?.[c] || 0)
+        if (v) t[c] = round2((t[c] || 0) + v)
+      }
+      return t
+    }
+
+    autoTable(doc, {
+      startY: 38,
+      head: [['Delivery date', 'Pkgs', 'Qty', 'Total packages', 'Delivery fees',
+              'Collected from customer', 'Paid to partner', 'Balance dues']],
+      body: dailySummary.map(e => [
+        e.date, String(e.packages), String(e.qty),
+        fmtCurMap(e.delivered)    || '',
+        fmtCurMap(e.fees)         || '',
+        fmtCurMap(e.collected)    || '',
+        fmtCurMap(e.paidPartner)  || '',
+        fmtCurMap(e.balance)      || '',
+      ]),
+      foot: [[
+        'Total', String(totalPkgs), String(totalQty),
+        fmtCurMap(sumOf('delivered'))   || '',
+        fmtCurMap(sumOf('fees'))        || '',
+        fmtCurMap(sumOf('collected'))   || '',
+        fmtCurMap(sumOf('paidPartner')) || '',
+        fmtCurMap(sumOf('balance'))     || '',
+      ]],
+      styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak' },
+      headStyles: { fillColor: [147, 51, 234], textColor: 255, fontSize: 7 },
+      footStyles: { fillColor: [226, 232, 240], textColor: 20, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        1: { halign: 'center', cellWidth: 11 }, 2: { halign: 'center', cellWidth: 10 },
+        3: { halign: 'right' }, 4: { halign: 'right' },
+        5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' },
+      },
+    })
+
+    let y = (doc.lastAutoTable?.finalY ?? 38) + 8
+    doc.setFontSize(10); doc.setTextColor(20)
+    doc.text('Partner balance', marginX, y); y += 6
+    doc.setFontSize(9)
+    for (const c of totalCurs) {
+      doc.text(
+        `${c} — Total packages ${fmtMoney(totals[c].delivered, c)}   Paid to partner ${fmtMoney(totals[c].paid, c)}   Balance dues ${fmtMoney(totals[c].balance, c)}`,
+        marginX, y)
+      y += 5
+    }
+    doc.save(`partner-packages-daily-${(accountNumber || contactName).toString().replace(/\s+/g, '-')}-${now.toISOString().slice(0, 10)}.pdf`)
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
           <Package className="w-3.5 h-3.5" /> Delivered Packages
         </p>
-        <button type="button" onClick={() => setOnlyDelivered(o => !o)} aria-pressed={onlyDelivered}
-          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
-            onlyDelivered ? 'bg-purple-500/15 border-purple-500/40 text-purple-300'
-                          : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
-          {onlyDelivered ? 'Delivered only' : 'All orders'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={exportSummaryPDF} disabled={visible.length === 0}
+            title="Daily summary PDF — delivery date, total packages, delivery fees, collected from customer, paid to partner and balance dues"
+            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors inline-flex items-center gap-1.5
+                       bg-brand-600/20 border-brand-500/40 text-brand-300 hover:bg-brand-600/30 hover:text-brand-200
+                       disabled:opacity-40 disabled:cursor-not-allowed">
+            <FileDown className="w-3.5 h-3.5" /> Daily Summary PDF
+          </button>
+          <button type="button" onClick={() => setOnlyDelivered(o => !o)} aria-pressed={onlyDelivered}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+              onlyDelivered ? 'bg-purple-500/15 border-purple-500/40 text-purple-300'
+                            : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
+            {onlyDelivered ? 'Delivered only' : 'All orders'}
+          </button>
+        </div>
       </div>
 
       {error && (

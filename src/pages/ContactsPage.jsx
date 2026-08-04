@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, Trash2,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, ClipboardList, Trash2,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -14,6 +14,7 @@ import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import ContactSubAccounts from '../components/contacts/ContactSubAccounts'
 import ContactPartnerPackages from '../components/contacts/ContactPartnerPackages'
+import ContactPartnerOrders from '../components/contacts/ContactPartnerOrders'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount } from '../lib/subAccounts'
 
@@ -456,8 +457,13 @@ export default function ContactsPage({ type }) {
   // only makes sense for a saved contact that actually holds the Partner role.
   const isSaved       = modal && modal !== 'add'
   const holdsPartner  = (form.contact_types || []).includes('partner')
+  // Shown on the partner-only tabs (Packages / Orders) and in their PDFs.
+  const partnerLabel  = form.company_name?.trim()
+    || `${form.first_name ?? ''} ${form.last_name ?? ''}`.trim() || 'Partner'
   const contactTabs   = (isSaved && holdsPartner)
-    ? [...CONTACT_TABS, { value: 'packages', label: 'Packages', Icon: Package }]
+    ? [...CONTACT_TABS,
+       { value: 'packages', label: 'Packages', Icon: Package },
+       { value: 'orders',   label: 'Orders',   Icon: ClipboardList }]
     : CONTACT_TABS
   // If the open tab is no longer available (e.g. the Partner role was toggled off
   // while viewing Packages), fall back to Details so the pane never goes blank.
@@ -654,7 +660,13 @@ export default function ContactsPage({ type }) {
       {/* Modal */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`card w-full p-6 space-y-4 overflow-y-auto max-h-[90vh] transition-[max-width] duration-200 ${activeTab === 'packages' ? 'max-w-4xl' : 'max-w-lg'}`}>
+          {/* Width follows the CONTACT rather than the open tab: a partner has
+              the wide Packages/Orders tabs, so its form stays wide throughout —
+              the tab bar then reads the same on every pane instead of the modal
+              resizing as you switch. */}
+          <div className={`card w-full p-6 space-y-4 overflow-y-auto max-h-[90vh] transition-[max-width] duration-200 ${
+            ['packages', 'orders'].includes(activeTab) ? 'max-w-6xl'
+              : (isSaved && holdsPartner) ? 'max-w-3xl' : 'max-w-lg'}`}>
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 <Icon className={`w-4 h-4 ${color}`} />
@@ -666,10 +678,10 @@ export default function ContactsPage({ type }) {
             {/* Tabs — the form is long enough that details, addresses and account
                 numbers each deserve their own pane. Validation errors and the
                 Save button live outside the tabs, so they're always reachable. */}
-            <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6">
+            <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6 overflow-x-auto">
               {contactTabs.map(t => (
                 <button key={t.value} type="button" onClick={() => setTab(t.value)}
-                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
+                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${
                     tab === t.value
                       ? 'text-brand-300 border-brand-500'
                       : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
@@ -705,7 +717,19 @@ export default function ContactsPage({ type }) {
             )}
 
             {activeTab === 'packages' && isSaved && (
-              <ContactPartnerPackages contactId={modal.id} />
+              <ContactPartnerPackages
+                contactId={modal.id}
+                contactName={partnerLabel}
+                accountNumber={form.account_number || modal.account_number || ''}
+              />
+            )}
+
+            {activeTab === 'orders' && isSaved && (
+              <ContactPartnerOrders
+                contactId={modal.id}
+                contactName={partnerLabel}
+                accountNumber={form.account_number || modal.account_number || ''}
+              />
             )}
 
             {/* Login access — suppliers & partners may be given a user account. */}

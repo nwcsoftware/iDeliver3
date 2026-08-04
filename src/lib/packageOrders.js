@@ -10,7 +10,9 @@ import { supabase } from './supabase'
    Map<order_id, order>. */
 
 const CHUNK = 200
-const ORDER_FIELDS = 'id, order_number, recipient_name, delivery_address, currency, isclosed, closed_at, scheduled_date'
+// delivery_fee + payment_collections feed the daily-summary report (delivery
+// fees charged and cash collected from the customer, per day).
+const ORDER_FIELDS = 'id, order_number, recipient_name, delivery_address, currency, isclosed, closed_at, scheduled_date, created_at, delivery_fee, total_amount, payment_collections(amount, currency)'
 
 export async function fetchOrdersByIds(ids = []) {
   const map = new Map()

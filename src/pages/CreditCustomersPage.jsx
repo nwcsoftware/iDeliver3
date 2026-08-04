@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw, Trash2, Eraser } from 'lucide-react'
+import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw, Trash2, Eraser, CalendarRange } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -298,6 +298,60 @@ export default function CreditCustomersPage() {
     return { charged, paid, balance }
   }, [statement])
 
+  /* ── daily summary of the same statement ────────────────────
+     One line per date: how many orders were charged that day, what they came
+     to, what was collected against the account that day, and the day's net.
+     A running balance carries the days forward so the last line equals the
+     statement's closing balance. Built from the very same rows as the detailed
+     statement, so both documents always reconcile. */
+  const dailySummary = useMemo(() => {
+    const byDate = new Map()
+    const bucket = (d) => {
+      let e = byDate.get(d)
+      if (!e) {
+        e = { date: d, orders: 0, charged: emptyCur(), collected: emptyCur(),
+              packages: emptyCur(), fees: emptyCur(), paidPartner: emptyCur() }
+        byDate.set(d, e)
+      }
+      return e
+    }
+
+    for (const r of statement) {
+      const e = bucket(r.date || '—')
+      if (r.debit)  for (const c of CURRENCIES) e.charged[c]   += round2(r.debit[c] || 0)
+      if (r.credit) for (const c of CURRENCIES) e.collected[c] += round2(r.credit[c] || 0)
+      if (r.kind !== 'order' || !r.order) continue
+
+      e.orders += 1
+      const o = r.order
+      // Delivery fee is the order's own charge, in the order's currency.
+      const ocur = CURRENCIES.includes(o.currency) ? o.currency : 'USD'
+      e.fees[ocur] += round2(o.delivery_fee)
+      // Partner packages on this order: their value, and the part already
+      // settled with the partner.
+      for (const pk of (o.delivery_packages ?? [])) {
+        if (!pk.provider_id) continue
+        const pcur = CURRENCIES.includes(pk.currency) ? pk.currency : ocur
+        const amt  = round2(pk.package_price)
+        if (!amt) continue
+        e.packages[pcur] += amt
+        if (pk.paid) e.paidPartner[pcur] += amt
+      }
+    }
+
+    const rows = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    const running = emptyCur()
+    for (const e of rows) {
+      // The customer's own daily net (what the statement balance follows)…
+      e.net = Object.fromEntries(CURRENCIES.map(c => [c, round2(e.charged[c] - e.collected[c])]))
+      for (const c of CURRENCIES) running[c] = round2(running[c] + e.net[c])
+      e.balance = { ...running }
+      // …and the partner side: dues = total packages − paid to partner.
+      e.partnerDues = Object.fromEntries(CURRENCIES.map(c => [c, round2(e.packages[c] - e.paidPartner[c])]))
+    }
+    return rows
+  }, [statement])
+
   const hasActiveFilters = search.trim() || dateFrom || dateTo || statusFilter !== 'outstanding'
   function clearFilters() { setSearch(''); setDateFrom(''); setDateTo(''); setStatusFilter('outstanding') }
 
@@ -461,6 +515,75 @@ export default function CreditCustomersPage() {
     doc.save(`statement-${(selected.customer.account_number || customerName(selected.customer)).toString().replace(/\s+/g, '-')}-${now.toISOString().slice(0, 10)}.pdf`)
   }
 
+  /* ── PDF — the same statement summarised per day ─────────── */
+  function exportSummaryPDF() {
+    if (!selected) return
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const now = new Date()
+    const marginX = 14
+
+    doc.setFontSize(14); doc.setTextColor(20)
+    doc.text('Credit Customer Statement — Daily Summary', marginX, 16)
+    doc.setFontSize(10); doc.setTextColor(40)
+    doc.text(customerName(selected.customer), marginX, 23)
+    doc.setFontSize(9); doc.setTextColor(110)
+    if (selected.customer.account_number) doc.text(`Account: ${formatAccountNumber(selected.customer.account_number)}`, marginX, 28)
+    const range = [dateFrom && `From ${dateFrom}`, dateTo && `To ${dateTo}`].filter(Boolean).join('   ') || 'All dates'
+    doc.text(`Generated: ${now.toLocaleString()}   |   ${range}`, marginX, 33)
+
+    const sumOf = key => {
+      const t = emptyCur()
+      for (const e of dailySummary) for (const c of CURRENCIES) t[c] = round2(t[c] + (e[key]?.[c] || 0))
+      return t
+    }
+
+    autoTable(doc, {
+      startY: 38,
+      head: [['Delivery date', 'Orders', 'Total packages', 'Delivery fees',
+              'Collected from customer', 'Paid to partner', 'Account balance']],
+      body: dailySummary.map(e => [
+        e.date,
+        String(e.orders),
+        fmtCurMap(e.packages)    || '',
+        fmtCurMap(e.fees)        || '',
+        fmtCurMap(e.collected)   || '',
+        fmtCurMap(e.paidPartner) || '',
+        fmtCurMap(e.balance)     || '',
+      ]),
+      foot: [[
+        'Total',
+        String(dailySummary.reduce((n, e) => n + e.orders, 0)),
+        fmtCurMap(sumOf('packages'))    || '',
+        fmtCurMap(sumOf('fees'))        || '',
+        fmtCurMap(sumOf('collected'))   || '',
+        fmtCurMap(sumOf('paidPartner')) || '',
+        fmtCurMap(statementTotals.balance) || '',
+      ]],
+      styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak' },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontSize: 7 },
+      footStyles: { fillColor: [226, 232, 240], textColor: 20, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        1: { halign: 'center', cellWidth: 12 },
+        2: { halign: 'right' }, 3: { halign: 'right' },
+        4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' },
+      },
+    })
+
+    let y = (doc.lastAutoTable?.finalY ?? 38) + 8
+    doc.setFontSize(10); doc.setTextColor(20)
+    doc.text('Account balance', marginX, y); y += 6
+    doc.setFontSize(9)
+    for (const c of CURRENCIES) {
+      if (!selected.charged[c] && !selected.paid[c]) continue
+      doc.text(
+        `${c} — Charged ${fmtMoney(selected.charged[c], c)}   Collected ${fmtMoney(selected.paid[c], c)}   Balance ${fmtMoney(selected.balance[c], c)}`,
+        marginX, y)
+      y += 5
+    }
+    doc.save(`statement-daily-${(selected.customer.account_number || customerName(selected.customer)).toString().replace(/\s+/g, '-')}-${now.toISOString().slice(0, 10)}.pdf`)
+  }
+
   const busy = loading.orders || payLoading
 
   /* ── render ──────────────────────────────────────────────── */
@@ -572,6 +695,10 @@ export default function CreditCustomersPage() {
                     )}
                     <button onClick={exportPDF} className="btn-ghost text-xs text-slate-300 hover:text-slate-100">
                       <FileDown className="w-4 h-4" /> Statement PDF
+                    </button>
+                    <button onClick={exportSummaryPDF} title="Same statement summarised per day — orders, totals, collected, balance"
+                      className="btn-ghost text-xs text-slate-300 hover:text-slate-100">
+                      <CalendarRange className="w-4 h-4" /> Daily Summary PDF
                     </button>
                     <button onClick={openCollect}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-brand-600 text-white hover:bg-brand-500 transition-colors">
