@@ -19,6 +19,7 @@ import {
 } from '../lib/subAccounts'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
+import SearchMultiSelect from '../components/SearchMultiSelect'
 import Badge, { variants as STATUS_VARIANTS, labels as STATUS_LABELS } from '../components/ui/Badge'
 import ContactFormFields from '../components/contacts/ContactFormFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
@@ -138,6 +139,11 @@ function isCreditCustomerOrder(o) { return o?.customer?.credit_debit_allowed ===
 // fee — just a customer, order status, scheduled date, their line items + payment.
 const STORY_ORDER_TYPE = 'Story'
 function isStoryOrder(o) { return (o?.order_type || '').trim().toLowerCase() === STORY_ORDER_TYPE.toLowerCase() }
+
+// Orders placed from the customer application (order_source = 'customer application').
+// Their line items are order_items with item_type = 'external_request'.
+function isCustomerAppOrder(o) { return (o?.order_source || '').trim().toLowerCase() === 'customer application' }
+const EMPTY_CUSTOMER_ITEM = { parcel_description: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0, shop_item_id: null }
 
 // Data-integrity checks for the daily-orders "Check orders" audit popup. Returns a
 // list of human-readable warnings for one order (empty = no issues).
@@ -457,7 +463,7 @@ const EMPTY_CUSTOMER = {
   first_name: '', last_name: '', mobile: '', whatsapp_number: '',
   email: '', city: '', address: '', notes: '', account_number: '', credit_debit_allowed: false,
   // Shared "general form" extras so the quick-add form matches the Contacts page.
-  partner_percentage: '', shop_type: '', contact_category: '',
+  partner_percentage: '', partner_percentage_type: '', shop_type: '', contact_category: '',
 }
 
 function customerName(c) {
@@ -654,11 +660,13 @@ function lineTotal(it) {
 }
 
 function calcTotals(items, deliveryFee, feeCurrency, discount, vat, discountCurrency = feeCurrency,
-                    packages = [], services = [], retailInvoices = [], ads = []) {
+                    packages = [], services = [], retailInvoices = [], ads = [], customerItems = []) {
   const t = { USD: 0, LBP: 0, EUR: 0 }
   const add = (cur, n) => { t[cur in t ? cur : 'USD'] += n }
   // Per-item line totals already apply each item's own discount in its currency.
   for (const it of items) add(it.currency || 'USD', lineTotal(it))
+  // Customer-app requested retail items count toward the order total too.
+  for (const it of customerItems) add(it.currency || 'USD', lineTotal(it))
   // Ads (Story orders): each ad's price counts toward the order total.
   for (const a of ads) add(a.currency || 'USD', Number(a.price) || 0)
   // Packages carry their own currency. A package already paid directly to its
@@ -682,7 +690,7 @@ function SectionLabel({ children }) {
 }
 
 // Order-form sections, in display order. Used to collapse/expand each block.
-const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'ads', 'packages', 'services', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
+const FORM_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'ads', 'packages', 'services', 'customer_items', 'items', 'retail_invoices', 'totals', 'payments', 'notes']
 // Sections expanded by default on a new order; the rest start collapsed.
 const DEFAULT_OPEN_SECTIONS = ['order_type', 'customer', 'route', 'assignment', 'ads', 'notes']
 const allSectionsClosed = () => Object.fromEntries(FORM_SECTIONS.map(s => [s, false]))
@@ -858,6 +866,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [items,     setItems]     = useState([])
   const [ads,       setAds]       = useState([])             // ads rows (Story orders)
   const [origAdIds, setOrigAdIds] = useState([])            // ad ids loaded on edit (to diff on save)
+  const [customerItems, setCustomerItems] = useState([])    // order_items with item_type='external_request' (customer app)
   const [retailInvoices, setRetailInvoices] = useState([])   // retail_goods_invoices
   const [packages,       setPackages]       = useState([])
   const [origPackageIds, setOrigPackageIds] = useState([])
@@ -900,10 +909,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [customerError,        setCustomerError]        = useState('')
   const [payments,             setPayments]             = useState([])
   const [origPaymentIds,       setOrigPaymentIds]       = useState([])
-  const [driverFilter,         setDriverFilter]         = useState('')
+  // Driver / customer filters are multi-select: [] = no filter (all), otherwise
+  // the order must match ANY of the picked ids.
+  const [driverFilter,         setDriverFilter]         = useState([])
   const [payFilter,            setPayFilter]            = useState('')   // payment_status chip (toggle)
   const [flagFilter,           setFlagFilter]           = useState('')   // ''|flagged|unflagged
-  const [customerFilter,       setCustomerFilter]       = useState('')
+  const [customerFilter,       setCustomerFilter]       = useState([])
   const [categoryFilter,       setCategoryFilter]       = useState([])   // [] = all; else subset of credit|regular|partner|supplier
   const [catMenuOpen,          setCatMenuOpen]          = useState(false)
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
@@ -1101,7 +1112,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return [...seen.values()].sort((a, b) => a.localeCompare(b))
   }, [orders])
   // An order from the online application = external source.
-  const isOnlineOrder = (o) => (o.order_source || '').trim().toUpperCase().startsWith('EXT')
+  const isOnlineOrder = (o) => {
+    const s = (o.order_source || '').trim().toLowerCase()
+    return s.startsWith('ext') || s === 'customer application'
+  }
   // Orders that need the call-center confirm affordance in the list: online (EXT),
   // plus partner & supplier orders (treated like online). Returns the icon "kind".
   const orderSourceKind = (o) => {
@@ -1135,8 +1149,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       && (filter === 'all' || normalizeStatus(o.status) === filter)
       && (!payFilter      || o.payment_status === payFilter)
       && (!flagFilter     || (flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
-      && (!driverFilter   || o.driver_id   === driverFilter)
-      && (!customerFilter || o.customer_id === customerFilter)
+      && (driverFilter.length   === 0 || driverFilter.includes(o.driver_id))
+      && (customerFilter.length === 0 || customerFilter.includes(o.customer_id))
       && (!orderTypeFilter || o.order_type === orderTypeFilter)
       && matchCategory(o)
       && matchSource(o)
@@ -1186,9 +1200,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
   const ignoreAd = adId => setAdsIgnored(prev => new Set(prev).add(adId))
 
-  const hasAdvancedFilters = driverFilter || customerFilter || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
+  // Options for the searchable multi-selects above the list.
+  const driverFilterOptions = useMemo(
+    () => drivers.map(d => ({ value: d.id, label: `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim() || 'Unnamed driver' })),
+    [drivers])
+  const customerFilterOptions = useMemo(
+    () => customers.map(c => ({ value: c.id, label: c.company_name || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unnamed contact' })),
+    [customers])
+
+  const hasAdvancedFilters = driverFilter.length || customerFilter.length || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
-    setDriverFilter(''); setCustomerFilter(''); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
+    setDriverFilter([]); setCustomerFilter([]); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
   }
 
   // Order-type filter options as { value, label }. `value` is exactly what's
@@ -1658,7 +1680,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
-    setAds([]); setOrigAdIds([])
+    setAds([]); setOrigAdIds([]); setCustomerItems([])
     setSectionsOpen(defaultNewSections())         // new order: Order Type, Customer, Route, Notes open
     setCustomerInput(''); setError(''); setModal('add')
     // 2nd-party (supplier/partner) users: the customer is always their own linked
@@ -1681,7 +1703,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([])
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
-    setAds([]); setOrigAdIds([])
+    setAds([]); setOrigAdIds([]); setCustomerItems([])
     setSectionsOpen(defaultNewSections())
     setCustomerInput(''); setError(''); setModal('add')
   }
@@ -1712,6 +1734,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       .select('*, product:products(id,name,code)')
       .eq('order_id', o.id)
       .eq('is_deleted', false)
+      // The 3asari3 grid manages staff-added product/service lines only. Customer-app
+      // lines (item_type 'external_request') are shown elsewhere and preserved on save.
+      .neq('item_type', 'external_request')
     setItems((data ?? []).map(it => ({
       _id:        it.id,
       product_id: it.product_id ?? '',
@@ -1719,6 +1744,28 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       unit_price: it.unit_price,
       currency:   it.currency ?? 'USD',
       discount:   it.discount ?? 0,
+    })))
+    // Customer-app requested items (external_request) — shown in their own section
+    // for orders placed from the customer application.
+    const { data: ciData } = await supabase
+      .from('order_items')
+      .select('*')
+      .eq('order_id', o.id)
+      .eq('is_deleted', false)
+      .eq('item_type', 'external_request')
+      .order('added_at')
+    setCustomerItems((ciData ?? []).map(it => ({
+      _id:                it.id,
+      parcel_description: it.parcel_description ?? '',
+      quantity:           it.quantity ?? 1,
+      unit_price:         it.unit_price ?? 0,
+      currency:           it.currency ?? 'USD',
+      discount:           it.discount ?? 0,
+      shop_item_id:       it.shop_item_id ?? null,
+      supplier_id:        it.supplier_id ?? null,
+      supplier_name:      it.supplier_name ?? '',
+      commission_percentage:   it.commission_percentage ?? null,
+      partner_percentage_type: it.partner_percentage_type ?? null,
     })))
     const { data: riData } = await supabase
       .from('retail_goods_invoices')
@@ -1888,7 +1935,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setModal(null); setItems([]); setRetailInvoices([]); setPayments([]); setOrigPaymentIds([]); setError('')
     setPackages([]); setOrigPackageIds([])
     setServices([]); setOrigServiceIds([])
-    setAds([]); setOrigAdIds([])
+    setAds([]); setOrigAdIds([]); setCustomerItems([])
     setCustomerInput(''); setCustomerDropdownOpen(false)
   }
 
@@ -2021,6 +2068,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
   function setAd(i, k, v) { setAds(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next }) }
 
+  /* ── customer-app requested items (order_items item_type='external_request') ── */
+  function addCustomerItem() { setCustomerItems(p => [...p, { ...EMPTY_CUSTOMER_ITEM, _key: Date.now() }]) }
+  function removeCustomerItem(i) { setCustomerItems(p => p.filter((_, idx) => idx !== i)) }
+  function setCustomerItem(i, k, v) { setCustomerItems(p => { const next = [...p]; next[i] = { ...next[i], [k]: v }; return next }) }
+
   /* Retail goods invoices (retail_goods_invoices). */
   function addRetailInvoice() {
     // 2nd-party users: the shop is always their own linked contact.
@@ -2097,7 +2149,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setSaving(true); setError('')
 
     const isFree = !!form.is_free_order
-    const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads)
+    const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads, customerItems)
     // A free order is stored at zero total regardless of the items it carries.
     const totals = isFree ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
     const itemsInPrimary = items.filter(it => it.currency === form.currency).reduce((s, it) => s + lineTotal(it), 0)
@@ -2202,8 +2254,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       if (e) { setError(e.message); setSaving(false); return }
       // Return to this order after a refresh (new or edited).
       rememberOrder(orderId)
-      // Soft-delete existing items
-      await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', orderId).eq('is_deleted', false)
+      // Soft-delete existing items — but keep customer-app lines ('external_request'),
+      // which aren't shown in the 3asari3 grid and must survive an edit/save.
+      await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', orderId).eq('is_deleted', false).neq('item_type', 'external_request')
       // Retail invoices have no soft-delete flag — replace the set outright.
       await supabase.from('retail_goods_invoices').delete().eq('order_id', orderId)
       // On a recovery retry, also clear children that were written untracked on
@@ -2229,6 +2282,39 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       }))
       const { error: ie } = await supabase.from('order_items').insert(rows)
       if (ie) { setError(ie.message); setSaving(false); return }
+    }
+
+    // Customer-app requested items (item_type='external_request') — replace the set
+    // for orders placed from the customer application. Only a super admin may
+    // create/edit/delete them; other users' saves leave these rows untouched.
+    if (isCustomerApp && isSuperAdmin) {
+      await supabase.from('order_items')
+        .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+        .eq('order_id', orderId).eq('is_deleted', false).eq('item_type', 'external_request')
+      if (customerItems.length > 0) {
+        const ciRows = customerItems.map(ci => {
+          const lt  = lineTotal(ci)
+          const pct = Number(ci.commission_percentage) || 0
+          return {
+            order_id:           orderId,
+            item_type:          'external_request',
+            parcel_description: ci.parcel_description?.trim() || null,
+            shop_item_id:       ci.shop_item_id || null,
+            supplier_id:        ci.supplier_id || null,
+            supplier_name:      ci.supplier_name || null,
+            commission_percentage:   pct || null,
+            partner_percentage_type: ci.partner_percentage_type || null,
+            commission_amount:  pct ? round2(lt * pct / 100) : null,
+            quantity:           Number(ci.quantity) || 1,
+            unit_price:         Number(ci.unit_price) || 0,
+            currency:           ci.currency || 'USD',
+            discount:           Number(ci.discount) || 0,
+            line_total:         lt,
+          }
+        })
+        const { error: cie } = await supabase.from('order_items').insert(ciRows)
+        if (cie) { setError(cie.message); setSaving(false); return }
+      }
     }
 
     // Ads (Story orders) — replace the set outright (delete then insert). Denormalize
@@ -2527,6 +2613,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     await supabase.from('order_items').update({ is_deleted: true }).eq('order_id', o.id).eq('is_deleted', false)
     await supabase.from('retail_goods_invoices').delete().eq('order_id', o.id)
     await supabase.from('payment_collections').delete().eq('order_id', o.id)
+    await supabase.from('ads').delete().eq('order_id', o.id)   // Story ads are transactions too
     await supabase.from('delivery_orders').update({
       status:                    'cancelled',
       delivery_fee:              0,
@@ -2666,12 +2753,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   /* ── totals (live) ───────────────────────────────────────── */
 
-  const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads)
+  const rawTotals = calcTotals(items, form.delivery_fee, form.currency, form.discount_amount, form.vat_amount, form.discount_currency, packages, services, retailInvoices, ads, customerItems)
   // A free order is waived to zero even when it carries items. rawTotals keeps the
   // real value so we can warn before flipping the toggle on a non-zero order.
   const totals    = form.is_free_order ? { USD: 0, LBP: 0, EUR: 0 } : rawTotals
   const rawHasValue = CURRENCIES.some(c => round2(rawTotals[c] || 0) > 0)
-  const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || ads.length > 0 || Number(form.delivery_fee) > 0
+  const anyItems = items.length > 0 || packages.length > 0 || services.length > 0 || retailInvoices.length > 0 || ads.length > 0 || customerItems.length > 0 || Number(form.delivery_fee) > 0
 
   // Every order uses the same full form regardless of the customer; the picker
   // always lists all customers (credit handling is derived from the customer).
@@ -2729,6 +2816,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Is the order in the modal an "Ads & Services" (Story) order? Drives which
   // sections are shown (no route/driver/delivery/packages/market/services/fee).
   const isStory       = isStoryOrder(form)
+  // Order placed from the customer application → show the requested-retails section.
+  const isCustomerApp = modal && modal !== 'add' && isCustomerAppOrder(modal)
   // Credit customers may close an order with an unpaid balance (it becomes a
   // receivable). Detect credit from the picker list AND, as a fallback, from the
   // order's own joined customer — the credit contact may not be in the picker list
@@ -2913,20 +3002,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
         {/* Advanced filters */}
         <div className="flex items-end gap-2 flex-wrap">
-          <div>
-            <label className="label flex items-center gap-1"><Truck className="w-3 h-3" /> Driver</label>
-            <select className="input py-1.5 text-xs w-40" value={driverFilter} onChange={e => setDriverFilter(e.target.value)}>
-              <option value="">All drivers</option>
-              {drivers.map(d => <option key={d.id} value={d.id}>{d.first_name} {d.last_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label flex items-center gap-1"><UserCheck className="w-3 h-3" /> Customer</label>
-            <select className="input py-1.5 text-xs w-44" value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}>
-              <option value="">All contacts</option>
-              {customers.map(c => <option key={c.id} value={c.id}>{c.company_name || `${c.first_name} ${c.last_name}`}</option>)}
-            </select>
-          </div>
+          {/* Driver & Customer: type to search, tick as many as needed. */}
+          <SearchMultiSelect
+            label="Driver" Icon={Truck} width="w-40"
+            allLabel="All drivers" searchPlaceholder="Search driver…"
+            options={driverFilterOptions}
+            value={driverFilter} onChange={setDriverFilter}
+          />
+          <SearchMultiSelect
+            label="Customer" Icon={UserCheck} width="w-44"
+            allLabel="All contacts" searchPlaceholder="Search customer…"
+            options={customerFilterOptions}
+            value={customerFilter} onChange={setCustomerFilter}
+          />
           <div className="relative">
             <label className="label flex items-center gap-1"><UserCheck className="w-3 h-3" /> Customer type</label>
             <button type="button" onClick={() => setCatMenuOpen(o => !o)}
@@ -3964,8 +4052,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 </div>
               </CollapsibleSection>
 
-              {/* ── Delivery Packages (hidden for Story/ads orders) ─ */}
-              {!isStory && (
+              {/* ── Delivery Packages (hidden for Story/ads + customer-app orders) ─ */}
+              {!isStory && !isCustomerApp && (
               <CollapsibleSection title={`Delivery Packages (${packagesQty})`} open={sectionsOpen.packages} onToggle={v => toggleSection('packages', v)}
                 right={
                   <button type="button" onClick={addPackage}
@@ -3981,8 +4069,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               )}
 
               {/* ── Order Services ────────────────────────────── */}
-              {/* Hidden for 2nd-party (supplier/partner) users and Story orders. */}
-              {!partyContactId && !isStory && (
+              {/* Hidden for 2nd-party users, Story orders, and customer-app orders. */}
+              {!partyContactId && !isStory && !isCustomerApp && (
               <CollapsibleSection title={`Third party services (${services.length})`} open={sectionsOpen.services} onToggle={v => toggleSection('services', v)}
                 right={
                   <button type="button" onClick={() => { openSection('services'); setServices(s => [...s, { ...EMPTY_SERVICE, _key: Date.now() }]) }}
@@ -3998,7 +4086,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               )}
 
               {/* ── External Retails Invoices References (retail_goods_invoices) ── */}
-              {!isStory && (
+              {!isStory && !isCustomerApp && (
               <CollapsibleSection title={`Local market invoices (${invoicesQty})`} open={sectionsOpen.retail_invoices} onToggle={v => toggleSection('retail_invoices', v)}
                 right={
                   <button type="button" onClick={() => { openSection('retail_invoices'); addRetailInvoice() }}
@@ -4262,9 +4350,85 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
               {/* Pricing sections */}
               {/* ── Items ─────────────────────────────────────── */}
-              {/* Hidden for 2nd-party (supplier/partner) users and Story (ads) orders. */}
+              {/* ── Retails requested from the customer application ── */}
+              {!partyContactId && isCustomerApp && (
+              <CollapsibleSection title={`Retails requested from customer application (${customerItems.length})`} accent="fuchsia" open={sectionsOpen.customer_items !== false} onToggle={v => toggleSection('customer_items', v)}
+                right={isSuperAdmin
+                  ? (
+                    <button type="button" onClick={() => { openSection('customer_items'); addCustomerItem() }}
+                      className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
+                      <Plus className="w-3 h-3" /> Add Item
+                    </button>
+                  )
+                  : <span className="text-[10px] text-slate-500 inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Super admin only</span>}>
+                <div className="border border-surface-border rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
+                        <th className="text-left px-3 py-2 w-[22%]">Shop / Warehouse</th>
+                        <th className="text-left px-3 py-2 w-[24%]">Requested item</th>
+                        <th className="text-left px-3 py-2 w-[9%]">Qty</th>
+                        <th className="text-left px-3 py-2 w-[13%]">Unit Price</th>
+                        <th className="text-left px-3 py-2 w-[11%]">Currency</th>
+                        <th className="text-left px-3 py-2 w-[10%]">Discount</th>
+                        <th className="text-right px-3 py-2 w-[11%]">Line Total</th>
+                        <th className="w-[4%]"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerItems.length === 0 ? (
+                        <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">No requested items</td></tr>
+                      ) : customerItems.map((it, idx) => (
+                        <tr key={it._id ?? it._key ?? idx} className="border-t border-surface-border/50">
+                          <td className="px-3 py-2 text-slate-300">{it.supplier_name || <span className="text-slate-600">—</span>}</td>
+                          <td className="px-3 py-2">
+                            <input className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={it.parcel_description}
+                              disabled={!isSuperAdmin}
+                              onChange={e => setCustomerItem(idx, 'parcel_description', e.target.value)} placeholder="Item requested by the customer" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0.01" step="0.01" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={it.quantity}
+                              disabled={!isSuperAdmin}
+                              onChange={e => setCustomerItem(idx, 'quantity', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={it.unit_price}
+                              disabled={!isSuperAdmin}
+                              onChange={e => setCustomerItem(idx, 'unit_price', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={it.currency}
+                              disabled={!isSuperAdmin}
+                              onChange={e => setCustomerItem(idx, 'currency', e.target.value)}>
+                              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" min="0" step="0.01" className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={it.discount}
+                              disabled={!isSuperAdmin}
+                              onChange={e => setCustomerItem(idx, 'discount', e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-100">
+                            {lineTotal(it).toFixed(it.currency === 'LBP' ? 0 : 2)}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isSuperAdmin && (
+                              <button onClick={() => removeCustomerItem(idx)} className="text-slate-600 hover:text-red-400 transition-colors p-0.5" title="Remove">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+              )}
+
+              {/* Hidden for 2nd-party users, Story orders, and customer-app orders. */}
               <div id="order-section-items" className="scroll-mt-4" />
-              {!partyContactId && !isStory && (
+              {!partyContactId && !isStory && !isCustomerApp && (
               <CollapsibleSection title={`3asari3 retails and services (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
                 right={
                   <button type="button" onClick={() => { openSection('items'); addItem() }}

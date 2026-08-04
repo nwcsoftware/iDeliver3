@@ -1,6 +1,7 @@
 import React from 'react'
 import { X, Cpu, Globe, Sparkles, ShieldCheck, Mail } from 'lucide-react'
 import nxcoreLogo from '../../assets/nxcore-logo.png'
+import { APP_NAME, APP_VERSION } from '../../lib/appVersion'
 
 /*
   About _NXCORE — the company that builds this software.
@@ -90,7 +91,7 @@ export default function AboutPopup({ open, onClose }) {
           <div className="mt-6 flex flex-col items-center gap-2 border-t border-black/15 pt-5 text-[11px] text-black/55 sm:flex-row sm:justify-between">
             <span>© {new Date().getFullYear()} _NXCORE. All rights reserved.</span>
             <span className="flex items-center gap-1.5">
-              <Mail className="h-3.5 w-3.5" /> iDeliver III · Delivery Management Suite
+              <Mail className="h-3.5 w-3.5" /> {APP_NAME} · Delivery Management Suite · v{APP_VERSION}
             </span>
           </div>
         </div>

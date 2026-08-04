@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   UserCog, UserPlus, Search, Shield, X, Loader, AlertCircle,
   KeyRound, Power, PowerOff, Pencil, Eye, EyeOff, Copy, Check, RefreshCw, Wand2,
+  Monitor, Smartphone,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -79,10 +80,22 @@ function friendlyError(message = '') {
 }
 
 export default function UserAccountsPage() {
-  const { currentUser, hasRole, onlineUserIds } = useAuth()
+  const { currentUser, hasRole, onlineUserIds, onlineSessions } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
   const onlineSet = new Set((onlineUserIds ?? []).map(String))
   const isSuperAdmin = hasRole('super_admin')
+
+  // Live devices per user (one entry per signed-in client), for the super
+  // admin's Device column. De-duplicated so two tabs on the same machine count
+  // once.
+  const liveDevices = new Map()
+  for (const s of onlineSessions ?? []) {
+    const list = liveDevices.get(s.user_id) ?? []
+    if (!list.some(d => (d.device_id && d.device_id === s.device_id) || d.device_name === s.device_name)) {
+      list.push(s)
+    }
+    liveDevices.set(s.user_id, list)
+  }
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -120,13 +133,22 @@ export default function UserAccountsPage() {
   const [partyContacts, setPartyContacts] = useState([])
   const isPartyRole = form.role === 'supplier' || form.role === 'partner'
 
+  const BASE_COLS   = 'id,username,email,mobile,role,status,contact_id,last_login_at,must_change_password,created_at'
+  const DEVICE_COLS = ',last_login_device,last_login_platform,last_device_seen_at'
+
   const fetchUsers = useCallback(async () => {
     setLoading(true)
-    const { data, error: e } = await supabase
+    const load = (cols) => supabase
       .from('user_accounts')
-      .select('id,username,email,mobile,role,status,contact_id,last_login_at,must_change_password,created_at')
+      .select(cols)
       .neq('role', 'super_admin')                  // exclude the top-level admin
       .order('created_at', { ascending: true })
+
+    let { data, error: e } = await load(BASE_COLS + DEVICE_COLS)
+    // The device columns arrive with supabase-fix101.sql; until it's applied,
+    // fall back so the page still works (live devices come from presence).
+    if (e) ({ data, error: e } = await load(BASE_COLS))
+
     if (e) setError(friendlyError(e.message))
     else   { setUsers(data ?? []); setError('') }
     setLoading(false)
@@ -190,7 +212,8 @@ export default function UserAccountsPage() {
     u.username?.toLowerCase().includes(q) ||
     u.email?.toLowerCase().includes(q) ||
     u.mobile?.includes(search.trim()) ||
-    roleLabel[u.role]?.toLowerCase().includes(q)
+    roleLabel[u.role]?.toLowerCase().includes(q) ||
+    (isSuperAdmin && u.last_login_device?.toLowerCase().includes(q))
   )
 
   // Count active accounts for a role, optionally excluding one user (the row
@@ -327,16 +350,17 @@ export default function UserAccountsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Username', 'Email', 'Mobile', 'Role', 'Status', 'Online', 'Last Login', ''].map(h => (
+              {['Username', 'Email', 'Mobile', 'Role', 'Status', 'Online',
+                ...(isSuperAdmin ? ['Device'] : []), 'Last Login', ''].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={isSuperAdmin ? 9 : 8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No users found</td></tr>
+              <tr><td colSpan={isSuperAdmin ? 9 : 8} className="px-4 py-10 text-center text-slate-500">No users found</td></tr>
             ) : filtered.map(u => {
               const isSelf = u.id === currentUser.user_id
               return (
@@ -372,6 +396,36 @@ export default function UserAccountsPage() {
                       </span>
                     )}
                   </td>
+                  {/* Where this user is signed in — live devices from presence,
+                      otherwise the last device the account was opened on. */}
+                  {isSuperAdmin && (() => {
+                    const live = liveDevices.get(String(u.id)) ?? []
+                    return (
+                      <td className="px-4 py-3">
+                        {live.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {live.map((d, i) => (
+                              <span key={d.device_id || i}
+                                className="inline-flex items-center gap-1.5 text-[11px] text-slate-200 max-w-[220px]">
+                                {d.is_desktop
+                                  ? <Monitor className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                                  : <Smartphone className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />}
+                                <span className="truncate" title={d.device_name}>{d.device_name || 'Unknown device'}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : u.last_login_device ? (
+                          <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 max-w-[220px]"
+                            title={`Last seen${u.last_device_seen_at ? ` ${new Date(u.last_device_seen_at).toLocaleString()}` : ''} — ${u.last_login_device}`}>
+                            <Monitor className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="truncate">{u.last_login_device}</span>
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-600">—</span>
+                        )}
+                      </td>
+                    )
+                  })()}
                   <td className="px-4 py-3 text-slate-500 text-xs">
                     {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never'}
                   </td>

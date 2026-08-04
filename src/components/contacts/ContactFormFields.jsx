@@ -43,10 +43,16 @@ function AddableSelect({ value, options, placeholder, addPlaceholder = 'New valu
     <select className="input" value={value ?? ''}
       onChange={e => { e.target.value === '__add__' ? setAdding(true) : onChange(e.target.value) }}>
       <option value="">{placeholder || '— Select —'}</option>
-      {options.map(o => <option key={o} value={o}>{o}</option>)}
+      {normalizeOptions(options).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       <option value="__add__">+ Add new…</option>
     </select>
   )
+}
+
+/* Select options may be plain strings (business types, categories) or
+   {value,label} pairs (e.g. commission type) — normalise to the latter. */
+export function normalizeOptions(options = []) {
+  return options.map(o => (typeof o === 'string' ? { value: o, label: o } : o))
 }
 
 /* Contact types that get a system-generated account number on creation. */
@@ -256,7 +262,7 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
                 <select className="input" value={form[ef.key] ?? ''}
                   onChange={e => setField(ef.key, e.target.value)}>
                   <option value="">{ef.placeholder || '— Select —'}</option>
-                  {ef.options.map(o => <option key={o} value={o}>{o}</option>)}
+                  {normalizeOptions(ef.options).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               ) : (
                 <input type={ef.type} className="input" value={form[ef.key] ?? ''}

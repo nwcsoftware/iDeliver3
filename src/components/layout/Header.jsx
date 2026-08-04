@@ -4,11 +4,14 @@ import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff } from 'lu
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 
-// An online (external) order arrives unconfirmed; mirror DeliveriesPage logic:
-// order_source starting with EXT = external, order_confirmed !== true = pending.
-const isUnconfirmedOnlineOrder = (o) =>
-  (o?.order_source || '').trim().toUpperCase().startsWith('EXT') &&
-  o?.order_confirmed !== true
+// Orders still waiting for someone to confirm them — what the "Unconfirmed"
+// chip on the Deliveries page shows. Mirrors DeliveriesPage's isConfirmed
+// (delivery_orders.order_confirmed), and ignores rows that are out of play:
+// closed orders live on their own page, cancelled/failed need no confirming.
+const isUnconfirmedOrder = (o) =>
+  o?.order_confirmed !== true &&
+  o?.isclosed !== true &&
+  !['cancelled', 'failed'].includes(String(o?.status || '').toLowerCase())
 
 const pageTitles = {
   '/':           'Dashboard',
@@ -17,6 +20,9 @@ const pageTitles = {
   '/tracking':   'Real-time Tracking',
   '/reports':    'Reports & Analytics',
   '/settings/users': 'User Accounts',
+  '/settings/shop-categories': 'Shop Categories',
+  '/settings/header-background': 'Header Background',
+  '/settings/subscriptions': 'Subscriptions',
   '/sold-orders':      'Sold Orders',
   '/completed-orders': 'Completed Orders',
   '/supplier-settlements': 'Supplier Settlements',
@@ -36,32 +42,55 @@ export default function Header() {
   const location             = useLocation()
   const title                = pageTitles[location.pathname] || 'iDeliver III'
   const { currentUser, logout } = useAuth()
-  const { orders, showSummary, toggleShowSummary } = useApp()
+  const { orders, showSummary, toggleShowSummary, headerBackground } = useApp()
   const electron             = window.electron
   const [userMenu, setUserMenu] = useState(false)
 
-  // Count of new online orders not yet confirmed → bell badge.
+  // The bell is an office tool: it counts every order awaiting confirmation, so
+  // 2nd-party logins (supplier/partner) don't get it at all.
+  const showBell = !['supplier', 'partner'].includes(currentUser?.role)
+
+  // Orders awaiting confirmation → bell badge (9+ once it goes past nine).
   const pendingCount = useMemo(
-    () => orders.filter(isUnconfirmedOnlineOrder).length,
+    () => orders.filter(isUnconfirmedOrder).length,
     [orders],
   )
-  const badgeLabel = pendingCount > 10 ? '10+' : String(pendingCount)
+  const badgeLabel = pendingCount > 9 ? '9+' : String(pendingCount)
 
   const initials = currentUser
     ? `${currentUser.first_name?.[0] ?? ''}${currentUser.last_name?.[0] ?? ''}`.toUpperCase() || 'U'
     : 'U'
 
+  // NOTE: the header must NOT be `overflow-hidden` — it would clip the user
+  // menu, which drops below it. The background layers are `inset-0`, so they
+  // can't spill out anyway.
   return (
     <header
-      className="relative z-40 h-12 bg-surface-card border-b border-surface-border flex items-center px-4 gap-4 flex-shrink-0"
+      className="relative z-40 h-[50px] bg-surface-card border-b border-surface-border flex items-center px-4 gap-4 flex-shrink-0"
       style={{ WebkitAppRegion: 'drag' }}
     >
+      {/* Scheduled decorative background (super admin, fix109). Purely visual:
+          it sits behind everything and never takes pointer events. A dark
+          gradient over it keeps the title and buttons readable. */}
+      {headerBackground?.image_url && (
+        <>
+          <div aria-hidden
+            className="absolute inset-0 bg-cover bg-center pointer-events-none"
+            style={{
+              backgroundImage: `url("${headerBackground.image_url}")`,
+              opacity: Number(headerBackground.opacity) || 0.35,
+            }} />
+          <div aria-hidden
+            className="absolute inset-0 pointer-events-none bg-gradient-to-r from-surface-card/85 via-surface-card/40 to-surface-card/85" />
+        </>
+      )}
+
       {/* Title */}
-      <h1 className="text-sm font-semibold text-slate-100 flex-1">{title}</h1>
+      <h1 className="relative text-sm font-semibold text-slate-100 flex-1 drop-shadow">{title}</h1>
 
       {/* Actions */}
       <div
-        className="flex items-center gap-2"
+        className="relative flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' }}
       >
         {/* Amounts summary popup show/hide — per-user view preference */}
@@ -79,21 +108,28 @@ export default function Header() {
           )}
         </button>
 
-        {/* Notification bell — new online orders awaiting confirmation */}
+        {/* Notification bell — orders awaiting confirmation. Rings (swings +
+            pulsing halo) whenever the count isn't zero. Office roles only. */}
+        {showBell && (
         <button
-          className="btn-ghost p-2 relative"
+          className={`btn-ghost p-2 relative transition-colors ${
+            pendingCount > 0 ? 'text-fuchsia-300 hover:text-fuchsia-200' : ''}`}
           title={pendingCount > 0
-            ? `${pendingCount} online order${pendingCount === 1 ? '' : 's'} awaiting confirmation`
-            : 'No pending online orders'}
+            ? `${pendingCount} order${pendingCount === 1 ? '' : 's'} awaiting confirmation`
+            : 'No orders awaiting confirmation'}
         >
-          <Bell className="w-4 h-4" />
+          {pendingCount > 0 && (
+            <span className="absolute inset-1 rounded-full bg-fuchsia-400/20 animate-ping" />
+          )}
+          <Bell className={`w-4 h-4 relative ${pendingCount > 0 ? 'animate-bell-ring' : ''}`} />
           {pendingCount > 0 && (
             <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center
-                             rounded-full bg-brand-500 text-white text-[10px] font-bold leading-none">
+                             rounded-full bg-fuchsia-500 text-white text-[10px] font-bold leading-none">
               {badgeLabel}
             </span>
           )}
         </button>
+        )}
 
         {/* User menu */}
         <div className="relative">

@@ -1,6 +1,7 @@
 import React from 'react'
 import { Megaphone, Info, AlertTriangle, AlertOctagon, Check, X, CheckCheck } from 'lucide-react'
-import { useApp } from '../../context/AppContext'
+import { useApp, messageTargetsUser } from '../../context/AppContext'
+import { useAuth } from '../../context/AuthContext'
 
 /* Visual treatment per priority. */
 const PRIORITY = {
@@ -23,10 +24,14 @@ function fmtWhen(ts) {
 export default function BroadcastPopup() {
   const { messages, unreadMessages, unreadCount, messagesOpen, setMessagesOpen,
           markMessageRead, markAllMessagesRead } = useApp()
+  const { currentUser } = useAuth()
 
   if (!messagesOpen) return null
 
-  const unreadIds = new Set(unreadMessages.map(m => m.id))
+  // Second line of defence on top of the fetch-time filter: a message aimed at
+  // other roles/users is never rendered here, whatever ends up in `messages`.
+  const visible   = messages.filter(m => messageTargetsUser(m, currentUser))
+  const unreadIds = new Set(unreadMessages.filter(m => messageTargetsUser(m, currentUser)).map(m => m.id))
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -38,9 +43,9 @@ export default function BroadcastPopup() {
         <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-surface-border bg-surface-hover/40 flex-shrink-0">
           <Megaphone className="w-5 h-5 text-brand-400" />
           <span className="text-sm font-semibold text-slate-100">Messages from administration</span>
-          {unreadCount > 0 && (
+          {unreadIds.size > 0 && (
             <span className="ml-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500 text-white">
-              {unreadCount > 9 ? '9+' : unreadCount} new
+              {unreadIds.size > 9 ? "9+" : unreadIds.size} new
             </span>
           )}
           <button onClick={() => setMessagesOpen(false)}
@@ -52,9 +57,9 @@ export default function BroadcastPopup() {
 
         {/* List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.length === 0 ? (
+          {visible.length === 0 ? (
             <div className="py-10 text-center text-slate-500 text-sm">No messages yet.</div>
-          ) : messages.map(m => {
+          ) : visible.map(m => {
             const cfg    = PRIORITY[m.priority] || PRIORITY.info
             const Icon   = cfg.icon
             const unread = unreadIds.has(m.id)
@@ -96,7 +101,7 @@ export default function BroadcastPopup() {
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-surface-border bg-surface-hover/30 flex-shrink-0">
-          {unreadCount > 0 && (
+          {unreadIds.size > 0 && (
             <button onClick={markAllMessagesRead} className="btn-ghost text-slate-400 hover:text-slate-100">
               <CheckCheck className="w-4 h-4" /> Mark all as read
             </button>

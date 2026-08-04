@@ -5,7 +5,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
 /* The exact word the user must type to arm the deletion. */
-const CONFIRM_WORD = 'Confirme'
+const CONFIRM_WORD = 'Confirmed'
 
 /* Per-order related-record categories summed into the "Will be deleted" panel
    (jsonb key on each order row → label). */

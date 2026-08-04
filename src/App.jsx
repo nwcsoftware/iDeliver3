@@ -30,6 +30,9 @@ import CashierBoxPage           from './pages/CashierBoxPage'
 import VehiclesPage          from './pages/VehiclesPage'
 import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
+import ShopCategoriesPage     from './pages/ShopCategoriesPage'
+import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
+import SubscriptionsPage      from './pages/SubscriptionsPage'
 import DeveloperAccountPage    from './pages/DeveloperAccountPage'
 import AppSettingsPage         from './pages/AppSettingsPage'
 import MessagesPage            from './pages/MessagesPage'
@@ -123,6 +126,9 @@ function AppShell() {
                 <Route path="/settings/messages"   element={<MessagesPage />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />
+                <Route path="/settings/shop-categories" element={<ShopCategoriesPage />} />
+                <Route path="/settings/header-background" element={<HeaderBackgroundPage />} />
+                <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
                 <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/delete-orders-range" element={<DeleteOrdersRangePage />} />
                 <Route path="/settings/reset-cashier-box" element={<CashierBoxResetPage />} />

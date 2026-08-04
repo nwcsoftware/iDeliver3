@@ -1,11 +1,18 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Bell,
+  Bike,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
+  Circle,
+  Eye,
   Home,
+  SlidersHorizontal,
+  X,
   LogOut,
   Lock,
   MapPin,
@@ -16,6 +23,9 @@ import {
   Search,
   ShieldCheck,
   ShoppingBag,
+  ShoppingCart,
+  Store,
+  Minus,
   Smartphone,
   Trash2,
   Upload,
@@ -45,11 +55,31 @@ const translations = {
     addressLine: 'Address line',
     addressName: 'Address name',
     addAddress: 'Add Address',
+    viewItem: 'View item',
+    color: 'Color',
+    size: 'Size',
+    quantity: 'Qty',
+    chooseColor: 'Choose a color',
+    chooseSize: 'Choose a size',
+    selectOptions: 'Select size / color',
+    colorsCount: '{count} colors',
+    sizesCount: '{count} sizes',
+    filters: 'Filters',
+    filterByCategory: 'Filter by category',
+    allCategories: 'All categories',
+    uncategorized: 'Uncategorized',
+    clearFilters: 'Clear',
+    signupAddress: 'Address',
+    signupCity: 'City',
+    enterAddress: 'Building, street, area…',
+    enterCity: 'City',
+    addressRequired: 'Address is required — it becomes the default address for your orders.',
     all: 'All',
     allowed: 'Allowed',
     awaitingPickup: 'Awaiting Pickup',
     book: 'Book',
     bookDelivery: 'Book Delivery',
+    bookRide: 'Request Driver',
     cancel: 'Cancel',
     cashOnly: 'Cash Only',
     cashOnDelivery: 'Cash on delivery',
@@ -92,12 +122,12 @@ const translations = {
     enterPassword: 'Enter your password.',
     enterRequirement: 'Enter requirement',
     enterUsername: 'Enter a username',
-    externalRequest: 'External request',
+    externalRequest: 'Request a driver to transport you, your parcels, or your purchases safely and conveniently.',
     finalDeliveryLocation: 'Final delivery location',
     firstTimeOtp: 'First-time customer? Register with OTP',
     firstTimeSetup: 'First-time customer setup',
     fullName: 'Full name',
-    futureModule: 'Future module',
+    futureModule: 'Browse nearby shops, select your favorite products, and have them delivered to your door.',
     home: 'Home',
     invoice: 'Invoice',
     itemsRequirements: 'Items / Requirements',
@@ -195,6 +225,27 @@ const translations = {
     sendOtpThrough: 'Send OTP through',
     setPrimary: 'Set primary',
     shopProducts: 'Shop Products',
+    shopSubtitle: 'Browse products from nearby shops',
+    noShopItems: 'No products available yet. Please check back soon.',
+    addToCart: 'Add to cart',
+    added: 'Added',
+    viewCart: 'View cart',
+    yourCart: 'Your Cart',
+    emptyCart: 'Your cart is empty.',
+    continueShopping: 'Continue shopping',
+    checkout: 'Checkout',
+    deliverTo: 'Deliver to',
+    noAddressOnFile: 'No saved address — please add one in your profile.',
+    paymentMethod: 'Payment method',
+    cashOnDelivery: 'Cash on delivery — pay at the door',
+    orderSummary: 'Order summary',
+    total: 'Total',
+    placeOrder: 'Place order',
+    placingOrder: 'Placing order…',
+    orderPlacedTitle: 'Order placed!',
+    orderPlacedMsg: 'Your order has been received. Please pay cash when it arrives at your door.',
+    viewMyOrders: 'View my orders',
+    confirmedViewOnly: 'Confirmed by the call center — view only',
     startTime: 'Start time',
     statusTimeline: 'Status Timeline',
     submitRequest: 'Submit Request',
@@ -225,6 +276,25 @@ const translations = {
   ar: {
     add: 'إضافة',
     addAddress: 'إضافة عنوان',
+    viewItem: 'عرض الصنف',
+    color: 'اللون',
+    size: 'المقاس',
+    quantity: 'الكمية',
+    chooseColor: 'اختر اللون',
+    chooseSize: 'اختر المقاس',
+    selectOptions: 'اختر المقاس / اللون',
+    colorsCount: '{count} ألوان',
+    sizesCount: '{count} مقاسات',
+    filters: 'التصفية',
+    filterByCategory: 'تصفية حسب الفئة',
+    allCategories: 'كل الفئات',
+    uncategorized: 'بدون فئة',
+    clearFilters: 'مسح',
+    signupAddress: 'العنوان',
+    signupCity: 'المدينة',
+    enterAddress: 'المبنى، الشارع، المنطقة…',
+    enterCity: 'المدينة',
+    addressRequired: 'العنوان مطلوب — سيكون العنوان الافتراضي لطلباتك.',
     addRequestLines: 'أضف سطرا واحدا أو أكثر',
     addressLine: 'سطر العنوان',
     addressName: 'اسم العنوان',
@@ -233,6 +303,7 @@ const translations = {
     awaitingPickup: 'بانتظار الاستلام',
     book: 'حجز',
     bookDelivery: 'حجز توصيل',
+    bookRide: 'اطلب سائق',
     cancel: 'إلغاء',
     cashOnly: 'نقدا فقط',
     cashOnDelivery: 'الدفع عند التسليم',
@@ -275,12 +346,12 @@ const translations = {
     enterPassword: 'أدخل كلمة المرور.',
     enterRequirement: 'أدخل الطلب',
     enterUsername: 'أدخل اسم المستخدم',
-    externalRequest: 'طلب خارجي',
+    externalRequest: 'اطلب سائقًا لنقلك أنت أو طرودك أو مشترياتك بأمان وراحة.',
     finalDeliveryLocation: 'موقع التوصيل النهائي',
     firstTimeOtp: 'عميل جديد؟ سجل باستخدام OTP',
     firstTimeSetup: 'إعداد عميل جديد',
     fullName: 'الاسم الكامل',
-    futureModule: 'ميزة لاحقة',
+    futureModule: 'تصفح المتاجر القريبة، اختر منتجاتك المفضلة، واحصل عليها إلى باب منزلك.',
     home: 'الرئيسية',
     invoice: 'الفاتورة',
     itemsRequirements: 'العناصر / المتطلبات',
@@ -378,6 +449,27 @@ const translations = {
     sendOtpThrough: 'إرسال OTP عبر',
     setPrimary: 'تعيين كأساسي',
     shopProducts: 'تسوق المنتجات',
+    shopSubtitle: 'تصفح المنتجات من المتاجر القريبة',
+    noShopItems: 'لا توجد منتجات متاحة بعد. يرجى المراجعة لاحقًا.',
+    addToCart: 'أضف إلى السلة',
+    added: 'تمت الإضافة',
+    viewCart: 'عرض السلة',
+    yourCart: 'سلة التسوق',
+    emptyCart: 'سلة التسوق فارغة.',
+    continueShopping: 'متابعة التسوق',
+    checkout: 'إتمام الطلب',
+    deliverTo: 'التوصيل إلى',
+    noAddressOnFile: 'لا يوجد عنوان محفوظ — يرجى إضافة عنوان في ملفك.',
+    paymentMethod: 'طريقة الدفع',
+    cashOnDelivery: 'الدفع عند الاستلام — ادفع عند الباب',
+    orderSummary: 'ملخص الطلب',
+    total: 'الإجمالي',
+    placeOrder: 'تأكيد الطلب',
+    placingOrder: 'جارٍ تأكيد الطلب…',
+    orderPlacedTitle: 'تم تأكيد الطلب!',
+    orderPlacedMsg: 'تم استلام طلبك. يرجى الدفع نقدًا عند وصوله إلى باب منزلك.',
+    viewMyOrders: 'عرض طلباتي',
+    confirmedViewOnly: 'تم تأكيده من مركز الاتصال — للعرض فقط',
     startTime: 'وقت البداية',
     statusTimeline: 'خط الحالة',
     submitRequest: 'إرسال الطلب',
@@ -411,12 +503,32 @@ translations.fr = {
   ...translations.en,
   add: 'Ajouter',
   addAddress: 'Ajouter une adresse',
+  viewItem: 'Voir l’article',
+  color: 'Couleur',
+  size: 'Taille',
+  quantity: 'Qté',
+  chooseColor: 'Choisissez une couleur',
+  chooseSize: 'Choisissez une taille',
+  selectOptions: 'Choisir taille / couleur',
+  colorsCount: '{count} couleurs',
+  sizesCount: '{count} tailles',
+  filters: 'Filtres',
+  filterByCategory: 'Filtrer par catégorie',
+  allCategories: 'Toutes les catégories',
+  uncategorized: 'Sans catégorie',
+  clearFilters: 'Effacer',
+  signupAddress: 'Adresse',
+  signupCity: 'Ville',
+  enterAddress: 'Immeuble, rue, quartier…',
+  enterCity: 'Ville',
+  addressRequired: 'L’adresse est obligatoire — elle devient l’adresse par défaut de vos commandes.',
   addRequestLines: 'Ajouter une ou plusieurs lignes',
   all: 'Tous',
   allowed: 'Autorise',
   awaitingPickup: 'En attente de ramassage',
   book: 'Reserver',
   bookDelivery: 'Reserver une livraison',
+  bookRide: 'Demander un chauffeur',
   cancel: 'Annuler',
   cashOnly: 'Paiement comptant',
   cashOnDelivery: 'Paiement a la livraison',
@@ -435,11 +547,11 @@ translations.fr = {
   editOrder: 'Modifier la commande',
   email: 'Email',
   endTime: 'Heure de fin',
-  externalRequest: 'Demande externe',
+  externalRequest: 'Demandez un chauffeur pour vous transporter, vous, vos colis ou vos achats, en toute sécurité et simplicité.',
   firstTimeOtp: 'Nouveau client ? Inscription avec OTP',
   firstTimeSetup: 'Configuration nouveau client',
   fullName: 'Nom complet',
-  futureModule: 'Module futur',
+  futureModule: 'Parcourez les boutiques à proximité, choisissez vos produits préférés et faites-vous les livrer à domicile.',
   home: 'Accueil',
   invoice: 'Facture',
   language: 'Langue',
@@ -492,6 +604,27 @@ translations.fr = {
   searchOrderNumber: 'Rechercher numero de commande',
   sendOtp: 'Envoyer OTP',
   shopProducts: 'Acheter des produits',
+  shopSubtitle: 'Parcourez les produits des boutiques à proximité',
+  noShopItems: 'Aucun produit disponible pour le moment. Revenez bientôt.',
+  addToCart: 'Ajouter au panier',
+  added: 'Ajouté',
+  viewCart: 'Voir le panier',
+  yourCart: 'Votre panier',
+  emptyCart: 'Votre panier est vide.',
+  continueShopping: 'Continuer les achats',
+  checkout: 'Commander',
+  deliverTo: 'Livrer à',
+  noAddressOnFile: 'Aucune adresse enregistrée — ajoutez-en une dans votre profil.',
+  paymentMethod: 'Mode de paiement',
+  cashOnDelivery: 'Paiement à la livraison — payez à la porte',
+  orderSummary: 'Récapitulatif',
+  total: 'Total',
+  placeOrder: 'Passer la commande',
+  placingOrder: 'Commande en cours…',
+  orderPlacedTitle: 'Commande passée !',
+  orderPlacedMsg: 'Votre commande a été reçue. Payez en espèces à sa livraison à votre porte.',
+  viewMyOrders: 'Voir mes commandes',
+  confirmedViewOnly: 'Confirmée par le centre d’appels — lecture seule',
   submitRequest: 'Envoyer la demande',
   submitting: 'Envoi...',
   totalAmount: 'Montant total',
@@ -514,12 +647,32 @@ translations.ro = {
   ...translations.en,
   add: 'Adauga',
   addAddress: 'Adauga adresa',
+  viewItem: 'Vezi produsul',
+  color: 'Culoare',
+  size: 'Marime',
+  quantity: 'Cant.',
+  chooseColor: 'Alege o culoare',
+  chooseSize: 'Alege o marime',
+  selectOptions: 'Alege marime / culoare',
+  colorsCount: '{count} culori',
+  sizesCount: '{count} marimi',
+  filters: 'Filtre',
+  filterByCategory: 'Filtreaza dupa categorie',
+  allCategories: 'Toate categoriile',
+  uncategorized: 'Fara categorie',
+  clearFilters: 'Sterge',
+  signupAddress: 'Adresa',
+  signupCity: 'Oras',
+  enterAddress: 'Bloc, strada, zona…',
+  enterCity: 'Oras',
+  addressRequired: 'Adresa este obligatorie — devine adresa implicita a comenzilor tale.',
   addRequestLines: 'Adauga una sau mai multe linii',
   all: 'Toate',
   allowed: 'Permis',
   awaitingPickup: 'In asteptarea ridicarii',
   book: 'Rezerva',
   bookDelivery: 'Rezerva livrare',
+  bookRide: 'Solicită șofer',
   cancel: 'Anuleaza',
   cashOnly: 'Doar numerar',
   cashOnDelivery: 'Plata la livrare',
@@ -538,11 +691,11 @@ translations.ro = {
   editOrder: 'Editeaza comanda',
   email: 'Email',
   endTime: 'Ora de final',
-  externalRequest: 'Cerere externa',
+  externalRequest: 'Solicită un șofer care să te transporte pe tine, coletele sau cumpărăturile tale în siguranță și comod.',
   firstTimeOtp: 'Client nou? Inregistrare cu OTP',
   firstTimeSetup: 'Configurare client nou',
   fullName: 'Nume complet',
-  futureModule: 'Modul viitor',
+  futureModule: 'Răsfoiește magazinele din apropiere, alege produsele preferate și primește-le la ușa ta.',
   home: 'Acasa',
   invoice: 'Factura',
   language: 'Limba',
@@ -595,6 +748,27 @@ translations.ro = {
   searchOrderNumber: 'Cauta numar comanda',
   sendOtp: 'Trimite OTP',
   shopProducts: 'Cumpara produse',
+  shopSubtitle: 'Răsfoiește produsele din magazinele din apropiere',
+  noShopItems: 'Niciun produs disponibil încă. Revino curând.',
+  addToCart: 'Adaugă în coș',
+  added: 'Adăugat',
+  viewCart: 'Vezi coșul',
+  yourCart: 'Coșul tău',
+  emptyCart: 'Coșul tău este gol.',
+  continueShopping: 'Continuă cumpărăturile',
+  checkout: 'Finalizează comanda',
+  deliverTo: 'Livrare la',
+  noAddressOnFile: 'Nicio adresă salvată — adaugă una în profil.',
+  paymentMethod: 'Metodă de plată',
+  cashOnDelivery: 'Plată la livrare — plătești la ușă',
+  orderSummary: 'Rezumatul comenzii',
+  total: 'Total',
+  placeOrder: 'Trimite comanda',
+  placingOrder: 'Se trimite comanda…',
+  orderPlacedTitle: 'Comandă plasată!',
+  orderPlacedMsg: 'Comanda ta a fost primită. Plătește cash când ajunge la ușa ta.',
+  viewMyOrders: 'Vezi comenzile mele',
+  confirmedViewOnly: 'Confirmată de call center — doar vizualizare',
   submitRequest: 'Trimite cererea',
   submitting: 'Se trimite...',
   totalAmount: 'Suma totala',
@@ -770,7 +944,7 @@ function Shell({ children, activeTab, onTab }) {
 
 function Header({ title, subtitle, right, back, onBack }) {
   return (
-    <header className="sticky top-0 z-10 rounded-b-[2rem] border-b border-sky-50 bg-white/95 px-5 pb-6 pt-5 shadow-sm shadow-sky-100/70 backdrop-blur">
+    <header className="sticky top-0 z-10 rounded-b-[2rem] border-b border-sky-50 bg-white/95 px-5 pb-6 pt-5 shadow-[0_8px_24px_-6px_rgba(14,165,233,0.28)] backdrop-blur">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           {back && (
@@ -963,6 +1137,10 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
   const [mobile, setMobile] = useState('')
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
+  // Mandatory at sign-up: it becomes the customer's default pickup/delivery
+  // address on every new order.
+  const [address, setAddress] = useState('')
+  const [city, setCity] = useState('')
   const [otpChannel, setOtpChannel] = useState('whatsapp')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -985,6 +1163,10 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
     }
     if (!username.trim()) {
       setError(t('usernameRequired'))
+      return
+    }
+    if (!address.trim()) {
+      setError(t('addressRequired'))
       return
     }
     if (otpChannel === 'email' && !email.trim()) {
@@ -1030,6 +1212,8 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
         otp_channel: otpChannel,
         full_name: fullName.trim(),
         password,
+        address: address.trim(),
+        city: city.trim() || null,
       })
     } catch (registrationError) {
       setError(registrationError.message || 'Customer registration failed. Please try again.')
@@ -1106,6 +1290,31 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                     onChange={event => { setEmail(event.target.value); setError('') }}
                     placeholder={t('requiredOnlyForEmailOtp')}
                     autoComplete="email"
+                  />
+                </label>
+
+                {/* Mandatory — saved on the customer profile and used as the
+                    default pickup/delivery address for every new order. */}
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('signupAddress')} *</span>
+                  <input
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    value={address}
+                    onChange={event => { setAddress(event.target.value); setError('') }}
+                    placeholder={t('enterAddress')}
+                    autoComplete="street-address"
+                  />
+                  <span className="mt-1 block text-[11px] text-slate-500">{t('addressRequired')}</span>
+                </label>
+
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold text-slate-500">{t('signupCity')}</span>
+                  <input
+                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    value={city}
+                    onChange={event => { setCity(event.target.value); setError('') }}
+                    placeholder={t('enterCity')}
+                    autoComplete="address-level2"
                   />
                 </label>
 
@@ -1201,7 +1410,778 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
   )
 }
 
-function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder, onEditOrder }) {
+/* Item photo gallery — swipe on touch, arrows on desktop, dots to jump.
+   Scroll position is the source of truth, so a swipe and an arrow tap stay in
+   step with the indicator. */
+function ItemGallery({ images = [], alt = '' }) {
+  const trackRef = useRef(null)
+  const [index, setIndex] = useState(0)
+  const many = images.length > 1
+
+  function goTo(i) {
+    const el = trackRef.current
+    if (!el) return
+    const next = Math.max(0, Math.min(images.length - 1, i))
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+    setIndex(next)
+  }
+
+  function onScroll(e) {
+    const el = e.currentTarget
+    const i = Math.round(el.scrollLeft / (el.clientWidth || 1))
+    setIndex(Math.max(0, Math.min(images.length - 1, i)))
+  }
+
+  return (
+    <div className="relative overflow-hidden">
+      {/* The photo itself, blurred and cropped to fill, sits behind the frame so
+          portrait/landscape shots never leave empty bands. It follows the
+          gallery as the customer slides. */}
+      <div aria-hidden
+        className="absolute inset-0 scale-125 bg-cover bg-center blur-[24px]"
+        style={{ backgroundImage: `url("${images[index] ?? images[0]}")` }} />
+      <div aria-hidden className="absolute inset-0 bg-white/25" />
+
+      <div ref={trackRef} onScroll={onScroll}
+        className="relative flex snap-x snap-mandatory overflow-x-auto scroll-smooth">
+        {images.map((src, i) => (
+          <img key={i} src={src} alt={`${alt} ${i + 1}`}
+            className="h-56 w-full flex-shrink-0 snap-center object-contain" />
+        ))}
+      </div>
+
+      {many && (<>
+        <button type="button" onClick={() => goTo(index - 1)} disabled={index === 0}
+          aria-label="Previous photo"
+          className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow disabled:opacity-30">
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <button type="button" onClick={() => goTo(index + 1)} disabled={index === images.length - 1}
+          aria-label="Next photo"
+          className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow disabled:opacity-30">
+          <ChevronRight className="h-5 w-5" />
+        </button>
+        <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-1.5">
+          {images.map((_, i) => (
+            <button key={i} type="button" onClick={() => goTo(i)} aria-label={`Photo ${i + 1}`}
+              className={cx('h-1.5 rounded-full transition-all',
+                i === index ? 'w-4 bg-sky-600' : 'w-1.5 bg-slate-950/25')} />
+          ))}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
+function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
+  const { t } = useI18n()
+  const [items, setItems]     = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState('')
+  const [search, setSearch]   = useState('')
+  // Category filter: [] = show everything, otherwise keep items in ANY of the
+  // picked categories. Values are the raw `category` strings on the items
+  // (Food, Grocery, Tools & Hardware…), with '' standing for uncategorized.
+  const [catFilter,   setCatFilter]   = useState([])
+  const [filterOpen,  setFilterOpen]  = useState(false)
+  const [preview,     setPreview]     = useState(null)   // item shown in the popup
+  // Variant choices inside the popup (reset each time one is opened).
+  const [pickedColor, setPickedColor] = useState('')
+  const [pickedSize,  setPickedSize]  = useState('')
+  const [pickedQty,   setPickedQty]   = useState(1)
+  const [variantErr,  setVariantErr]  = useState('')
+
+  // Open the item popup with a clean set of choices; a single colour/size is
+  // preselected since there is nothing to decide.
+  function openPreview(it) {
+    const colors = itemColors(it)
+    const sizes  = itemSizes(it)
+    setPickedColor(colors.length === 1 ? colors[0].name : '')
+    setPickedSize(sizes.length === 1 ? sizes[0] : '')
+    setPickedQty(1)
+    setVariantErr('')
+    setPreview(it)
+  }
+
+  // The header + search bar are FIXED (not sticky) so no scroll container can
+  // drag them along. Their height is measured so the list starts below them.
+  const topRef = useRef(null)
+  const [topH, setTopH] = useState(0)
+  useEffect(() => {
+    const el = topRef.current
+    if (!el) return undefined
+    const measure = () => setTopH(el.offsetHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true); setError('')
+      const OWNER = 'owner:contacts!owner_contact_id(id,company_name,first_name,last_name,partner_percentage,partner_percentage_type)'
+      const run = cols => supabase
+        .from('shop_inventory')
+        .select(cols)
+        .eq('is_displayed', true)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+
+      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,owner_contact_id, ${OWNER}`)
+      // `images` (fix105), `categories` (fix103) and `colors`/`sizes` (fix106)
+      // are newer columns — on a DB where a migration hasn't run yet, fall back
+      // so the shop still lists.
+      if (e && /images|categories|colors|sizes/.test(e.message)) {
+        ;({ data, error: e } = await run(`id,name,description,price,currency,image_url,category,owner_contact_id, ${OWNER}`))
+      }
+      if (cancelled) return
+      if (e) { setError(e.message); setItems([]) }
+      else { setItems(data || []); setError('') }
+      setLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  const shopName = o => (o ? (o.company_name || `${o.first_name ?? ''} ${o.last_name ?? ''}`.trim() || 'Shop') : 'Shop')
+
+  // Up to 3 photos per item (fix105); older rows only have `image_url`.
+  const itemImages = it => {
+    const list = Array.isArray(it.images) && it.images.length ? it.images : (it.image_url ? [it.image_url] : [])
+    return list.filter(Boolean)
+  }
+
+  // Variants (fix106) — optional colour/size lists on an item.
+  const itemColors = it => (Array.isArray(it?.colors) ? it.colors.filter(c => c?.name) : [])
+  const itemSizes  = it => (Array.isArray(it?.sizes)  ? it.sizes.filter(Boolean)       : [])
+
+  // An item carries several category tags (fix103); rows saved before that
+  // still have the single `category` string.
+  const itemCats = it => {
+    const list = Array.isArray(it.categories) && it.categories.length
+      ? it.categories
+      : (it.category ? [it.category] : [])
+    const clean = list.map(c => String(c ?? '').trim()).filter(Boolean)
+    return clean.length ? clean : ['']            // '' = uncategorized
+  }
+
+  // Category list built from what the shops actually stock, so it never offers
+  // a category with nothing behind it. Case-insensitive de-dupe, with a count.
+  const categories = useMemo(() => {
+    const map = new Map()
+    for (const it of items) {
+      for (const raw of itemCats(it)) {
+        const key = raw.toLowerCase()
+        const entry = map.get(key)
+        if (entry) entry.count += 1
+        else map.set(key, { value: raw, label: raw || t('uncategorized'), count: 1 })
+      }
+    }
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label))
+  }, [items, t])
+
+  const q = search.trim().toLowerCase()
+  const catSet = new Set(catFilter.map(c => c.toLowerCase()))
+  const filtered = items.filter(it =>
+    (!q || it.name?.toLowerCase().includes(q)
+        || itemCats(it).some(c => c.toLowerCase().includes(q))
+        || shopName(it.owner).toLowerCase().includes(q))
+    && (catSet.size === 0 || itemCats(it).some(c => catSet.has(c.toLowerCase()))))
+
+  function toggleCategory(v) {
+    setCatFilter(current => (current.includes(v) ? current.filter(x => x !== v) : [...current, v]))
+  }
+
+  // Build the cart line for whatever is selected in the popup. Items that offer
+  // colours/sizes require a choice, so the order line is never ambiguous.
+  function addPreviewToCart() {
+    const colors = itemColors(preview)
+    const sizes  = itemSizes(preview)
+    if (colors.length > 0 && !pickedColor) { setVariantErr(t('chooseColor')); return }
+    if (sizes.length  > 0 && !pickedSize)  { setVariantErr(t('chooseSize'));  return }
+
+    const variant = [pickedColor, pickedSize].filter(Boolean).join(' · ')
+    onAdd?.({
+      // One cart line per colour/size combination.
+      id: [preview.id, pickedColor, pickedSize].filter(Boolean).join('::'),
+      shop_item_id: preview.id,
+      name: preview.name,
+      variant_label: variant || null,
+      color: pickedColor || null,
+      size:  pickedSize  || null,
+      qty: pickedQty,
+      price: Number(preview.price) || 0,
+      currency: preview.currency || 'USD',
+      // Show the chosen colour's swatch in the cart when it has one.
+      image_url: colors.find(c => c.name === pickedColor)?.image || itemImages(preview)[0] || preview.image_url,
+      owner_contact_id: preview.owner_contact_id,
+      shop: preview.shop,
+      commission_percentage: preview.owner?.partner_percentage ?? null,
+      partner_percentage_type: preview.owner?.partner_percentage_type ?? null,
+    })
+    setPreview(null)
+  }
+
+  const groups = {}
+  for (const it of filtered) {
+    const key = it.owner_contact_id || 'other'
+    ;(groups[key] ||= { name: shopName(it.owner), items: [] }).items.push(it)
+  }
+  const groupList = Object.values(groups)
+  const fmt = (v, c) => `${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c}`
+
+  return (
+    <>
+      {/* Header + search stay pinned; the product list scrolls behind them.
+          Constrained to the app column, like the bottom nav. */}
+      <div ref={topRef}
+        className="fixed left-0 top-0 z-30 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2">
+        <Header title={t('shopProducts')} subtitle={t('shopSubtitle')}
+          right={
+            <button onClick={onOpenCart} className="relative flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+              <ShoppingCart className="h-5 w-5" />
+              {cartCount > 0 && <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-600 px-1 text-[10px] font-bold text-white">{cartCount}</span>}
+            </button>
+          } />
+        {/* Search + category filter. The filter button lives inside the search
+            pill and pulls down a category menu underneath it. */}
+        <div className="relative bg-[#f8fdff] px-5 pb-3 pt-4">
+          <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 pl-4 pr-1.5 text-sm text-slate-500">
+            <Search className="h-4 w-4 text-sky-600" />
+            <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={search}
+              onChange={e => setSearch(e.target.value)} placeholder={t('shopProducts')} />
+            <button type="button" onClick={() => setFilterOpen(o => !o)}
+              aria-label={t('filters')} title={t('filterByCategory')}
+              className={cx(
+                'relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full transition-colors',
+                catFilter.length || filterOpen ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 shadow-sm'
+              )}>
+              <SlidersHorizontal className="h-4 w-4" />
+              {catFilter.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                  {catFilter.length}
+                </span>
+              )}
+            </button>
+          </label>
+
+          {filterOpen && (<>
+            <div className="fixed inset-0 z-20" onClick={() => setFilterOpen(false)} />
+            <div className="absolute left-5 right-5 top-[4.25rem] z-30 max-h-72 overflow-y-auto rounded-2xl border border-sky-100 bg-white p-2 shadow-[0_12px_28px_-8px_rgba(14,165,233,0.35)]">
+              <div className="flex items-center justify-between px-2 py-1.5">
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('filterByCategory')}</span>
+                <button type="button" onClick={() => setFilterOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <button type="button" onClick={() => setCatFilter([])}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-sky-50">
+                {catFilter.length === 0
+                  ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-sky-600" />
+                  : <Circle className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+                <span className="truncate font-semibold">{t('allCategories')}</span>
+                <span className="ml-auto text-xs text-slate-400">{items.length}</span>
+              </button>
+              {categories.map(c => {
+                const on = catFilter.includes(c.value)
+                return (
+                  <button key={c.value || '__none__'} type="button" onClick={() => toggleCategory(c.value)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-sky-50">
+                    {on
+                      ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-sky-600" />
+                      : <Circle className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+                    <span className="truncate text-left capitalize">{c.label}</span>
+                    <span className="ml-auto text-xs text-slate-400">{c.count}</span>
+                  </button>
+                )
+              })}
+              {categories.length === 0 && (
+                <p className="px-2 py-4 text-center text-xs text-slate-400">{t('noShopItems')}</p>
+              )}
+            </div>
+          </>)}
+        </div>
+      </div>
+
+      <main className="space-y-5 px-5 pb-28 pt-4" style={{ paddingTop: topH ? topH + 16 : undefined }}>
+        {/* Active category chips — quick way to see and drop a filter */}
+        {catFilter.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {catFilter.map(v => (
+              <button key={v || '__none__'} type="button" onClick={() => toggleCategory(v)}
+                className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-3 py-1 text-xs font-bold capitalize text-sky-700">
+                {v || t('uncategorized')} <X className="h-3 w-3" />
+              </button>
+            ))}
+            <button type="button" onClick={() => setCatFilter([])}
+              className="text-xs font-semibold text-slate-500 underline">{t('clearFilters')}</button>
+          </div>
+        )}
+        {loading && (
+          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">…</div>
+        )}
+        {!loading && error && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>
+        )}
+        {!loading && !error && groupList.length === 0 && (
+          <div className="rounded-lg border border-sky-100 bg-white px-4 py-10 text-center">
+            <ShoppingBag className="mx-auto h-8 w-8 text-slate-300" />
+            <p className="mt-2 text-sm text-slate-500">{t('noShopItems')}</p>
+          </div>
+        )}
+        {groupList.map((g, gi) => (
+          <section key={gi} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Store className="h-4 w-4 text-emerald-600" />
+              <h3 className="text-sm font-bold text-slate-950">{g.name}</h3>
+              <span className="text-xs text-slate-400">· {g.items.length}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {g.items.map(it => (
+                <div key={it.id} className="overflow-hidden rounded-lg border border-sky-100 bg-white shadow-sm">
+                  {/* Tapping the photo — or "View item" under it — opens the
+                      full picture and description. */}
+                  <button type="button" onClick={() => openPreview({ ...it, shop: g.name })} className="relative block w-full">
+                    {itemImages(it)[0]
+                      ? <img src={itemImages(it)[0]} alt={it.name} className="h-28 w-full object-cover" />
+                      : <div className="flex h-28 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-7 w-7 text-sky-200" /></div>}
+                    {itemImages(it).length > 1 && (
+                      <span className="absolute bottom-1 right-1 rounded-full bg-slate-950/60 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        1/{itemImages(it).length}
+                      </span>
+                    )}
+                  </button>
+                  <button type="button" onClick={() => openPreview({ ...it, shop: g.name })}
+                    className="flex w-full items-center justify-center gap-1.5 border-y border-sky-100 bg-sky-50/60 py-1.5 text-[11px] font-bold text-sky-700">
+                    <Eye className="h-3.5 w-3.5" /> {t('viewItem')}
+                  </button>
+                  <div className="p-3">
+                    <p className="truncate text-sm font-bold text-slate-950">{it.name}</p>
+                    {it.description && <p className="mt-0.5 truncate text-xs text-slate-500">{it.description}</p>}
+                    {itemCats(it).filter(Boolean).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {itemCats(it).filter(Boolean).map(c => (
+                          <span key={c} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">{c}</span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="mt-2 text-sm font-bold text-sky-700">{fmt(it.price, it.currency)}</p>
+
+                    {/* Variants available — say so on the card, and show the
+                        colour swatches so it's obvious a choice is needed. */}
+                    {(itemColors(it).length > 0 || itemSizes(it).length > 0) && (
+                      <div className="mt-1.5 space-y-1">
+                        {itemColors(it).length > 0 && (
+                          <div className="flex items-center gap-1">
+                            {itemColors(it).slice(0, 4).map(c => (
+                              c.image
+                                ? <img key={c.name} src={c.image} alt={c.name} title={c.name}
+                                    className="h-5 w-5 rounded-full border border-sky-100 object-cover" />
+                                : <span key={c.name} title={c.name}
+                                    className="flex h-5 w-5 items-center justify-center rounded-full border border-sky-100 bg-sky-50 text-[8px] font-bold uppercase text-sky-700">
+                                    {c.name.slice(0, 1)}
+                                  </span>
+                            ))}
+                            {itemColors(it).length > 4 && (
+                              <span className="text-[10px] font-semibold text-slate-400">+{itemColors(it).length - 4}</span>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-[10px] font-semibold text-slate-500">
+                          {[
+                            itemColors(it).length > 0 ? t('colorsCount', { count: itemColors(it).length }) : null,
+                            itemSizes(it).length  > 0 ? t('sizesCount',  { count: itemSizes(it).length })  : null,
+                          ].filter(Boolean).join(' · ')}
+                        </p>
+                      </div>
+                    )}
+
+                    <button type="button"
+                      onClick={() => {
+                        // Items with colours/sizes must be configured first, so
+                        // the card's button opens the popup instead.
+                        if (itemColors(it).length > 0 || itemSizes(it).length > 0) {
+                          openPreview({ ...it, shop: g.name })
+                          return
+                        }
+                        onAdd?.({ id: it.id, shop_item_id: it.id, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: g.name, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null })
+                      }}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700">
+                      {(itemColors(it).length > 0 || itemSizes(it).length > 0)
+                        ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
+                        : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </main>
+      {cartCount > 0 && (
+        <button onClick={onOpenCart}
+          className="fixed bottom-24 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-sky-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-sky-600/30">
+          <ShoppingCart className="h-4 w-4" /> {t('viewCart')} · {cartCount}
+        </button>
+      )}
+
+      {/* Item popup — 80% of the screen, photo on top, details below. */}
+      {preview && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          onClick={() => setPreview(null)}>
+          <div className="flex h-[80vh] w-[80vw] max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-sky-100 px-4 py-3">
+              <p className="truncate text-sm font-bold text-slate-950">{preview.name}</p>
+              <button type="button" onClick={() => setPreview(null)} aria-label={t('close')}
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {/* Photo gallery — swipe, arrows or dots to move between photos. */}
+              {itemImages(preview).length > 0 ? (
+                <ItemGallery images={itemImages(preview)} alt={preview.name} />
+              ) : (
+                <div className="flex h-40 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-10 w-10 text-sky-200" /></div>
+              )}
+              <div className="space-y-3 p-4">
+                {preview.shop && (
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                    <Store className="h-3.5 w-3.5" /> {preview.shop}
+                  </p>
+                )}
+                {itemCats(preview).filter(Boolean).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {itemCats(preview).filter(Boolean).map(c => (
+                      <span key={c} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">{c}</span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-lg font-bold text-sky-700">{fmt(preview.price, preview.currency)}</p>
+                {preview.description && (
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{preview.description}</p>
+                )}
+
+                {/* ── Colour swatches ─────────────────────────── */}
+                {itemColors(preview).length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-950">{t('color')}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {itemColors(preview).map(c => {
+                        const on = pickedColor === c.name
+                        return (
+                          <button key={c.name} type="button"
+                            onClick={() => { setPickedColor(c.name); setVariantErr('') }}
+                            className={cx('w-24 overflow-hidden rounded-lg border bg-white text-left transition-colors',
+                              on ? 'border-sky-600 ring-2 ring-sky-200' : 'border-sky-100')}>
+                            {c.image
+                              ? <img src={c.image} alt={c.name} className="h-16 w-full object-cover" />
+                              : <div className="flex h-16 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-5 w-5 text-sky-200" /></div>}
+                            <span className="block px-1.5 py-1 text-[11px] font-semibold leading-tight text-slate-700">{c.name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Size chips ──────────────────────────────── */}
+                {itemSizes(preview).length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-950">{t('size')}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {itemSizes(preview).map(s => {
+                        const on = pickedSize === s
+                        return (
+                          <button key={s} type="button"
+                            onClick={() => { setPickedSize(s); setVariantErr('') }}
+                            className={cx('min-w-[3rem] rounded-full border px-3 py-1.5 text-xs font-bold transition-colors',
+                              on ? 'border-sky-600 bg-sky-600 text-white' : 'border-sky-200 bg-white text-slate-700')}>
+                            {s}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Quantity ────────────────────────────────── */}
+                <div className="flex items-center gap-3">
+                  <p className="text-xs font-bold text-slate-950">{t('quantity')}</p>
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" onClick={() => setPickedQty(q => Math.max(1, q - 1))}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="w-8 text-center text-sm font-bold">{pickedQty}</span>
+                    <button type="button" onClick={() => setPickedQty(q => Math.min(99, q + 1))}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {variantErr && (
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{variantErr}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 border-t border-sky-100 p-3">
+              <button type="button" onClick={() => setPreview(null)}
+                className="flex h-11 flex-1 items-center justify-center rounded-lg border border-sky-200 bg-white text-sm font-bold text-sky-700">
+                {t('close')}
+              </button>
+              <button type="button" onClick={addPreviewToCart}
+                className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-sky-600 text-sm font-bold text-white hover:bg-sky-700">
+                <Plus className="h-4 w-4" /> {t('addToCart')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+const cartRound2 = n => Math.round((Number(n) || 0) * 100) / 100
+const cartFmt = (v, c) => `${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c}`
+function cartTotalsByCurrency(cart) {
+  const t = {}
+  for (const it of cart) t[it.currency || 'USD'] = (t[it.currency || 'USD'] || 0) + (Number(it.price) || 0) * it.qty
+  return t
+}
+
+function CartScreen({ cart, setCartQty, removeFromCart, onCheckout, onContinue }) {
+  const { t } = useI18n()
+  const totals = cartTotalsByCurrency(cart)
+  return (
+    <>
+      <Header title={t('yourCart')} />
+      <main className="space-y-4 px-5 py-6 pb-44">
+        {cart.length === 0 ? (
+          <div className="rounded-lg border border-sky-100 bg-white px-4 py-10 text-center">
+            <ShoppingCart className="mx-auto h-8 w-8 text-slate-300" />
+            <p className="mt-2 text-sm text-slate-500">{t('emptyCart')}</p>
+            <button onClick={onContinue} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">{t('continueShopping')}</button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {cart.map(it => (
+              <div key={it.id} className="flex items-center gap-3 rounded-lg border border-sky-100 bg-white p-3">
+                {it.image_url
+                  ? <img src={it.image_url} alt="" className="h-14 w-14 flex-shrink-0 rounded-md object-cover" />
+                  : <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-md bg-sky-50"><ShoppingBag className="h-5 w-5 text-sky-200" /></div>}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-slate-950">{it.name}</p>
+                  {it.variant_label && (
+                    <p className="truncate text-[11px] font-semibold text-sky-700">{it.variant_label}</p>
+                  )}
+                  {it.shop && <p className="truncate text-xs text-slate-500">{it.shop}</p>}
+                  <p className="mt-0.5 text-sm font-bold text-sky-700">{cartFmt(it.price, it.currency)}</p>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-1.5">
+                  <button onClick={() => setCartQty(it.id, it.qty - 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700"><Minus className="h-4 w-4" /></button>
+                  <span className="w-5 text-center text-sm font-bold">{it.qty}</span>
+                  <button onClick={() => setCartQty(it.id, it.qty + 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700"><Plus className="h-4 w-4" /></button>
+                  <button onClick={() => removeFromCart(it.id)} className="ml-1 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+      {/* Constrained to the app column (like the bottom nav) so it doesn't
+          stretch to the screen edges on wide displays. */}
+      {cart.length > 0 && (
+        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-sky-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(14,165,233,0.28)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-500">{t('total')}</span>
+            <span className="text-sm font-bold text-slate-950">{Object.entries(totals).map(([c, v]) => cartFmt(v, c)).join(' + ')}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onContinue}
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg border border-sky-200 bg-white text-sm font-bold text-sky-700">
+              <ShoppingBag className="h-4 w-4" /> {t('continueShopping')}
+            </button>
+            <button onClick={onCheckout}
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white">
+              <ShoppingCart className="h-4 w-4" /> {t('checkout')}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack }) {
+  const { t } = useI18n()
+  const [customer, setCustomer] = useState(null)
+  const [address, setAddress]   = useState('')
+  const [notes, setNotes]       = useState('')
+  const [placing, setPlacing]   = useState(false)
+  const [error, setError]       = useState('')
+  const [done, setDone]         = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (!customerSession?.contact_id) return
+      const { data } = await supabase.from('contacts')
+        .select('id,first_name,last_name,company_name,mobile,whatsapp_number,address,city')
+        .eq('id', customerSession.contact_id).single()
+      if (cancelled || !data) return
+      setCustomer(data)
+      setAddress([data.address, data.city].filter(Boolean).join(', '))
+    }
+    load(); return () => { cancelled = true }
+  }, [customerSession])
+
+  const totals = cartTotalsByCurrency(cart)
+  const primaryCurrency = cart[0]?.currency || 'USD'
+
+  async function placeOrder() {
+    if (!customer) { setError('Profile not loaded yet.'); return }
+    if (!address.trim()) { setError(t('noAddressOnFile')); return }
+    setPlacing(true); setError('')
+    const lines = cart.map(it =>
+      `${it.qty} × ${it.name}${it.variant_label ? ` (${it.variant_label})` : ''} — ${cartFmt(it.price, it.currency)}`)
+    // Scheduled for today so it lands in the operator's daily list (which is filtered
+    // by scheduled date). Without this the order is created but hidden from Today.
+    const pad = n => String(n).padStart(2, '0')
+    const now = new Date()
+    const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+    const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    const startAt = new Date(now.getTime() + 20 * 60 * 1000)   // pickup ~20 min from now
+    const endAt   = new Date(now.getTime() + 60 * 60 * 1000)   // delivery ~1 hour from now
+    const orderPayload = {
+      ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+      customer_id: customer.id,
+      scheduled_date: todayLocal,
+      scheduled_time_from: hm(startAt),
+      scheduled_time_to: hm(endAt),
+      delivery_address: address.trim(),
+      recipient_name: customerName(customer),
+      recipient_mobile: customer.mobile || customer.whatsapp_number || 'not provided',
+      recipient_whatsapp: customer.whatsapp_number || customer.mobile || null,
+      order_details_text: lines.join('\n'),
+      special_instructions: [t('cashOnDelivery'), notes.trim()].filter(Boolean).join(' — '),
+      order_source: 'customer application',
+      status: 'pending',
+      payment_status: 'unpaid',
+      driver_id: null,
+      delivery_fee: 0,
+      currency: primaryCurrency,
+      items_total: cartRound2(totals[primaryCurrency] || 0),
+      total_amount: cartRound2(totals[primaryCurrency] || 0),
+    }
+    const { data: order, error: e } = await supabase.from('delivery_orders').insert([orderPayload]).select('id, order_number').single()
+    if (e) { setError(e.message); setPlacing(false); return }
+    const itemRows = cart.map(it => {
+      const lineTotal = cartRound2((Number(it.price) || 0) * it.qty)
+      const pct = Number(it.commission_percentage) || 0
+      return {
+        order_id: order.id, item_type: 'external_request',
+        parcel_description: it.variant_label ? `${it.name} (${it.variant_label})` : it.name,
+        // The shop_inventory product this line came from. `it.id` is the cart
+        // line key, which encodes the variant — the product id is separate.
+        shop_item_id: it.shop_item_id || it.id,
+        variant_color: it.color || null,
+        variant_size:  it.size  || null,
+        supplier_id: it.owner_contact_id || null,
+        supplier_name: it.shop || null,
+        commission_percentage: pct || null,
+        partner_percentage_type: it.partner_percentage_type || null,
+        commission_amount: pct ? cartRound2(lineTotal * pct / 100) : null,
+        quantity: it.qty, unit_price: Number(it.price) || 0, currency: it.currency || 'USD',
+        discount: 0, line_total: lineTotal,
+      }
+    })
+    let ins = await supabase.from('order_items').insert(itemRows)
+    // variant_color/variant_size arrive with fix106 — save without them rather
+    // than losing the order if that migration hasn't run.
+    if (ins.error && /variant_(color|size)/.test(ins.error.message)) {
+      ins = await supabase.from('order_items').insert(
+        itemRows.map(({ variant_color: _c, variant_size: _s, ...rest }) => rest))
+    }
+    setPlacing(false)
+    setDone(order)
+    onPlaced?.(order)   // clears the cart in the parent
+  }
+
+  if (done) {
+    return (
+      <>
+        <Header title={t('checkout')} />
+        <main className="space-y-4 px-5 py-10">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-8 text-center">
+            <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
+            <p className="mt-3 text-base font-bold text-slate-950">{t('orderPlacedTitle')}</p>
+            <p className="mt-1 text-sm text-slate-600">{t('orderPlacedMsg')}</p>
+            {done.order_number && <p className="mt-2 font-mono text-sm text-emerald-700">{done.order_number}</p>}
+            <button onClick={onGoOrders} className="mt-5 h-11 w-full rounded-lg bg-sky-600 text-sm font-bold text-white">{t('viewMyOrders')}</button>
+          </div>
+        </main>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <Header title={t('checkout')} right={<button onClick={onBack} className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><ArrowLeft className="h-5 w-5" /></button>} />
+      <main className="space-y-4 px-5 py-6 pb-40">
+        <section className="rounded-lg border border-sky-100 bg-white p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('deliverTo')}</p>
+          <textarea className="mt-2 w-full resize-none rounded-lg border border-sky-100 bg-sky-50 p-3 text-sm outline-none" rows={2}
+            value={address} onChange={e => setAddress(e.target.value)} placeholder={t('noAddressOnFile')} />
+        </section>
+
+        <section className="rounded-lg border border-sky-100 bg-white p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('orderSummary')}</p>
+          <div className="mt-2 space-y-2">
+            {cart.map(it => (
+              <div key={it.id} className="flex items-center justify-between text-sm">
+                <span className="min-w-0 truncate text-slate-700">{it.qty} × {it.name}</span>
+                <span className="ml-2 flex-shrink-0 font-semibold text-slate-950">{cartFmt((Number(it.price) || 0) * it.qty, it.currency)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t border-sky-100 pt-3">
+            <span className="text-sm font-bold text-slate-500">{t('total')}</span>
+            <span className="text-sm font-bold text-slate-950">{Object.entries(totals).map(([c, v]) => cartFmt(v, c)).join(' + ')}</span>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-sky-100 bg-white p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('paymentMethod')}</p>
+          <div className="mt-2 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm font-semibold text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" /> {t('cashOnDelivery')}
+          </div>
+          <textarea className="mt-3 w-full resize-none rounded-lg border border-sky-100 bg-sky-50 p-3 text-sm outline-none" rows={2}
+            value={notes} onChange={e => setNotes(e.target.value)} placeholder={t('notes')} />
+        </section>
+
+        {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
+      </main>
+      {cart.length > 0 && (
+        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-sky-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(14,165,233,0.28)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
+          <button onClick={placeOrder} disabled={placing}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
+            {placing ? t('placingOrder') : t('placeOrder')}
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onViewOrder, onEditOrder }) {
   const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
@@ -1242,6 +2222,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
             scheduled_time_to,
             order_details_text,
             status,
+            order_confirmed,
             delivery_status,
             payment_status,
             currency,
@@ -1319,15 +2300,15 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
         )}
 
         <section className="grid grid-cols-2 gap-3">
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
-            <Package className="h-6 w-6 text-sky-600" />
-            <p className="mt-4 text-sm font-bold">{t('bookDelivery')}</p>
-            <p className="mt-1 text-xs text-slate-500">{t('externalRequest')}</p>
-          </button>
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100">
+          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onShop}>
             <ShoppingBag className="h-6 w-6 text-emerald-600" />
             <p className="mt-4 text-sm font-bold">{t('shopProducts')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('futureModule')}</p>
+          </button>
+          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
+            <Bike className="h-6 w-6 text-sky-600" />
+            <p className="mt-4 text-sm font-bold">{t('bookRide')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('externalRequest')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onOrders}>
             <ClipboardList className="h-6 w-6 text-blue-600" />
@@ -1343,12 +2324,12 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onViewOrder,
 
         <Section title={t('latestOrder')} subtitle={t('latestOrderSubtitle')}>
           {latestOrder ? (
-            <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' ? () => onEditOrder(latestOrder) : undefined} />
+            <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' && !latestOrder.confirmed ? () => onEditOrder(latestOrder) : undefined} />
           ) : (
             <div className="rounded-lg border border-sky-100 bg-slate-50 px-4 py-6 text-center">
               <p className="text-sm font-bold text-slate-950">{t('noOrdersYet')}</p>
               <button type="button" onClick={onBook} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">
-                {t('bookDelivery')}
+                {t('bookRide')}
               </button>
             </div>
           )}
@@ -1436,6 +2417,7 @@ function mapCustomerOrder(order, invoices = [], payments = []) {
     orderNumber: order.order_number,
     type: orderTypeLabel(order),
     status: order.status,
+    confirmed: order.order_confirmed === true,   // confirmed by the call center → view-only
     deliveryStatus: order.delivery_status || 'Awaiting Pickup',
     paymentStatus: order.payment_status,
     pickup: order.pickup_address || '',
@@ -1618,7 +2600,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       scheduled_time_to: deliveryTime || null,
       order_details_text: orderDetailsText,
       special_instructions: notes.trim() || null,
-      order_source: 'external',
+      order_source: 'customer application',
       status: 'pending',
       payment_status: 'unpaid',
       driver_id: null,
@@ -1883,6 +2865,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
           recipient_name,
           recipient_mobile,
           status,
+          order_confirmed,
           delivery_status,
           payment_status,
           currency,
@@ -2010,7 +2993,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
 
 function OrderCard({ order, onView, onEdit }) {
   const { t } = useI18n()
-  const editable = order.status === 'pending' && order.type === 'Book Delivery'
+  const editable = order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery'
   return (
     <article className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/80">
       <div className="flex items-start justify-between gap-3">
@@ -2166,11 +3149,16 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
             ))}
           </div>
         </Section>
-        {order.status === 'pending' && order.type === 'Book Delivery' && (
+        {order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery' && (
           <button type="button" onClick={() => onEdit(order)} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-100 text-sm font-bold text-emerald-700">
             <Pencil className="h-4 w-4" />
             {t('editOrder')}
           </button>
+        )}
+        {order.confirmed && (
+          <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-500">
+            <Lock className="h-4 w-4" /> {t('confirmedViewOnly')}
+          </div>
         )}
       </main>
     </>
@@ -2232,22 +3220,24 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       setError('This order is already confirmed and cannot be edited.')
       return
     }
+    if (order.confirmed) {
+      setError(t('confirmedViewOnly'))
+      return
+    }
 
     const cleanRequirements = requirements.map(item => item.trim()).filter(Boolean)
     if (!deliveryAddress.trim()) {
       setError(t('deliveryLocationRequired'))
       return
     }
-    if (cleanRequirements.length === 0) {
-      setError('Add at least one requirement row.')
-      return
-    }
+    // Deleting product/requirement rows is allowed — the order can be saved even
+    // with none left (the items are just cleared).
 
     setSaving(true)
 
     const { data: latest, error: latestError } = await supabase
       .from('delivery_orders')
-      .select('status')
+      .select('status, order_confirmed')
       .eq('id', order.id)
       .single()
 
@@ -2258,6 +3248,11 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
     }
     if (latest?.status !== 'pending') {
       setError('This order is no longer pending. Please reopen My Orders.')
+      setSaving(false)
+      return
+    }
+    if (latest?.order_confirmed === true) {
+      setError(t('confirmedViewOnly'))
       setSaving(false)
       return
     }
@@ -2313,15 +3308,18 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       added_by: customerSession?.user_id || null,
     }))
 
-    const { data: insertedItems, error: itemError } = await supabase
-      .from('order_items')
-      .insert(itemRows)
-      .select('id,item_type,parcel_description,quantity,line_total,is_deleted')
-
-    if (itemError) {
-      setError(itemError.message)
-      setSaving(false)
-      return
+    let insertedItems = []
+    if (itemRows.length) {
+      const { data, error: itemError } = await supabase
+        .from('order_items')
+        .insert(itemRows)
+        .select('id,item_type,parcel_description,quantity,line_total,is_deleted')
+      if (itemError) {
+        setError(itemError.message)
+        setSaving(false)
+        return
+      }
+      insertedItems = data || []
     }
 
     const updatedRaw = {
@@ -2402,7 +3400,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
         </Section>
 
         <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending'} className="flex h-12 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
+          <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending' || order.confirmed} className="flex h-12 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
             {saving ? t('saving') : t('saveChanges')}
           </button>
           <button type="button" onClick={onBack} disabled={saving} className="flex h-12 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
@@ -2842,6 +3840,26 @@ export default function CustomerMobileApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!initialSession || devBypass)
   const [screen, setScreen] = useState(initialRoute)
   const [selectedOrder, setSelectedOrder] = useState(null)
+  // Shopping cart (persisted). Each entry: { id, name, price, currency, image_url,
+  // owner_contact_id, shop, qty }.
+  const [cart, setCart] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ideliver:customerCart') || '[]') } catch { return [] }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('ideliver:customerCart', JSON.stringify(cart)) } catch { /* ignore */ }
+  }, [cart])
+  const cartCount = cart.reduce((n, it) => n + (it.qty || 0), 0)
+  // `id` is the cart LINE key — for items with variants it encodes the chosen
+  // colour/size, so each combination is its own line.
+  const addToCart = (item) => setCart(prev => {
+    const add = Math.max(1, Number(item.qty) || 1)
+    const i = prev.findIndex(x => x.id === item.id)
+    if (i === -1) return [...prev, { ...item, qty: add }]
+    const next = [...prev]; next[i] = { ...next[i], qty: next[i].qty + add }; return next
+  })
+  const setCartQty = (id, qty) => setCart(prev => qty <= 0 ? prev.filter(x => x.id !== id) : prev.map(x => x.id === id ? { ...x, qty } : x))
+  const removeFromCart = (id) => setCart(prev => prev.filter(x => x.id !== id))
+  const clearCart = () => setCart([])
   const [requirements, setRequirements] = useState(initialRequirements)
   const [deliveryStatusByOrder, setDeliveryStatusByOrder] = useState({})
   const [deliveryNotice, setDeliveryNotice] = useState(null)
@@ -3011,6 +4029,10 @@ export default function CustomerMobileApp() {
               p_username: customer.username,
               p_otp_channel: customer.otp_channel,
               p_password: customer.password,
+              // Mandatory address — stored on the contact and as their primary
+              // saved address (supabase-fix102.sql).
+              p_address: customer.address,
+              p_city: customer.city,
             })
 
             if (error) {
@@ -3023,6 +4045,9 @@ export default function CustomerMobileApp() {
               }
               if (message.includes('COMPANY_REQUIRED')) {
                 throw new Error('Company is not configured for customer registration.')
+              }
+              if (message.includes('ADDRESS_REQUIRED')) {
+                throw new Error(i18nValue.t('addressRequired'))
               }
               // Surface the real Postgres error so the failure can be diagnosed
               // (e.g. missing column / constraint), instead of a generic message.
@@ -3067,6 +4092,12 @@ export default function CustomerMobileApp() {
 
   function editOrder(order) {
     if (!order) return
+    // A confirmed (call-center) or non-pending order is view-only — open its details.
+    if (order.confirmed || order.status !== 'pending') {
+      setSelectedOrder(order)
+      setScreen('orderDetails')
+      return
+    }
     setSelectedOrder(order)
     setRequirements(order.requirements || initialRequirements)
     setScreen('editOrder')
@@ -3094,6 +4125,14 @@ export default function CustomerMobileApp() {
 
   if (screen === 'book') {
     content = <BookDeliveryScreen requirements={requirements} setRequirements={setRequirements} customerSession={customerSession} />
+  } else if (screen === 'shop') {
+    content = <ShopScreen onAdd={addToCart} onOpenCart={() => setScreen('cart')} cartCount={cartCount} />
+  } else if (screen === 'cart') {
+    content = <CartScreen cart={cart} setCartQty={setCartQty} removeFromCart={removeFromCart}
+      onCheckout={() => setScreen('checkout')} onContinue={() => setScreen('shop')} />
+  } else if (screen === 'checkout') {
+    content = <CheckoutScreen cart={cart} customerSession={customerSession}
+      onPlaced={clearCart} onGoOrders={() => setScreen('orders')} onBack={() => setScreen('cart')} />
   } else if (screen === 'orders') {
     content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} deliveryStatusByOrder={deliveryStatusByOrder} />
   } else if (screen === 'orderDetails') {
@@ -3112,6 +4151,7 @@ export default function CustomerMobileApp() {
         onBook={() => setScreen('book')}
         onOrders={() => setScreen('orders')}
         onProfile={() => setScreen('profile')}
+        onShop={() => setScreen('shop')}
         onViewOrder={openOrder}
         onEditOrder={editOrder}
       />

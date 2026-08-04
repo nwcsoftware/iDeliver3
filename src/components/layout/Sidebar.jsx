@@ -3,12 +3,13 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import logo from '../../assets/Logo.png'
 import AboutPopup from '../about/AboutPopup'
+import MessagesIndicator from '../messages/MessagesIndicator'
 
 // Main sidebar: the everyday driver-dispatch screens only.
 const mainNav = [
@@ -50,48 +51,21 @@ const contactsSubItems = [
 const settingsSubItems = [
   { to: '/settings/app',          icon: Settings,  label: 'App Settings' },
   { to: '/settings/users',        icon: UserCog,   label: 'User Accounts' },
+  // Admins may view/search the list; only the super admin can change it.
+  { to: '/settings/subscriptions', icon: CreditCard, label: 'Subscriptions' },
 ]
 // Settings entries restricted to super_admin only (the developer).
 const superAdminSettingsItems = [
   { to: '/settings/account',      icon: ShieldCheck, label: 'Developer Account' },
   { to: '/settings/driver-collections', icon: Truck, label: 'Driver App (Collect)' },
+  { to: '/settings/shop-categories', icon: Tags,     label: 'Shop Categories' },
+  { to: '/settings/header-background', icon: ImageIcon, label: 'Header Background' },
   { to: '/settings/messages',     icon: Megaphone,   label: 'Broadcast Messages' },
   { to: '/settings/delete-order', icon: PackageX,    label: 'Delete Order' },
   { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
   { to: '/settings/reset-cashier-box', icon: Wallet,  label: 'Reset Cashier Box' },
   { to: '/settings/reset',        icon: Trash2,      label: 'Reset Data' },
 ]
-
-// Broadcast-message indicator: a bell with the user's unread count (9+ when >9).
-// Clicking opens the global message popup. Rendered both in the collapsed rail
-// and at the top of the expanded Quick Stats panel.
-function MessagesIndicator({ collapsed, unreadCount, onClick }) {
-  const badge = unreadCount > 9 ? '9+' : String(unreadCount)
-  if (collapsed) {
-    return (
-      <button onClick={onClick} title={unreadCount ? `${unreadCount} unread message${unreadCount > 1 ? 's' : ''}` : 'Messages'}
-        className="relative p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-surface-hover transition-colors">
-        <MessageSquare className={`w-[18px] h-[18px] ${unreadCount ? 'text-brand-400' : ''}`} />
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
-            {badge}
-          </span>
-        )}
-      </button>
-    )
-  }
-  return (
-    <button onClick={onClick}
-      className="w-full flex items-center justify-between mb-3 group">
-      <span className="flex items-center gap-2 text-xs font-medium text-slate-300 group-hover:text-slate-100 transition-colors">
-        <MessageSquare className={`w-4 h-4 ${unreadCount ? 'text-brand-400' : 'text-slate-400'}`} /> Messages
-      </span>
-      {unreadCount > 0
-        ? <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">{badge}</span>
-        : <span className="text-[10px] text-slate-600">None</span>}
-    </button>
-  )
-}
 
 function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave }) {
   return (
@@ -116,7 +90,7 @@ function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave 
 }
 
 export default function Sidebar() {
-  const { stats, unreadCount, setMessagesOpen } = useApp()
+  const { stats } = useApp()
   const { hasRole } = useAuth()
 
   const isAdmin      = hasRole('super_admin', 'admin')
@@ -194,7 +168,7 @@ export default function Sidebar() {
         {/* ── Messages + Expand button (collapsed) ───────────────── */}
         {collapsed && (
           <div className="flex flex-col items-center gap-2 py-3 border-t border-surface-border">
-            <MessagesIndicator collapsed unreadCount={unreadCount} onClick={() => setMessagesOpen(true)} />
+            <MessagesIndicator collapsed />
             <button onClick={() => setCollapsed(false)}
               className="p-2 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-surface-hover transition-colors"
               title="Expand sidebar">
@@ -206,7 +180,7 @@ export default function Sidebar() {
         {/* ── Quick Stats (expanded only) ────────────────────────── */}
         {!collapsed && (
           <div className="px-4 pb-4 pt-4 space-y-2 border-t border-surface-border">
-            <MessagesIndicator unreadCount={unreadCount} onClick={() => setMessagesOpen(true)} />
+            <MessagesIndicator />
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-2">Quick Stats</p>
             <div className="flex justify-between text-xs">
               <span className="text-slate-400">Available Drivers</span>

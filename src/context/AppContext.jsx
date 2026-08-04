@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from './AuthContext'
+import { fetchHeaderBackgrounds, pickCurrent } from '../lib/headerBackground'
 
 const AppContext = createContext(null)
 
@@ -25,6 +26,17 @@ const ORDER_SELECT = `
 // Per-user UI preference: whether the order amounts summary popup is shown.
 // Stored in localStorage keyed by the signed-in user so each user keeps their
 // own view on this device. Defaults to shown.
+/* Does a broadcast message target this user? (fix107)
+   Empty audience_roles AND empty audience_user_ids = everyone, which is how
+   every message sent before targeting existed. Otherwise the user matches on
+   EITHER their role OR their account being listed. */
+export function messageTargetsUser(m, user) {
+  const roles = Array.isArray(m?.audience_roles)    ? m.audience_roles.filter(Boolean)    : []
+  const ids   = Array.isArray(m?.audience_user_ids) ? m.audience_user_ids.filter(Boolean) : []
+  if (roles.length === 0 && ids.length === 0) return true
+  return roles.includes(user?.role) || ids.map(String).includes(String(user?.user_id))
+}
+
 const summaryKey = (userId) => `ideliver:showSummary:${userId || 'anon'}`
 function readShowSummary(userId) {
   try {
@@ -188,12 +200,13 @@ export function AppProvider({ children }) {
     ordersWindowRef.current = Number(appSettings.ordersWindowDays) || 0
   }, [appSettings.ordersWindowDays])
 
-  /* ── Broadcast messages (admin → all users) ───────────────────────────────
+  /* ── Broadcast messages (admin → chosen audience) ─────────────────────────
      Active messages plus this user's read receipts, so the sidebar badge can
      show this user's unread count and the global popup can display them. */
   const [messages,     setMessages]     = useState([])              // active broadcast_messages (newest first)
   const [readIds,      setReadIds]      = useState(() => new Set()) // message ids this user has read
   const [messagesOpen, setMessagesOpen] = useState(false)          // global popup open state
+  const [messagesNudge, setMessagesNudge] = useState(0)            // bumps to animate the sidebar icon
   const seenMsgIdsRef = useRef(new Set())                          // ids already seen (to detect new arrivals)
 
   const fetchMessages = useCallback(async () => {
@@ -210,7 +223,7 @@ export function AppProvider({ children }) {
       .from('broadcast_message_reads')
       .select('message_id')
       .eq('user_id', currentUser.user_id)
-    setMessages(msgs ?? [])
+    setMessages((msgs ?? []).filter(m => messageTargetsUser(m, currentUser)))
     setReadIds(new Set((reads ?? []).map(r => r.message_id)))
   }, [currentUser?.user_id, currentUser?.company_id])
 
@@ -245,19 +258,29 @@ export function AppProvider({ children }) {
 
   // Send a new broadcast (admin). The sender is auto-marked read so they don't
   // get their own popup. Returns { id } or { error }.
-  const sendMessage = useCallback(async ({ title, body, priority = 'info' }) => {
+  const sendMessage = useCallback(async ({ title, body, priority = 'info', audienceRoles = [], audienceUserIds = [], displayMode = 'popup' }) => {
     const payload = {
       title:           (title || '').trim(),
       body:            (body  || '').trim(),
       priority,
+      display_mode:    displayMode,      // 'popup' | 'icon'
       is_active:       true,
+      // Empty on both = everyone (see messageTargetsUser).
+      audience_roles:    audienceRoles,
+      audience_user_ids: audienceUserIds,
       company_id:      currentUser?.company_id ?? null,
       created_by:      currentUser?.user_id    ?? null,
       created_by_name: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim()
                          || currentUser?.username || null,
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('broadcast_messages').insert([payload]).select('id').single()
+    // Targeting columns arrive with fix107 — still send to everyone rather than
+    // failing outright when that migration hasn't been run.
+    if (error && /audience_(roles|user_ids)|display_mode/.test(error.message)) {
+      const { audience_roles: _r, audience_user_ids: _u, display_mode: _d, ...rest } = payload
+      ;({ data, error } = await supabase.from('broadcast_messages').insert([rest]).select('id').single())
+    }
     if (error) return { error: error.message }
     try {
       await supabase.from('broadcast_message_reads').upsert(
@@ -291,13 +314,44 @@ export function AppProvider({ children }) {
     return () => { supabase.removeChannel(ch) }
   }, [currentUser?.user_id, fetchMessages])
 
-  // Auto-open the popup whenever a not-yet-seen unread message appears (on login
-  // for existing unread, and instantly when an admin sends a new one).
+  // A new message announces itself the way its sender chose (fix108):
+  //   'popup' → open the message centre immediately (the original behaviour)
+  //   'icon'  → stay quiet; the sidebar icon badges + nudges instead
   useEffect(() => {
-    const hasNew = messages.some(m => !readIds.has(m.id) && !seenMsgIdsRef.current.has(m.id))
+    const arrived = messages.filter(m => !readIds.has(m.id) && !seenMsgIdsRef.current.has(m.id))
     seenMsgIdsRef.current = new Set(messages.map(m => m.id))
-    if (hasNew) setMessagesOpen(true)
+    if (arrived.length === 0) return
+    if (arrived.some(m => (m.display_mode || 'popup') === 'popup')) setMessagesOpen(true)
+    else setMessagesNudge(n => n + 1)          // icon-only: animate the sidebar icon
   }, [messages, readIds])
+
+  /* ── Header background image (super-admin scheduled, fix109) ──────────────
+     Decorative banner behind the app header while its date window is current.
+     Re-evaluated every minute so a window opening/closing takes effect without
+     a reload, and refetched live when the super admin changes the schedule. */
+  const [headerBgRows, setHeaderBgRows] = useState([])
+  const [headerBgNow,  setHeaderBgNow]  = useState(() => Date.now())
+
+  const fetchHeaderBg = useCallback(async () => {
+    const { rows } = await fetchHeaderBackgrounds(COMPANY_ID)
+    setHeaderBgRows(rows)
+  }, [])
+
+  useEffect(() => {
+    if (!currentUser?.user_id) { setHeaderBgRows([]); return undefined }
+    fetchHeaderBg()
+    const tick = setInterval(() => setHeaderBgNow(Date.now()), 60 * 1000)
+    const ch = supabase
+      .channel('header-backgrounds-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'header_backgrounds' }, fetchHeaderBg)
+      .subscribe()
+    return () => { clearInterval(tick); supabase.removeChannel(ch) }
+  }, [currentUser?.user_id, fetchHeaderBg])
+
+  const headerBackground = useMemo(
+    () => pickCurrent(headerBgRows, headerBgNow),
+    [headerBgRows, headerBgNow],
+  )
 
   const fetchDrivers = useCallback(async () => {
     setLoading(l => ({ ...l, drivers: true }))
@@ -487,7 +541,8 @@ export function AppProvider({ children }) {
       showSummary, setShowSummary, toggleShowSummary,
       appSettings, updateAppSettings,
       messages, unreadMessages, unreadCount,
-      messagesOpen, setMessagesOpen,
+      messagesOpen, setMessagesOpen, messagesNudge,
+      headerBackground, refreshHeaderBackground: fetchHeaderBg,
       markMessageRead, markAllMessagesRead, sendMessage, deactivateMessage, fetchMessages,
     }}>
       {children}

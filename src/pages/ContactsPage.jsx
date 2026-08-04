@@ -9,7 +9,8 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
-import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES } from '../components/contacts/ContactFormFields'
+import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES, normalizeOptions } from '../components/contacts/ContactFormFields'
+import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
 import ContactAddresses from '../components/contacts/ContactAddresses'
 import ContactSubAccounts from '../components/contacts/ContactSubAccounts'
 import ContactPartnerPackages from '../components/contacts/ContactPartnerPackages'
@@ -25,11 +26,10 @@ const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant'
 // (Commission %, Business Type, Contact Category). Only the title/icon/colour
 // differ per page; the in-form Roles selector lets a contact be Customer,
 // Partner, Supplier (or several at once) and be switched between them any time.
-const GENERAL_EXTRA_FIELDS = [
-  { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
-  { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
-  { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
-]
+// Shared with the quick "add contact" popup in the order form (contactFields.js)
+// so both forms stay identical: Commission %, Commission Type, Business Type,
+// Contact Category.
+const GENERAL_EXTRA_FIELDS = CONTACT_EXTRA_FIELDS.customer
 
 // Panes of the add/edit contact modal.
 const CONTACT_TABS = [
@@ -64,7 +64,7 @@ const BASE_FORM = {
   // Roles this contact holds (tags). Always includes the page's primary type.
   contact_types: [],
   // Shared "general form" fields (all non-driver contact types).
-  partner_percentage: '', shop_type: '', contact_category: '',
+  partner_percentage: '', partner_percentage_type: '', shop_type: '', contact_category: '',
 }
 
 export default function ContactsPage({ type }) {
@@ -246,11 +246,14 @@ export default function ContactsPage({ type }) {
   /* Enter "set new password" mode with a freshly generated password (visible).
      Warns first, since saving will replace the customer's current password. */
   function startPasswordReset() {
-    if (!usernameInput.trim()) { setCredError('This customer is not registered yet (no username).'); return }
-    if (!window.confirm(
-      '⚠ Reset this customer’s password?\n\n' +
-      'A new password will be generated (you can also type your own). When you save it, ' +
-      'the customer’s current password will stop working immediately — make sure to share the new one with them.'
+    if (usernameInput.trim().length < 3) { setCredError('Enter a username (at least 3 characters) first.'); return }
+    const has = !!(modal && modal.username)
+    if (!window.confirm(has
+      ? '⚠ Reset this customer’s password?\n\n' +
+        'A new password will be generated (you can also type your own). When you save it, ' +
+        'the customer’s current password will stop working immediately — make sure to share the new one with them.'
+      : 'Set a username & password for this customer?\n\n' +
+        'A password will be generated (you can also type your own). Share it with the customer after saving.'
     )) return
     setEditingPw(true); setPwInput(generatePassword(PW_MIN)); setShowPw(true); setNewPassword(''); setCredError('')
   }
@@ -263,13 +266,16 @@ export default function ContactsPage({ type }) {
      the customer to already have one. */
   async function resetCustomerPassword() {
     if (!isAdmin || !modal || modal === 'add') return
+    const uname = usernameInput.trim()
     const pwd = pwInput
-    if (!usernameInput.trim()) { setCredError('This customer does not have a username yet.'); return }
+    if (uname.length < 3) { setCredError('Username must be at least 3 characters.'); return }
     if (pwd.length < PW_MIN) { setCredError(`Password must be at least ${PW_MIN} characters.`); return }
     setResetting(true); setCredError(''); setNewPassword('')
     try {
-      const { data, error: e } = await supabase.rpc('admin_reset_customer_password', {
+      // Sets BOTH username and password (create or change) for any contact type.
+      const { data, error: e } = await supabase.rpc('admin_set_contact_credentials', {
         p_contact_id:   modal.id,
+        p_username:     uname,
         p_new_password: pwd,
       })
       if (e) throw e
@@ -279,7 +285,33 @@ export default function ContactsPage({ type }) {
       if (username) { setUsernameInput(username); setForm(f => ({ ...f, username })) }
     } catch (e) {
       const msg = e?.message || String(e)
-      setCredError(/USERNAME_REQUIRED/i.test(msg) ? 'This customer does not have a username yet.' : msg)
+      setCredError(
+        /USERNAME_TAKEN/i.test(msg)      ? 'That username is already used by another contact.'
+        : /USERNAME_TOO_SHORT/i.test(msg) ? 'Username must be at least 3 characters.'
+        : /PASSWORD_TOO_SHORT/i.test(msg) ? `Password must be at least ${PW_MIN} characters.`
+        : /admin_set_contact_credentials/i.test(msg) ? 'Contact credential setup isn’t installed yet — run supabase-fix97.sql.'
+        : msg)
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  /* Super admin: remove a contact's login entirely (clears username + password). */
+  async function removeLogin() {
+    if (!isSuperAdmin || !modal || modal === 'add') return
+    if (!window.confirm(
+      '⚠ Remove this contact’s login?\n\n' +
+      'Their username and password will be deleted and they will no longer be able to sign in. This cannot be undone (you can set a new login afterwards).'
+    )) return
+    setResetting(true); setCredError(''); setNewPassword('')
+    try {
+      const { error: e } = await supabase.rpc('admin_clear_contact_credentials', { p_contact_id: modal.id })
+      if (e) throw e
+      setUsernameInput(''); setPwInput(''); setShowPw(false); setEditingPw(false)
+      setForm(f => ({ ...f, username: '' }))
+    } catch (e) {
+      const msg = e?.message || String(e)
+      setCredError(/admin_clear_contact_credentials/i.test(msg) ? 'Contact credential setup isn’t installed yet — run supabase-fix97.sql.' : msg)
     } finally {
       setResetting(false)
     }
@@ -333,6 +365,7 @@ export default function ContactsPage({ type }) {
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       // Shared "general form" fields — saved for every non-driver contact type.
       partner_percentage: Number(form.partner_percentage) || null,
+      partner_percentage_type: form.partner_percentage_type?.trim() || null,
       shop_type:          form.shop_type?.trim() || null,
       contact_category:   form.contact_category?.trim() || null,
       // audit / branch — account_number is generated client-side for customers & suppliers
@@ -572,11 +605,18 @@ export default function ContactsPage({ type }) {
                 </td>
 
                 {/* Extra fields */}
-                {cfg.extraFields.map(ef => (
-                  <td key={ef.key} className="px-4 py-3 text-slate-400 text-xs">
-                    {c[ef.key] ?? <span className="text-slate-600">—</span>}
-                  </td>
-                ))}
+                {cfg.extraFields.map(ef => {
+                  const raw = c[ef.key]
+                  // Selects may carry {value,label} options — show the label.
+                  const shown = ef.type === 'select'
+                    ? normalizeOptions(ef.options).find(o => o.value === raw)?.label ?? raw
+                    : raw
+                  return (
+                    <td key={ef.key} className="px-4 py-3 text-slate-400 text-xs">
+                      {shown || <span className="text-slate-600">—</span>}
+                    </td>
+                  )
+                })}
 
                 {/* Status */}
                 <td className="px-4 py-3">
@@ -690,8 +730,8 @@ export default function ContactsPage({ type }) {
               </div>
             )}
 
-            {/* Customer user account & security — collapsible, admin only */}
-            {activeTab === 'details' && type === 'customer' && modal !== 'add' && isAdmin && (
+            {/* Contact user account & security — collapsible, admin only (any type) */}
+            {activeTab === 'details' && modal !== 'add' && isAdmin && (
               <div className="border border-surface-border rounded-lg overflow-hidden">
                 <button type="button" onClick={() => setCredOpen(o => !o)}
                   className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
@@ -703,9 +743,11 @@ export default function ContactsPage({ type }) {
                   <div className="p-3 space-y-3">
                     <div>
                       <label className="label">Username</label>
-                      <input className="input font-mono opacity-80 cursor-not-allowed" value={usernameInput || 'No username set'} readOnly autoComplete="off" />
+                      <input className="input font-mono" value={usernameInput}
+                        onChange={e => { setUsernameInput(e.target.value); setCredError('') }}
+                        placeholder="Set a username (min 3 characters)" autoComplete="off" />
                       <p className="text-[10px] text-slate-600 mt-0.5">
-                        Admins can view the username, but only the customer setup flow can create or change it.
+                        Set or change this contact’s username here (must be unique across all contacts).
                       </p>
                     </div>
 
@@ -754,16 +796,24 @@ export default function ContactsPage({ type }) {
 
                     <div className="flex items-center gap-3 flex-wrap">
                       {!editingPw ? (
-                        <button type="button" onClick={startPasswordReset} disabled={!usernameInput.trim()}
+                        <>
+                        <button type="button" onClick={startPasswordReset} disabled={usernameInput.trim().length < 3}
                           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
-                          <KeyRound className="w-4 h-4" /> Reset Password
+                          <KeyRound className="w-4 h-4" /> {modal.username ? 'Reset Password' : 'Set Username & Password'}
                         </button>
+                        {isSuperAdmin && modal.username && (
+                          <button type="button" onClick={removeLogin} disabled={resetting}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-red-500/10 border-red-500/30 text-red-300 hover:bg-red-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <Trash2 className="w-4 h-4" /> Remove Login
+                          </button>
+                        )}
+                        </>
                       ) : (
                         <>
                           <button type="button" onClick={resetCustomerPassword}
                             disabled={resetting || pwInput.length < PW_MIN}
                             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-not-allowed">
-                            <Check className="w-4 h-4" /> {resetting ? 'Saving…' : 'Save Password'}
+                            <Check className="w-4 h-4" /> {resetting ? 'Saving…' : 'Save Credentials'}
                           </button>
                           <button type="button" onClick={cancelPasswordReset} disabled={resetting}
                             className="btn-ghost text-slate-400">Cancel</button>

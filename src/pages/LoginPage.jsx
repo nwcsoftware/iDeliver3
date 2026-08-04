@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import { Eye, EyeOff, X, LogIn, AlertCircle, Loader, Headset, Store } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import logo from '../assets/Logo.png'
+import { APP_NAME, APP_VERSION } from '../lib/appVersion'
 
 // Which login tab is active. Persisted so the box reopens on the last one used.
 const TAB_KEY = 'ideliver_login_tab'
@@ -157,7 +158,9 @@ export default function LoginPage() {
               {error && (
                 <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
                   <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-300 text-xs leading-relaxed">{error}</p>
+                  {/* whitespace-pre-line: subscription refusals carry the
+                      subscription's details on their own lines. */}
+                  <p className="text-red-300 text-xs leading-relaxed whitespace-pre-line">{error}</p>
                 </div>
               )}
 
@@ -180,7 +183,7 @@ export default function LoginPage() {
 
           {/* Footer */}
           <p className="text-center text-slate-600 text-xs">
-            iDeliver III &nbsp;·&nbsp; v3.00.015
+            {APP_NAME} &nbsp;·&nbsp; v{APP_VERSION}
           </p>
         </div>
       </div>

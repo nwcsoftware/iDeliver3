@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { getDeviceInfo } from '../lib/device'
+import { checkSubscriptionAccess, accessDeniedMessage } from '../lib/subscriptions'
 
 const AuthContext = createContext(null)
 
@@ -12,11 +14,14 @@ export function AuthProvider({ children }) {
   // presence. Every logged-in client announces itself on the shared channel,
   // so any client (e.g. the admin's User Accounts page) can see who's online.
   const [onlineUserIds, setOnlineUserIds] = useState([])
+  // Same roster, but one entry per signed-in *client* — carries the device it
+  // is running on, so the super admin can see where each user is signed in.
+  const [onlineSessions, setOnlineSessions] = useState([])
 
   // Announce this session on the shared presence channel while signed in, and
   // keep the live roster of online user_ids in sync as clients come and go.
   useEffect(() => {
-    if (!currentUser?.user_id) { setOnlineUserIds([]); return }
+    if (!currentUser?.user_id) { setOnlineUserIds([]); setOnlineSessions([]); return }
 
     const channel = supabase.channel('online-users', {
       config: { presence: { key: String(currentUser.user_id) } },
@@ -25,10 +30,23 @@ export function AuthProvider({ children }) {
     const syncRoster = () => {
       const state = channel.presenceState()
       const ids = new Set()
+      const sessions = []
       for (const metas of Object.values(state)) {
-        for (const m of metas) if (m.user_id != null) ids.add(String(m.user_id))
+        for (const m of metas) {
+          if (m.user_id == null) continue
+          ids.add(String(m.user_id))
+          sessions.push({
+            user_id:     String(m.user_id),
+            username:    m.username,
+            device_id:   m.device_id ?? '',
+            device_name: m.device_name ?? '',
+            is_desktop:  !!m.is_desktop,
+            online_at:   m.online_at,
+          })
+        }
       }
       setOnlineUserIds([...ids])
+      setOnlineSessions(sessions)
     }
 
     channel
@@ -42,12 +60,28 @@ export function AuthProvider({ children }) {
             username:  currentUser.username,
             role:      currentUser.role,
             online_at: new Date().toISOString(),
+            ...getDeviceInfo(),
           })
         }
       })
 
     return () => { supabase.removeChannel(channel) }
   }, [currentUser?.user_id, currentUser?.username, currentUser?.role])
+
+  // Stamp the account with the device it is being used from (best-effort — a
+  // failure here must never block signing in). Needs supabase-fix101.sql.
+  async function recordDevice(userId) {
+    if (!userId) return
+    const d = getDeviceInfo()
+    try {
+      await supabase.rpc('record_login_device', {
+        p_user_id:     userId,
+        p_device_name: d.device_name,
+        p_device_id:   d.device_id,
+        p_platform:    d.device_platform,
+      })
+    } catch { /* ignore */ }
+  }
 
   // Rehydrate session from localStorage on mount
   useEffect(() => {
@@ -77,7 +111,21 @@ export function AuthProvider({ children }) {
           // Basic expiry check: 12-hour sessions
           const age = Date.now() - new Date(session.logged_in_at).getTime()
           if (age < 12 * 60 * 60 * 1000) {
+            // Re-check the 2nd party's subscription on every app start, so an
+            // expired or deactivated one ends the session instead of riding on
+            // a still-valid cached login.
+            const isSecondParty = session.role === 'partner' || session.role === 'supplier'
+            if (isSecondParty) {
+              const { allowed } = await checkSubscriptionAccess(session.contact_id)
+              if (cancelled) return
+              if (!allowed) {
+                localStorage.removeItem(SESSION_KEY)
+                setLoading(false)
+                return
+              }
+            }
             setCurrentUser(session)
+            recordDevice(session.user_id)
           } else {
             localStorage.removeItem(SESSION_KEY)
           }
@@ -133,8 +181,19 @@ export function AuthProvider({ children }) {
       return { success: false, error: 'This is a partner/supplier account. Use the Partner / Supplier tab.' }
     }
 
+    // Suppliers & partners are gated on their subscription: they may only sign
+    // in while one is paid, activated and in date (supabase-fix110.sql). The
+    // check errs on the side of letting them in if the lookup itself fails.
+    if (isSecondParty) {
+      const { allowed, reason, row } = await checkSubscriptionAccess(user.contact_id)
+      if (!allowed) {
+        return { success: false, error: accessDeniedMessage(reason, row) }
+      }
+    }
+
     localStorage.setItem(SESSION_KEY, JSON.stringify(user))
     setCurrentUser(user)
+    recordDevice(user.user_id)
     return { success: true }
   }, [])
 
@@ -204,7 +263,7 @@ export function AuthProvider({ children }) {
   }, [currentUser])
 
   return (
-    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword, changeUsername, onlineUserIds }}>
+    <AuthContext.Provider value={{ currentUser, loading, login, logout, hasRole, changePassword, changeUsername, onlineUserIds, onlineSessions }}>
       {children}
     </AuthContext.Provider>
   )

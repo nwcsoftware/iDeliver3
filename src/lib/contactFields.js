@@ -4,10 +4,24 @@
 
 export const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
 
+/* How a supplier/partner's commission % is applied to an order line:
+   addition  → added on top of the line price (the shop earns above the price)
+   deduction → taken off the line price (the shop's cut comes out of it) */
+export const COMMISSION_TYPE_OPTIONS = [
+  { value: 'addition',  label: 'Addition percentage (added on top)' },
+  { value: 'deduction', label: 'Deduction percentage (taken off)' },
+]
+
+/* Readable label for a stored partner_percentage_type value. */
+export function commissionTypeLabel(v) {
+  return COMMISSION_TYPE_OPTIONS.find(o => o.value === v)?.label ?? (v || '')
+}
+
 /* Every non-driver contact type (customer/supplier/partner) shares ONE form —
    the former Partner form: Commission %, Business Type, Contact Category. */
 const GENERAL_EXTRA_FIELDS = [
-  { key: 'partner_percentage', label: 'Commission %',     type: 'number', placeholder: '10' },
+  { key: 'partner_percentage',      label: 'Commission %',    type: 'number', placeholder: '10' },
+  { key: 'partner_percentage_type', label: 'Commission Type', type: 'select', placeholder: '— Select —', options: COMMISSION_TYPE_OPTIONS },
   { key: 'shop_type',          label: 'Business Type',    type: 'select', placeholder: '— Select —', options: DEFAULT_BUSINESS_TYPES },
   { key: 'contact_category',   label: 'Contact Category', type: 'select', placeholder: '— Select —', options: [] },
 ]
@@ -19,7 +33,7 @@ export const CONTACT_EXTRA_FIELDS = {
 }
 
 /* All type-specific keys — used to initialise/clear form state. */
-export const CONTACT_EXTRA_KEYS = ['shop_type', 'contact_category', 'partner_percentage']
+export const CONTACT_EXTRA_KEYS = ['shop_type', 'contact_category', 'partner_percentage', 'partner_percentage_type']
 
 /* Enrich the addable lookup selects (business type, contact category) with their
    live options and an inline "add new" handler. `addBusinessType` /
@@ -40,8 +54,9 @@ export function buildContactExtraFields(type, { businessTypes = [], contactCateg
    every non-driver contact type (customer/supplier/partner). */
 export function contactTypeExtras(_type, form) {
   return {
-    partner_percentage: Number(form.partner_percentage) || null,
-    shop_type:          form.shop_type?.trim() || null,
-    contact_category:   form.contact_category?.trim() || null,
+    partner_percentage:      Number(form.partner_percentage) || null,
+    partner_percentage_type: form.partner_percentage_type?.trim() || null,
+    shop_type:               form.shop_type?.trim() || null,
+    contact_category:        form.contact_category?.trim() || null,
   }
 }
