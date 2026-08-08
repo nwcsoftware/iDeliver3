@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
-import { useLocation } from 'react-router-dom'
-import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, Search, MapPin } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 
@@ -23,6 +23,7 @@ const pageTitles = {
   '/settings/shop-categories': 'Shop Categories',
   '/settings/header-background': 'Header Background',
   '/settings/subscriptions': 'Subscriptions',
+  '/settings/change-requests': 'Change Requests',
   '/sold-orders':      'Sold Orders',
   '/completed-orders': 'Completed Orders',
   '/supplier-settlements': 'Supplier Settlements',
@@ -40,6 +41,7 @@ const roleLabel = {
 
 export default function Header() {
   const location             = useLocation()
+  const navigate             = useNavigate()
   const title                = pageTitles[location.pathname] || 'iDeliver III'
   const { currentUser, logout } = useAuth()
   const { orders, showSummary, toggleShowSummary, headerBackground } = useApp()
@@ -51,11 +53,63 @@ export default function Header() {
   const showBell = !['supplier', 'partner'].includes(currentUser?.role)
 
   // Orders awaiting confirmation → bell badge (9+ once it goes past nine).
-  const pendingCount = useMemo(
-    () => orders.filter(isUnconfirmedOrder).length,
-    [orders],
-  )
+  const pending = useMemo(() => orders.filter(isUnconfirmedOrder), [orders])
+  const pendingCount = pending.length
   const badgeLabel = pendingCount > 9 ? '9+' : String(pendingCount)
+
+  // …and the same orders grouped by scheduled date for the bell popup, newest
+  // day first. Each group can be collapsed; they all start open.
+  const pendingGroups = useMemo(() => {
+    const byDay = new Map()
+    for (const o of pending) {
+      const day = String(o.scheduled_date || o.created_at || '').slice(0, 10) || 'No date'
+      if (!byDay.has(day)) byDay.set(day, [])
+      byDay.get(day).push(o)
+    }
+    return [...byDay.entries()]
+      .sort((a, b) => String(b[0]).localeCompare(String(a[0])))
+      .map(([day, list]) => ({ day, list }))
+  }, [pending])
+
+  const [bellOpen,   setBellOpen]   = useState(false)
+  const [bellSearch, setBellSearch] = useState('')
+  const [collapsed,  setCollapsed]  = useState(() => new Set())   // days folded shut
+
+  // The popup's own search — order number, reception (recipient), customer and
+  // delivery location. Empty days drop out of the list.
+  const bellGroups = useMemo(() => {
+    const q = bellSearch.trim().toLowerCase()
+    if (!q) return pendingGroups
+    const hit = o => [
+      o.order_number, o.recipient_name, o.delivery_address, o.pickup_address,
+      o.customer?.company_name,
+      `${o.customer?.first_name ?? ''} ${o.customer?.last_name ?? ''}`,
+    ].some(v => String(v ?? '').toLowerCase().includes(q))
+    return pendingGroups
+      .map(g => ({ ...g, list: g.list.filter(hit) }))
+      .filter(g => g.list.length > 0)
+  }, [pendingGroups, bellSearch])
+
+  const bellShown = bellGroups.reduce((n, g) => n + g.list.length, 0)
+
+  const closeBell = () => { setBellOpen(false); setBellSearch('') }
+
+  // Order number → close the popup and open that order's form (the Deliveries
+  // page picks the id up from ?edit=).
+  const openOrder = (o) => {
+    closeBell()
+    navigate(`/deliveries?edit=${o.id}`)
+  }
+  const toggleDay = (day) => setCollapsed(prev => {
+    const next = new Set(prev)
+    next.has(day) ? next.delete(day) : next.add(day)
+    return next
+  })
+  const dayLabel = (day) => {
+    if (day === 'No date') return 'No scheduled date'
+    const d = new Date(`${day}T00:00:00`)
+    return isNaN(d.getTime()) ? day : d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+  }
 
   const initials = currentUser
     ? `${currentUser.first_name?.[0] ?? ''}${currentUser.last_name?.[0] ?? ''}`.toUpperCase() || 'U'
@@ -111,24 +165,109 @@ export default function Header() {
         {/* Notification bell — orders awaiting confirmation. Rings (swings +
             pulsing halo) whenever the count isn't zero. Office roles only. */}
         {showBell && (
-        <button
-          className={`btn-ghost p-2 relative transition-colors ${
-            pendingCount > 0 ? 'text-fuchsia-300 hover:text-fuchsia-200' : ''}`}
-          title={pendingCount > 0
-            ? `${pendingCount} order${pendingCount === 1 ? '' : 's'} awaiting confirmation`
-            : 'No orders awaiting confirmation'}
-        >
-          {pendingCount > 0 && (
-            <span className="absolute inset-1 rounded-full bg-fuchsia-400/20 animate-ping" />
+        <div className="relative">
+          <button
+            onClick={() => setBellOpen(o => !o)}
+            className={`btn-ghost p-2 relative transition-colors ${
+              pendingCount > 0 ? 'text-fuchsia-300 hover:text-fuchsia-200' : ''}`}
+            title={pendingCount > 0
+              ? `${pendingCount} order${pendingCount === 1 ? '' : 's'} awaiting confirmation — click to list them`
+              : 'No orders awaiting confirmation'}
+          >
+            {pendingCount > 0 && (
+              <span className="absolute inset-1 rounded-full bg-fuchsia-400/20 animate-ping" />
+            )}
+            <Bell className={`w-4 h-4 relative ${pendingCount > 0 ? 'animate-bell-ring' : ''}`} />
+            {pendingCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center
+                               rounded-full bg-fuchsia-500 text-white text-[10px] font-bold leading-none">
+                {badgeLabel}
+              </span>
+            )}
+          </button>
+
+          {/* Unconfirmed orders — a centred popup, grouped by scheduled date,
+              searchable, with the order number opening that order. */}
+          {bellOpen && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+              onClick={closeBell}>
+              <div className="card w-full max-w-3xl max-h-[82vh] flex flex-col overflow-hidden shadow-2xl shadow-black/50"
+                onClick={e => e.stopPropagation()}>
+
+                <div className="flex items-center gap-2 px-5 py-3 border-b border-surface-border bg-surface-hover/40 flex-shrink-0">
+                  <Bell className="w-4 h-4 text-fuchsia-300" />
+                  <span className="text-sm font-semibold text-slate-100">Orders awaiting confirmation</span>
+                  <span className="ml-auto text-[11px] text-slate-400">
+                    {bellShown} of {pendingCount} order{pendingCount === 1 ? '' : 's'} · {bellGroups.length} day{bellGroups.length === 1 ? '' : 's'}
+                  </span>
+                  <button onClick={closeBell} className="btn-ghost p-1.5 text-slate-500 hover:text-slate-200">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Search across number, recipient, customer and location */}
+                <div className="px-5 py-2.5 border-b border-surface-border flex-shrink-0">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <input autoFocus className="input pl-9 py-1.5 text-xs" value={bellSearch}
+                      onChange={e => setBellSearch(e.target.value)}
+                      placeholder="Search order number, reception, customer or delivery location…" />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                  {bellGroups.length === 0 ? (
+                    <p className="px-4 py-10 text-center text-xs text-slate-500">
+                      {pendingCount === 0 ? 'Nothing is waiting for confirmation.' : 'No orders match your search.'}
+                    </p>
+                  ) : bellGroups.map(({ day, list }) => {
+                    const shut = collapsed.has(day)
+                    return (
+                      <div key={day} className="border-b border-surface-border/50 last:border-b-0">
+                        <button onClick={() => toggleDay(day)}
+                          className="w-full flex items-center gap-2 px-5 py-2 text-left hover:bg-surface-hover/40 transition-colors sticky top-0 bg-surface-card z-10">
+                          <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${shut ? '-rotate-90' : ''}`} />
+                          <span className="text-xs font-medium text-slate-200">{dayLabel(day)}</span>
+                          <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30">
+                            {list.length}
+                          </span>
+                        </button>
+                        {!shut && (
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {list.map(o => (
+                                <tr key={o.id} className="hover:bg-surface-hover/30">
+                                  <td className="pl-10 pr-3 py-1.5 w-[10rem]">
+                                    <button onClick={() => openOrder(o)}
+                                      title="Open this order"
+                                      className="font-mono text-[11px] text-brand-300 hover:text-brand-200 hover:underline">
+                                      {o.order_number || '—'}
+                                    </button>
+                                  </td>
+                                  <td className="px-3 py-1.5 text-slate-300 truncate max-w-[11rem]">{o.recipient_name || '—'}</td>
+                                  <td className="px-3 py-1.5 text-slate-400 truncate max-w-[10rem]">
+                                    {o.customer?.company_name
+                                      || `${o.customer?.first_name ?? ''} ${o.customer?.last_name ?? ''}`.trim() || '—'}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-slate-400 truncate max-w-[14rem]">
+                                    <span className="inline-flex items-center gap-1">
+                                      <MapPin className="w-3 h-3 text-slate-600 flex-shrink-0" />
+                                      {o.delivery_address || '—'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
           )}
-          <Bell className={`w-4 h-4 relative ${pendingCount > 0 ? 'animate-bell-ring' : ''}`} />
-          {pendingCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center
-                             rounded-full bg-fuchsia-500 text-white text-[10px] font-bold leading-none">
-              {badgeLabel}
-            </span>
-          )}
-        </button>
+        </div>
         )}
 
         {/* User menu */}

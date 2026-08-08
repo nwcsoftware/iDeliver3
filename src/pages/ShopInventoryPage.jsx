@@ -18,7 +18,7 @@ const MAX_IMAGES = 3
 const MAX_COLORS = 8
 const EMPTY = {
   name: '', description: '', price: '', currency: 'USD', images: [], stock_qty: '',
-  categories: [], colors: [], sizes: [], is_displayed: true,
+  categories: [], colors: [], sizes: [], is_displayed: true, is_made_to_order: false,
 }
 
 /* Per-partner/supplier shop inventory. Owners see and manage ONLY their own items
@@ -114,6 +114,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       price: it.price ?? '', currency: it.currency ?? 'USD',
       images: itemImages(it), stock_qty: it.stock_qty ?? '',
       categories: itemCategories(it), is_displayed: !!it.is_displayed,
+      is_made_to_order: !!it.is_made_to_order,
       colors: Array.isArray(it.colors) ? it.colors : [],
       sizes:  Array.isArray(it.sizes)  ? it.sizes  : [],
     })
@@ -208,6 +209,8 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       colors:           form.colors.filter(c => c.name?.trim()).map(c => ({ name: c.name.trim(), image: c.image || null })),
       sizes:            form.sizes,
       is_displayed:     !!form.is_displayed,
+      // Food & co: prepared on request, so it carries no stock (fix114).
+      is_made_to_order: !!form.is_made_to_order,
       updated_at:       new Date().toISOString(),
     }
     // A column the DB doesn't have yet (its migration hasn't been run) is
@@ -223,7 +226,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
 
     let res = await send(payload)
     const degraded = []
-    for (const col of ['images', 'categories', 'colors', 'sizes']) {
+    for (const col of ['images', 'categories', 'colors', 'sizes', 'is_made_to_order']) {
       if (!res.error || !missingColumn(res.error.message, col)) continue
       degraded.push(col)
       delete payload[col]                     // retry without the missing column
@@ -240,7 +243,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       return
     }
     if (degraded.length) {
-      const fixes = { images: 'fix105 (extra photos)', categories: 'fix103 (category tags)', colors: 'fix106 (colours)', sizes: 'fix106 (sizes)' }
+      const fixes = { images: 'fix105 (extra photos)', categories: 'fix103 (category tags)', colors: 'fix106 (colours)', sizes: 'fix106 (sizes)', is_made_to_order: 'fix114 (prepared on request)' }
       setError(`Item saved, but ${degraded.map(c => fixes[c]).join(' and ')} could not be stored — run the matching supabase migration.`)
     }
     closeModal(); fetchItems()
@@ -569,6 +572,17 @@ export default function ShopInventoryPage({ partyContactId = null }) {
                   Add each size the item comes in. Customers must pick one before adding to their cart.
                 </p>
               </div>
+
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" className="w-4 h-4 accent-emerald-500 mt-0.5" checked={form.is_made_to_order}
+                  onChange={e => setForm(f => ({ ...f, is_made_to_order: e.target.checked }))} />
+                <span className="text-sm text-slate-200">
+                  Prepared on request (no stock)
+                  <span className="block text-[11px] text-slate-500">
+                    For food and made-to-order items — customers see how many were ordered instead of a stock level.
+                  </span>
+                </span>
+              </label>
 
               <label className="flex items-center gap-2.5 cursor-pointer select-none">
                 <input type="checkbox" className="w-4 h-4 accent-emerald-500" checked={form.is_displayed}

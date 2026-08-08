@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Boxes,
+  Gift,
   Circle,
   Eye,
   Home,
@@ -28,12 +30,14 @@ import {
   Minus,
   Smartphone,
   Trash2,
+  Truck,
   Upload,
   User,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
+import { reserveCartLine, releaseCartLine, convertReservationsToSales, summarise as summariseStock } from '../lib/shopStock'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
 const DEFAULT_COMPANY_ID = '0e7eae0e-9a0b-4408-8847-e03232c0a460'
@@ -51,19 +55,27 @@ const languageOptions = [
 const translations = {
   en: {
     add: 'Add',
-    addRequestLines: 'Add one or more request lines',
+    addRequestLines: 'Ask a driver to pick you up or drop you somewhere, or to bring you something — one request per line. E.g. “Pick me up from home to the office” or “2 pizzas from a pizzeria”.',
     addressLine: 'Address line',
     addressName: 'Address name',
     addAddress: 'Add Address',
     viewItem: 'View item',
+    shopItemLocked: 'From the shop — change the quantity or remove it',
+    homeWelcome: '3asari3 fast delivery welcomes you',
+    available: '{{count}} available',
+    outOfStock: 'Out of stock',
+    orderedCount: '{{count}} ordered',
+    preparedOnRequest: 'Prepared on request',
+    outOfStockNote: 'This item is out of stock at the moment and can’t be added to your cart.',
+    onlyLeft: 'Only {{count}} left',
     color: 'Color',
     size: 'Size',
     quantity: 'Qty',
     chooseColor: 'Choose a color',
     chooseSize: 'Choose a size',
     selectOptions: 'Select size / color',
-    colorsCount: '{count} colors',
-    sizesCount: '{count} sizes',
+    colorsCount: '{{count}} colors',
+    sizesCount: '{{count}} sizes',
     filters: 'Filters',
     filterByCategory: 'Filter by category',
     allCategories: 'All categories',
@@ -99,14 +111,14 @@ const translations = {
     defaultPayment: 'Default payment',
     delete: 'Delete',
     delivered: 'Delivered',
-    deliveryDate: 'Delivery date',
-    deliveryDrop: 'Delivery / Drop',
-    deliveryDropLocation: 'Delivery / drop location',
+    deliveryDate: 'Drop-off date',
+    deliveryDrop: 'Drop-off',
+    deliveryDropLocation: 'Drop-off location',
     deliveryLocationRequired: 'Delivery/drop location is required.',
     deliveryOrder: 'Delivery Order',
     deliveryStatus: 'Delivery status',
     deliveryStatusUpdated: 'Delivery status updated',
-    deliveryTime: 'Delivery time',
+    deliveryTime: 'Drop-off time',
     drop: 'Drop',
     edit: 'Edit',
     editAddress: 'Edit Address',
@@ -123,7 +135,7 @@ const translations = {
     enterRequirement: 'Enter requirement',
     enterUsername: 'Enter a username',
     externalRequest: 'Request a driver to transport you, your parcels, or your purchases safely and conveniently.',
-    finalDeliveryLocation: 'Final delivery location',
+    finalDeliveryLocation: 'Where the driver drops you or the goods off',
     firstTimeOtp: 'First-time customer? Register with OTP',
     firstTimeSetup: 'First-time customer setup',
     fullName: 'Full name',
@@ -192,13 +204,13 @@ const translations = {
     stopped: 'Stopped',
     phone: 'Phone',
     photo: 'Photo',
-    pickup: 'Pickup',
+    pickup: 'Start from',
     pickupDrop: 'Pickup & Drop',
-    pickupDate: 'Pickup date',
-    pickupLocation: 'Pickup location',
-    pickupLocationRequired: 'Pickup location is required.',
-    pickupSubtitle: 'Choose saved address or type new',
-    pickupTime: 'Pickup time',
+    pickupDate: 'Start date',
+    pickupLocation: 'Start from location',
+    pickupLocationRequired: 'The start-from location is required.',
+    pickupSubtitle: 'Where the driver starts — pick a saved address or type a new one',
+    pickupTime: 'Start time',
     preferences: 'Preferences',
     primary: 'Primary',
     primaryAddress: 'Primary address',
@@ -255,7 +267,7 @@ const translations = {
     totalAmount: 'Total amount',
     trackBookings: 'Track bookings, invoices and payments',
     trackStatus: 'Track status',
-    typeCustomerRequirement: 'Type customer requirement',
+    typeCustomerRequirement: 'Write here what you need…',
     typeNew: 'Type new',
     unpaid: 'Unpaid',
     updateMobileNumber: 'Update Mobile Number',
@@ -277,14 +289,22 @@ const translations = {
     add: 'إضافة',
     addAddress: 'إضافة عنوان',
     viewItem: 'عرض الصنف',
+    shopItemLocked: 'من المتجر — يمكنك تغيير الكمية أو حذف الصنف',
+    homeWelcome: 'عالسريع للتوصيل السريع يرحّب بك',
+    available: 'متوفر {{count}}',
+    outOfStock: 'غير متوفر',
+    orderedCount: 'تم طلبه {{count}} مرة',
+    preparedOnRequest: 'يُحضّر عند الطلب',
+    outOfStockNote: 'هذا الصنف غير متوفر حاليًا ولا يمكن إضافته إلى السلة.',
+    onlyLeft: 'بقي {{count}} فقط',
     color: 'اللون',
     size: 'المقاس',
     quantity: 'الكمية',
     chooseColor: 'اختر اللون',
     chooseSize: 'اختر المقاس',
     selectOptions: 'اختر المقاس / اللون',
-    colorsCount: '{count} ألوان',
-    sizesCount: '{count} مقاسات',
+    colorsCount: '{{count}} ألوان',
+    sizesCount: '{{count}} مقاسات',
     filters: 'التصفية',
     filterByCategory: 'تصفية حسب الفئة',
     allCategories: 'كل الفئات',
@@ -295,7 +315,7 @@ const translations = {
     enterAddress: 'المبنى، الشارع، المنطقة…',
     enterCity: 'المدينة',
     addressRequired: 'العنوان مطلوب — سيكون العنوان الافتراضي لطلباتك.',
-    addRequestLines: 'أضف سطرا واحدا أو أكثر',
+    addRequestLines: 'اطلب سائقًا ليقلّك أو يوصلك إلى مكان، أو ليحضر لك شيئًا — طلب واحد في كل سطر. مثلاً «خذني من المنزل إلى المكتب» أو «بيتزا من مطعم».',
     addressLine: 'سطر العنوان',
     addressName: 'اسم العنوان',
     all: 'الكل',
@@ -323,14 +343,14 @@ const translations = {
     defaultPayment: 'طريقة الدفع الافتراضية',
     delete: 'حذف',
     delivered: 'تم التسليم',
-    deliveryDate: 'تاريخ التوصيل',
-    deliveryDrop: 'التوصيل / التسليم',
-    deliveryDropLocation: 'موقع التوصيل / التسليم',
+    deliveryDate: 'تاريخ النزول',
+    deliveryDrop: 'مكان النزول',
+    deliveryDropLocation: 'موقع النزول',
     deliveryLocationRequired: 'موقع التوصيل مطلوب.',
     deliveryOrder: 'طلب توصيل',
     deliveryStatus: 'حالة التوصيل',
     deliveryStatusUpdated: 'تم تحديث حالة التوصيل',
-    deliveryTime: 'وقت التوصيل',
+    deliveryTime: 'وقت النزول',
     drop: 'التسليم',
     edit: 'تعديل',
     editAddress: 'تعديل العنوان',
@@ -347,7 +367,7 @@ const translations = {
     enterRequirement: 'أدخل الطلب',
     enterUsername: 'أدخل اسم المستخدم',
     externalRequest: 'اطلب سائقًا لنقلك أنت أو طرودك أو مشترياتك بأمان وراحة.',
-    finalDeliveryLocation: 'موقع التوصيل النهائي',
+    finalDeliveryLocation: 'أين ينزلك السائق أو يسلّم الطلب',
     firstTimeOtp: 'عميل جديد؟ سجل باستخدام OTP',
     firstTimeSetup: 'إعداد عميل جديد',
     fullName: 'الاسم الكامل',
@@ -416,13 +436,13 @@ const translations = {
     stopped: 'متوقف',
     phone: 'الهاتف',
     photo: 'صورة',
-    pickup: 'الاستلام',
+    pickup: 'الانطلاق من',
     pickupDrop: 'الاستلام والتسليم',
-    pickupDate: 'تاريخ الاستلام',
-    pickupLocation: 'موقع الاستلام',
-    pickupLocationRequired: 'موقع الاستلام مطلوب.',
-    pickupSubtitle: 'اختر عنوانا محفوظا أو اكتب عنوانا جديدا',
-    pickupTime: 'وقت الاستلام',
+    pickupDate: 'تاريخ الانطلاق',
+    pickupLocation: 'موقع الانطلاق',
+    pickupLocationRequired: 'موقع الانطلاق مطلوب.',
+    pickupSubtitle: 'من أين ينطلق السائق — اختر عنوانًا محفوظًا أو اكتب عنوانًا جديدًا',
+    pickupTime: 'وقت الانطلاق',
     preferences: 'التفضيلات',
     primary: 'أساسي',
     primaryAddress: 'العنوان الأساسي',
@@ -479,7 +499,7 @@ const translations = {
     totalAmount: 'المبلغ الإجمالي',
     trackBookings: 'تتبع الحجوزات والفواتير والمدفوعات',
     trackStatus: 'تتبع الحالة',
-    typeCustomerRequirement: 'اكتب طلب العميل',
+    typeCustomerRequirement: 'اكتب هنا ما تحتاجه…',
     typeNew: 'اكتب جديد',
     unpaid: 'غير مدفوع',
     updateMobileNumber: 'تحديث رقم الجوال',
@@ -504,14 +524,23 @@ translations.fr = {
   add: 'Ajouter',
   addAddress: 'Ajouter une adresse',
   viewItem: 'Voir l’article',
+  shopItemLocked: 'Depuis la boutique — modifiez la quantité ou supprimez',
+  homeWelcome: '3asari3 fast delivery vous souhaite la bienvenue',
+  typeCustomerRequirement: 'Écrivez ici ce dont vous avez besoin…',
+  available: '{{count}} disponibles',
+  outOfStock: 'Rupture de stock',
+  orderedCount: '{{count}} commandés',
+  preparedOnRequest: 'Préparé à la commande',
+  outOfStockNote: 'Cet article est en rupture de stock et ne peut pas être ajouté au panier.',
+  onlyLeft: 'Plus que {{count}}',
   color: 'Couleur',
   size: 'Taille',
   quantity: 'Qté',
   chooseColor: 'Choisissez une couleur',
   chooseSize: 'Choisissez une taille',
   selectOptions: 'Choisir taille / couleur',
-  colorsCount: '{count} couleurs',
-  sizesCount: '{count} tailles',
+  colorsCount: '{{count}} couleurs',
+  sizesCount: '{{count}} tailles',
   filters: 'Filtres',
   filterByCategory: 'Filtrer par catégorie',
   allCategories: 'Toutes les catégories',
@@ -522,7 +551,7 @@ translations.fr = {
   enterAddress: 'Immeuble, rue, quartier…',
   enterCity: 'Ville',
   addressRequired: 'L’adresse est obligatoire — elle devient l’adresse par défaut de vos commandes.',
-  addRequestLines: 'Ajouter une ou plusieurs lignes',
+  addRequestLines: 'Demandez un chauffeur pour vous prendre ou vous déposer quelque part, ou pour vous apporter quelque chose — une demande par ligne. Ex. « Venez me chercher à la maison pour le bureau » ou « 2 pizzas d’une pizzeria ».',
   all: 'Tous',
   allowed: 'Autorise',
   awaitingPickup: 'En attente de ramassage',
@@ -589,7 +618,16 @@ translations.fr = {
   stopped: 'Arrete',
   phone: 'Telephone',
   photo: 'Photo',
-  pickup: 'Ramassage',
+  pickup: 'Départ de',
+  pickupLocation: 'Lieu de départ',
+  pickupDate: 'Date de départ',
+  pickupTime: 'Heure de départ',
+  pickupSubtitle: 'D’où part le chauffeur — adresse enregistrée ou nouvelle',
+  deliveryDrop: 'Dépose',
+  deliveryDropLocation: 'Lieu de dépose',
+  deliveryDate: 'Date de dépose',
+  deliveryTime: 'Heure de dépose',
+  finalDeliveryLocation: 'Où le chauffeur vous dépose ou livre',
   pickupDrop: 'Ramassage et depot',
   preferences: 'Preferences',
   primary: 'Principal',
@@ -648,14 +686,23 @@ translations.ro = {
   add: 'Adauga',
   addAddress: 'Adauga adresa',
   viewItem: 'Vezi produsul',
+  shopItemLocked: 'Din magazin — schimba cantitatea sau elimina',
+  homeWelcome: '3asari3 fast delivery iti ureaza bun venit',
+  typeCustomerRequirement: 'Scrie aici de ce ai nevoie…',
+  available: '{{count}} disponibile',
+  outOfStock: 'Stoc epuizat',
+  orderedCount: '{{count}} comandate',
+  preparedOnRequest: 'Preparat la comanda',
+  outOfStockNote: 'Acest produs nu este disponibil momentan si nu poate fi adaugat in cos.',
+  onlyLeft: 'Doar {{count}} ramase',
   color: 'Culoare',
   size: 'Marime',
   quantity: 'Cant.',
   chooseColor: 'Alege o culoare',
   chooseSize: 'Alege o marime',
   selectOptions: 'Alege marime / culoare',
-  colorsCount: '{count} culori',
-  sizesCount: '{count} marimi',
+  colorsCount: '{{count}} culori',
+  sizesCount: '{{count}} marimi',
   filters: 'Filtre',
   filterByCategory: 'Filtreaza dupa categorie',
   allCategories: 'Toate categoriile',
@@ -666,7 +713,7 @@ translations.ro = {
   enterAddress: 'Bloc, strada, zona…',
   enterCity: 'Oras',
   addressRequired: 'Adresa este obligatorie — devine adresa implicita a comenzilor tale.',
-  addRequestLines: 'Adauga una sau mai multe linii',
+  addRequestLines: 'Cere un sofer care sa te ia sau sa te duca undeva, ori sa iti aduca ceva — o cerere pe linie. Ex. „Ia-ma de acasa pana la birou” sau „2 pizza de la o pizzerie”.',
   all: 'Toate',
   allowed: 'Permis',
   awaitingPickup: 'In asteptarea ridicarii',
@@ -733,7 +780,16 @@ translations.ro = {
   stopped: 'Oprit',
   phone: 'Telefon',
   photo: 'Foto',
-  pickup: 'Ridicare',
+  pickup: 'Plecare din',
+  pickupLocation: 'Locul de plecare',
+  pickupDate: 'Data plecarii',
+  pickupTime: 'Ora plecarii',
+  pickupSubtitle: 'De unde pleaca soferul — alege o adresa salvata sau scrie una noua',
+  deliveryDrop: 'Destinatie',
+  deliveryDropLocation: 'Locul de destinatie',
+  deliveryDate: 'Data sosirii',
+  deliveryTime: 'Ora sosirii',
+  finalDeliveryLocation: 'Unde te lasa soferul sau livreaza',
   pickupDrop: 'Ridicare si livrare',
   preferences: 'Preferinte',
   primary: 'Principal',
@@ -902,6 +958,50 @@ function clearCustomerSession() {
   localStorage.removeItem(CUSTOMER_SESSION_KEY)
 }
 
+/* Decorative backdrop — parcels, boxes, bikes and carts of assorted sizes
+   drifting and bobbing behind every screen. Purely visual: no pointer events,
+   hidden from screen readers, and still for anyone who prefers reduced motion.
+
+   Each entry sets its own size, tint and timing so nothing moves in lockstep. */
+const BACKDROP_SHAPES = [
+  // Big, slow anchors
+  { Icon: Boxes,        cls: 'left-[-6%]  top-[8%]   h-28 w-28 animate-bg-sway',  tint: 'text-sky-900/[0.07]', style: { animationDuration: '13s' } },
+  { Icon: Package,      cls: 'right-[-4%] top-[40%]  h-24 w-24 animate-bg-float', tint: 'text-sky-900/[0.07]', style: { animationDuration: '11s', animationDelay: '1.2s' } },
+  { Icon: ShoppingBag,  cls: 'left-[-5%]  bottom-[6%] h-24 w-24 animate-bg-float', tint: 'text-sky-900/[0.06]', style: { animationDuration: '12s', animationDelay: '2.4s' } },
+  // Mid-sized
+  { Icon: Gift,         cls: 'right-[10%] top-[16%]  h-14 w-14 animate-bg-sway',  tint: 'text-sky-800/[0.09]', style: { animationDuration: '8s',  animationDelay: '0.5s' } },
+  { Icon: Package,      cls: 'left-[16%]  top-[56%]  h-16 w-16 animate-bg-float', tint: 'text-sky-800/[0.08]', style: { animationDuration: '6.5s', animationDelay: '1.8s' } },
+  { Icon: Boxes,        cls: 'right-[18%] bottom-[22%] h-16 w-16 animate-bg-sway', tint: 'text-sky-800/[0.08]', style: { animationDuration: '9.5s', animationDelay: '0.9s' } },
+  { Icon: Store,        cls: 'left-[40%]  top-[30%]  h-12 w-12 animate-bg-float', tint: 'text-sky-800/[0.07]', style: { animationDuration: '10s', animationDelay: '3.1s' } },
+  // Small confetti-ish bits
+  { Icon: MapPin,       cls: 'left-[28%]  top-[80%]  h-9  w-9  animate-bg-float', tint: 'text-sky-700/[0.10]', style: { animationDuration: '5s',  animationDelay: '0.3s' } },
+  { Icon: ShoppingBag,  cls: 'right-[32%] top-[6%]   h-8  w-8  animate-bg-sway',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '5.5s', animationDelay: '2.2s' } },
+  { Icon: Gift,         cls: 'left-[8%]   top-[34%]  h-7  w-7  animate-bg-float', tint: 'text-sky-700/[0.10]', style: { animationDuration: '4.5s', animationDelay: '1.5s' } },
+  { Icon: Package,      cls: 'right-[6%]  bottom-[34%] h-8 w-8 animate-bg-sway',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '6s',  animationDelay: '2.9s' } },
+]
+
+// Things that travel right across the screen — different heights, sizes, speeds.
+const BACKDROP_TRAVELLERS = [
+  { Icon: ShoppingCart, cls: 'top-[22%] h-16 w-16', tint: 'text-sky-900/[0.08]', style: { animationDuration: '22s' } },
+  { Icon: Bike,         cls: 'top-[52%] h-12 w-12', tint: 'text-sky-800/[0.09]', style: { animationDuration: '31s', animationDelay: '6s' } },
+  { Icon: Truck,        cls: 'top-[72%] h-20 w-20', tint: 'text-sky-900/[0.07]', style: { animationDuration: '40s', animationDelay: '14s' } },
+  { Icon: ShoppingCart, cls: 'top-[90%] h-9  w-9',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '17s', animationDelay: '3s' } },
+]
+
+function AppBackdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+      {BACKDROP_SHAPES.map(({ Icon, cls, tint, style }, i) => (
+        <Icon key={`s${i}`} style={style} className={`absolute ${tint} motion-reduce:animate-none ${cls}`} />
+      ))}
+      {BACKDROP_TRAVELLERS.map(({ Icon, cls, tint, style }, i) => (
+        <Icon key={`t${i}`} style={style}
+          className={`absolute animate-bg-drift motion-reduce:animate-none ${tint} ${cls}`} />
+      ))}
+    </div>
+  )
+}
+
 function Shell({ children, activeTab, onTab }) {
   const { t, dir } = useI18n()
   const nav = [
@@ -914,7 +1014,8 @@ function Shell({ children, activeTab, onTab }) {
   return (
     <div className="min-h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
       <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
-        <div className="flex-1 overflow-y-auto pb-20">{children}</div>
+        <AppBackdrop />
+        <div className="relative z-10 flex-1 overflow-y-auto pb-20">{children}</div>
         <nav className="fixed bottom-0 left-0 z-20 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
             {nav.map(item => {
@@ -960,6 +1061,33 @@ function Header({ title, subtitle, right, back, onBack }) {
         {right}
       </div>
     </header>
+  )
+}
+
+/* Header pinned to the top of the app column so it never scrolls away. The
+   spacer below it reserves exactly the header's height (measured, so it stays
+   right in any language or at any width). Screens that need extra pinned
+   content — the shop's search bar — build their own fixed block instead. */
+function FixedHeader(props) {
+  const ref = useRef(null)
+  const [h, setH] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return undefined
+    const measure = () => setH(el.offsetHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+  return (
+    <>
+      <div ref={ref} className="fixed left-0 top-0 z-30 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2">
+        <Header {...props} />
+      </div>
+      <div aria-hidden style={{ height: h }} />
+    </>
   )
 }
 
@@ -1485,6 +1613,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
   const [catFilter,   setCatFilter]   = useState([])
   const [filterOpen,  setFilterOpen]  = useState(false)
   const [preview,     setPreview]     = useState(null)   // item shown in the popup
+  const [stock,       setStock]       = useState({})     // itemId → { available, tracked }
   // Variant choices inside the popup (reset each time one is opened).
   const [pickedColor, setPickedColor] = useState('')
   const [pickedSize,  setPickedSize]  = useState('')
@@ -1530,17 +1659,42 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
         .eq('is_active', true)
         .order('created_at', { ascending: false })
 
-      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,owner_contact_id, ${OWNER}`)
+      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER}`)
       // `images` (fix105), `categories` (fix103) and `colors`/`sizes` (fix106)
       // are newer columns — on a DB where a migration hasn't run yet, fall back
       // so the shop still lists.
-      if (e && /images|categories|colors|sizes/.test(e.message)) {
+      if (e && /images|categories|colors|sizes|is_made_to_order/.test(e.message)) {
         ;({ data, error: e } = await run(`id,name,description,price,currency,image_url,category,owner_contact_id, ${OWNER}`))
       }
       if (cancelled) return
       if (e) { setError(e.message); setItems([]) }
       else { setItems(data || []); setError('') }
       setLoading(false)
+
+      // Availability per item (fix113): on hand − what other carts hold.
+      // Items with NO stock ledger at all are treated as untracked and stay
+      // freely purchasable, so shops that don't count stock are unaffected.
+      try {
+        const ids = (data || []).map(i => i.id)
+        if (ids.length === 0) return
+        const [mv, rv] = await Promise.all([
+          supabase.from('shop_inventory_movements').select('item_id,movement_type,quantity').in('item_id', ids),
+          supabase.from('shop_reservations').select('item_id,quantity').in('item_id', ids)
+            .gt('expires_at', new Date().toISOString()),
+        ])
+        if (cancelled || mv.error) return
+        const map = summariseStock(mv.data ?? [], rv.data ?? [])
+        // An item counts as stock-tracked only when its shop has recorded stock
+        // MOVEMENTS for it. A cart reservation alone must never make an
+        // untracked item look out of stock.
+        const tracked = new Set((mv.data ?? []).map(m => m.item_id))
+        const next = {}
+        for (const id of ids) {
+          const t = map.get(id)
+          if (t) next[id] = { ...t, tracked: tracked.has(id) }
+        }
+        setStock(next)
+      } catch { /* availability is a bonus — never break the shop over it */ }
     }
     load()
     return () => { cancelled = true }
@@ -1553,6 +1707,19 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
     const list = Array.isArray(it.images) && it.images.length ? it.images : (it.image_url ? [it.image_url] : [])
     return list.filter(Boolean)
   }
+
+  /* Availability (fix113). An item is only limited when its shop keeps a stock
+     ledger; untracked items behave exactly as before. */
+  const avail = it => stock[it?.id] ?? null
+  // Food & co (fix114) are prepared on request: no stock, never sold out — the
+  // customer sees how many have been ordered instead.
+  const madeToOrder = it => !!it?.is_made_to_order
+  const soldOut = it => {
+    if (madeToOrder(it)) return false
+    const a = avail(it)
+    return !!a?.tracked && a.available <= 0
+  }
+  const orderedCount = it => avail(it)?.sold || 0
 
   // Variants (fix106) — optional colour/size lists on an item.
   const itemColors = it => (Array.isArray(it?.colors) ? it.colors.filter(c => c?.name) : [])
@@ -1598,6 +1765,8 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
   // Build the cart line for whatever is selected in the popup. Items that offer
   // colours/sizes require a choice, so the order line is never ambiguous.
   function addPreviewToCart() {
+    // Guard as well as disable the button — nothing out of stock gets in.
+    if (soldOut(preview)) { setVariantErr(t('outOfStockNote')); return }
     const colors = itemColors(preview)
     const sizes  = itemSizes(preview)
     if (colors.length > 0 && !pickedColor) { setVariantErr(t('chooseColor')); return }
@@ -1770,6 +1939,29 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                     )}
                     <p className="mt-2 text-sm font-bold text-sky-700">{fmt(it.price, it.currency)}</p>
 
+                    {/* Demand for made-to-order items, availability for stocked ones */}
+                    {madeToOrder(it) ? (
+                      orderedCount(it) > 0 && (
+                        <p className="mt-1 text-[11px] font-semibold text-sky-700">
+                          {t('orderedCount', { count: orderedCount(it) })}
+                        </p>
+                      )
+                    ) : avail(it)?.tracked && (
+                      soldOut(it) ? (
+                        <p className="mt-1 text-[11px] font-bold text-rose-600">{t('outOfStock')}</p>
+                      ) : (
+                        <p className={`mt-1 text-[11px] font-semibold ${
+                          avail(it).available <= 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          {avail(it).available <= 3
+                            ? t('onlyLeft', { count: avail(it).available })
+                            : t('available', { count: avail(it).available })}
+                        </p>
+                      )
+                    )}
+                    {madeToOrder(it) && (
+                      <p className="mt-0.5 text-[10px] text-slate-400">{t('preparedOnRequest')}</p>
+                    )}
+
                     {/* Variants available — say so on the card, and show the
                         colour swatches so it's obvious a choice is needed. */}
                     {(itemColors(it).length > 0 || itemSizes(it).length > 0) && (
@@ -1799,7 +1991,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                       </div>
                     )}
 
-                    <button type="button"
+                    <button type="button" disabled={soldOut(it)}
                       onClick={() => {
                         // Items with colours/sizes must be configured first, so
                         // the card's button opens the popup instead.
@@ -1809,10 +2001,13 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                         }
                         onAdd?.({ id: it.id, shop_item_id: it.id, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: g.name, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null })
                       }}
-                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700">
-                      {(itemColors(it).length > 0 || itemSizes(it).length > 0)
-                        ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
-                        : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
+                      className={cx('mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold',
+                        soldOut(it) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-sky-600 text-white hover:bg-sky-700')}>
+                      {soldOut(it)
+                        ? t('outOfStock')
+                        : (itemColors(it).length > 0 || itemSizes(it).length > 0)
+                          ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
+                          : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
                     </button>
                   </div>
                 </div>
@@ -1919,12 +2114,32 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                       <Minus className="h-4 w-4" />
                     </button>
                     <span className="w-8 text-center text-sm font-bold">{pickedQty}</span>
-                    <button type="button" onClick={() => setPickedQty(q => Math.min(99, q + 1))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                    {/* Never let the customer pick more than is available */}
+                    <button type="button"
+                      onClick={() => setPickedQty(q => Math.min(!madeToOrder(preview) && avail(preview)?.tracked ? avail(preview).available : 99, q + 1))}
+                      disabled={!madeToOrder(preview) && avail(preview)?.tracked && pickedQty >= avail(preview).available}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700 disabled:opacity-40">
                       <Plus className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
+
+                {madeToOrder(preview) && (
+                  <p className="text-xs font-semibold text-sky-700">
+                    {t('preparedOnRequest')}
+                    {orderedCount(preview) > 0 ? ` · ${t('orderedCount', { count: orderedCount(preview) })}` : ''}
+                  </p>
+                )}
+
+                {/* Out of stock — say so plainly; the add button is disabled */}
+                {soldOut(preview) && (
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                    {t('outOfStockNote')}
+                  </p>
+                )}
+                {!madeToOrder(preview) && !soldOut(preview) && avail(preview)?.tracked && avail(preview).available <= 3 && (
+                  <p className="text-xs font-semibold text-amber-600">{t('onlyLeft', { count: avail(preview).available })}</p>
+                )}
 
                 {variantErr && (
                   <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{variantErr}</p>
@@ -1937,9 +2152,10 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                 className="flex h-11 flex-1 items-center justify-center rounded-lg border border-sky-200 bg-white text-sm font-bold text-sky-700">
                 {t('close')}
               </button>
-              <button type="button" onClick={addPreviewToCart}
-                className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-sky-600 text-sm font-bold text-white hover:bg-sky-700">
-                <Plus className="h-4 w-4" /> {t('addToCart')}
+              <button type="button" onClick={addPreviewToCart} disabled={soldOut(preview)}
+                className={cx('flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg text-sm font-bold',
+                  soldOut(preview) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-sky-600 text-white hover:bg-sky-700')}>
+                {soldOut(preview) ? t('outOfStock') : <><Plus className="h-4 w-4" /> {t('addToCart')}</>}
               </button>
             </div>
           </div>
@@ -1962,7 +2178,7 @@ function CartScreen({ cart, setCartQty, removeFromCart, onCheckout, onContinue }
   const totals = cartTotalsByCurrency(cart)
   return (
     <>
-      <Header title={t('yourCart')} />
+      <FixedHeader title={t('yourCart')} />
       <main className="space-y-4 px-5 py-6 pb-44">
         {cart.length === 0 ? (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-10 text-center">
@@ -2038,7 +2254,22 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
         .eq('id', customerSession.contact_id).single()
       if (cancelled || !data) return
       setCustomer(data)
-      setAddress([data.address, data.city].filter(Boolean).join(', '))
+
+      // "Deliver to" defaults to the profile's PRIMARY saved address (the same
+      // one Book Delivery uses), falling back to the address on the contact
+      // itself. The customer can still type over it.
+      let query = supabase
+        .from('contact_addresses')
+        .select('*')
+        .eq('contact_id', data.id)
+        .order('is_primary', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
+      const { data: saved } = await query
+      if (cancelled) return
+
+      const primary = saved?.find(a => a.is_primary) || saved?.[0]
+      setAddress(addressText(primary) || [data.address, data.city].filter(Boolean).join(', '))
     }
     load(); return () => { cancelled = true }
   }, [customerSession])
@@ -2075,6 +2306,10 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       order_source: 'customer application',
       status: 'pending',
       payment_status: 'unpaid',
+      // Nobody has agreed to collect this yet — the call center's confirmation
+      // moves it to 'Awaiting Pickup'.
+      delivery_status: 'Pending',
+      collection_from_customer: 'Money is due',
       driver_id: null,
       delivery_fee: 0,
       currency: primaryCurrency,
@@ -2110,6 +2345,10 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       ins = await supabase.from('order_items').insert(
         itemRows.map(({ variant_color: _c, variant_size: _s, ...rest }) => rest))
     }
+    // The held stock becomes a sale in the supplier's inventory (fix113).
+    await convertReservationsToSales({
+      customerId: customer.id, orderId: order.id, cart, companyId: COMPANY_ID,
+    })
     setPlacing(false)
     setDone(order)
     onPlaced?.(order)   // clears the cart in the parent
@@ -2118,7 +2357,7 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
   if (done) {
     return (
       <>
-        <Header title={t('checkout')} />
+        <FixedHeader title={t('checkout')} />
         <main className="space-y-4 px-5 py-10">
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-8 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
@@ -2134,7 +2373,7 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
 
   return (
     <>
-      <Header title={t('checkout')} right={<button onClick={onBack} className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><ArrowLeft className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('checkout')} right={<button onClick={onBack} className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><ArrowLeft className="h-5 w-5" /></button>} />
       <main className="space-y-4 px-5 py-6 pb-40">
         <section className="rounded-lg border border-sky-100 bg-white p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('deliverTo')}</p>
@@ -2185,6 +2424,8 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
   const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
+  const [primaryAddress, setPrimaryAddress] = useState(null)
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -2258,6 +2499,20 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
       setProfile(profileResult.data)
       setLatestOrder(orderResult.data?.[0] ? mapCustomerOrder(orderResult.data[0]) : null)
       setLoading(false)
+
+      // The primary saved address — shown on the profile card in place of the
+      // old credit/notifications tiles.
+      let addrQ = supabase
+        .from('contact_addresses')
+        .select('*')
+        .eq('contact_id', customerSession.contact_id)
+        .order('is_primary', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (COMPANY_ID) addrQ = addrQ.eq('company_id', COMPANY_ID)
+      const { data: saved } = await addrQ
+      if (cancelled) return
+      const primary = saved?.find(a => a.is_primary) || saved?.[0]
+      setPrimaryAddress(primary || null)
     }
 
     loadHome()
@@ -2268,12 +2523,12 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
 
   return (
     <>
-      <Header
+      <FixedHeader
         title={`Hi, ${displayName.split(' ')[0]}`}
-        subtitle={CUSTOMER_MOBILE_MODULE}
+        subtitle={t('homeWelcome')}
         right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Bell className="h-5 w-5" /></button>}
       />
-      <main className="space-y-5 px-5 py-6">
+      <main className="space-y-5 px-5 pb-6 pt-4">
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-6 text-center text-sm font-semibold text-slate-500">
             {t('loadingAccount')}
@@ -2286,24 +2541,28 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
         )}
         {!loading && profile && (
           <Section title={displayName} subtitle={formatMobile(profile.mobile || customerSession?.mobile) || t('customerAccount')}>
-            <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
-              <div>
-                <p className="text-xs text-slate-500">{t('creditDebit')}</p>
-                <p className="mt-1 text-sm font-semibold">{profile.credit_debit_allowed ? t('allowed') : t('notAllowed')}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">{t('notifications')}</p>
-                <p className="mt-1 text-sm font-semibold">{profile.email ? `${t('whatsapp')} + ${t('email')}` : t('whatsapp')}</p>
-              </div>
-            </div>
+            <button type="button" onClick={onProfile}
+              className="flex w-full items-start gap-2.5 rounded-lg border border-sky-100 bg-slate-50 p-3 text-left">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+              <span className="min-w-0">
+                <span className="block text-xs text-slate-500">{t('primaryAddress')}</span>
+                <span className="mt-0.5 block text-sm font-semibold text-slate-950">
+                  {addressText(primaryAddress) || t('noAddressOnFile')}
+                </span>
+                {primaryAddress?.address_name && (
+                  <span className="mt-0.5 block text-[11px] text-slate-500">{primaryAddress.address_name}</span>
+                )}
+              </span>
+            </button>
           </Section>
         )}
 
         <section className="grid grid-cols-2 gap-3">
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onShop}>
-            <ShoppingBag className="h-6 w-6 text-emerald-600" />
-            <p className="mt-4 text-sm font-bold">{t('shopProducts')}</p>
-            <p className="mt-1 text-xs text-slate-500">{t('futureModule')}</p>
+          {/* Shop Products leads the grid, so it carries the app's blue. */}
+          <button type="button" className="rounded-lg border border-sky-700 bg-sky-600 p-4 text-left shadow-sm shadow-sky-200" onClick={onShop}>
+            <ShoppingBag className="h-6 w-6 text-white" />
+            <p className="mt-4 text-sm font-bold text-white">{t('shopProducts')}</p>
+            <p className="mt-1 text-xs text-sky-100">{t('futureModule')}</p>
           </button>
           <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
             <Bike className="h-6 w-6 text-sky-600" />
@@ -2603,6 +2862,10 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       order_source: 'customer application',
       status: 'pending',
       payment_status: 'unpaid',
+      // Nobody has agreed to collect this yet — the call center's confirmation
+      // moves it to 'Awaiting Pickup'.
+      delivery_status: 'Pending',
+      collection_from_customer: 'Money is due',
       driver_id: null,
       delivery_fee: 0,
       currency: 'USD',
@@ -2648,7 +2911,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
 
   return (
     <>
-      <Header
+      <FixedHeader
         title={t('bookDelivery')}
         subtitle={t('tellUsNeed')}
       />
@@ -2944,7 +3207,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
 
   return (
     <>
-      <Header title={t('myOrders')} subtitle={t('trackBookings')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('myOrders')} subtitle={t('trackBookings')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 px-4 text-sm text-slate-500">
           <Search className="h-4 w-4 text-sky-600" />
@@ -3023,7 +3286,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
   if (!order) {
     return (
       <>
-        <Header title={t('orderDetails')} subtitle={t('noOrderSelected')} back onBack={onBack} />
+        <FixedHeader title={t('orderDetails')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('selectOrderFromOrders')}
@@ -3048,7 +3311,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
 
   return (
     <>
-      <Header title={t('orderDetails')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
+      <FixedHeader title={t('orderDetails')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
         <Section title={order.type === 'Book Delivery' ? t('bookDelivery') : t('deliveryOrder')} subtitle={raw.order_source === 'external' ? t('customerCreatedRequest') : t('deliveryOrder')}>
           <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
@@ -3185,6 +3448,27 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
   const [notes, setNotes] = useState(raw.special_instructions || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Lines that came from the Shop: the product is fixed, so only the quantity
+  // can change and the whole line can be removed. Typed requirement rows stay
+  // freely editable.
+  const [shopLines, setShopLines] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!order?.id) { setShopLines([]); return undefined }
+    ;(async () => {
+      const { data } = await supabase
+        .from('order_items')
+        .select('id,parcel_description,quantity,unit_price,currency,shop_item_id,supplier_name')
+        .eq('order_id', order.id)
+        .eq('is_deleted', false)
+        .not('shop_item_id', 'is', null)
+        .order('added_at')
+      if (cancelled) return
+      setShopLines((data ?? []).map(r => ({ ...r, quantity: Number(r.quantity) || 1 })))
+    })()
+    return () => { cancelled = true }
+  }, [order?.id])
 
   useEffect(() => {
     if (!order) return
@@ -3281,6 +3565,9 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       return
     }
 
+    // Only the typed requirement rows are replaced. Shop lines are updated in
+    // place (quantity) or removed explicitly — they carry a price and a
+    // supplier, so wiping them here would lose real money from the order.
     const { error: softDeleteError } = await supabase
       .from('order_items')
       .update({
@@ -3290,6 +3577,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       })
       .eq('order_id', order.id)
       .eq('is_deleted', false)
+      .is('shop_item_id', null)
 
     if (softDeleteError) {
       setError(softDeleteError.message)
@@ -3322,6 +3610,29 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       insertedItems = data || []
     }
 
+    // Quantities the customer changed, and any line they removed.
+    for (const line of shopLines) {
+      if (line._removed) {
+        await supabase.from('order_items').update({
+          is_deleted: true,
+          deleted_by: customerSession?.user_id || null,
+          deleted_at: new Date().toISOString(),
+        }).eq('id', line.id)
+      } else {
+        await supabase.from('order_items').update({
+          quantity:   line.quantity,
+          line_total: cartRound2((Number(line.unit_price) || 0) * line.quantity),
+        }).eq('id', line.id)
+      }
+    }
+
+    // Keep the order's money in step with what's left on it.
+    const keptShop = shopLines.filter(l => !l._removed)
+    const shopTotal = cartRound2(keptShop.reduce((n, l) => n + (Number(l.unit_price) || 0) * l.quantity, 0))
+    await supabase.from('delivery_orders')
+      .update({ items_total: shopTotal, total_amount: shopTotal })
+      .eq('id', order.id)
+
     const updatedRaw = {
       ...raw,
       ...updatePayload,
@@ -3335,7 +3646,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
   if (!order) {
     return (
       <>
-        <Header title={t('editOrder')} subtitle={t('noOrderSelected')} back onBack={onBack} />
+        <FixedHeader title={t('editOrder')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('selectOrderFromOrders')}
@@ -3347,7 +3658,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
 
   return (
     <>
-      <Header title={t('editOrder')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
+      <FixedHeader title={t('editOrder')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           Changes update the same order. No new order number.
@@ -3356,6 +3667,42 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
             {error}
           </div>
+        )}
+
+        {shopLines.some(l => !l._removed) && (
+          <Section title={t('shopProducts')} subtitle={t('shopItemLocked')}>
+            <div className="space-y-3">
+              {shopLines.map((line, index) => (line._removed ? null : (
+                <div key={line.id} className="flex items-center gap-2 rounded-lg border border-sky-100 bg-slate-50 px-3 py-2">
+                  <ShoppingBag className="h-4 w-4 shrink-0 text-sky-600" />
+                  <div className="min-w-0 flex-1">
+                    {/* Product name is fixed — it identifies what the shop sells. */}
+                    <p className="truncate text-sm font-semibold text-slate-950">{line.parcel_description}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {line.supplier_name ? `${line.supplier_name} · ` : ''}{cartFmt(line.unit_price, line.currency)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button type="button" aria-label="-"
+                      onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.max(1, l.quantity - 1) } : l))}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="w-5 text-center text-sm font-bold">{line.quantity}</span>
+                    <button type="button" aria-label="+"
+                      onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.min(99, l.quantity + 1) } : l))}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, _removed: true } : l))}
+                      className="ml-1 text-rose-500">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )))}
+            </div>
+          </Section>
         )}
 
         <Section
@@ -3683,7 +4030,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
 
   return (
     <>
-      <Header title={t('profile')} subtitle={t('profileSubtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('profile')} subtitle={t('profileSubtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         {loading && (
           <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
@@ -3851,15 +4198,36 @@ export default function CustomerMobileApp() {
   const cartCount = cart.reduce((n, it) => n + (it.qty || 0), 0)
   // `id` is the cart LINE key — for items with variants it encodes the chosen
   // colour/size, so each combination is its own line.
+  // Cart lines hold stock in the supplier's inventory (fix113): every change
+  // here mirrors into shop_reservations so the shop owner sees what is
+  // reserved. All best-effort — a failed reservation never blocks shopping.
+  const holdLine = (line) => reserveCartLine({
+    itemId: line.shop_item_id || line.id,
+    ownerContactId: line.owner_contact_id,
+    customerId: customerSession?.contact_id,
+    cartLineKey: line.id,
+    variantLabel: line.variant_label,
+    quantity: line.qty,
+    companyId: COMPANY_ID,
+  })
+  const dropLine = (id) => releaseCartLine({ customerId: customerSession?.contact_id, cartLineKey: id })
+
   const addToCart = (item) => setCart(prev => {
     const add = Math.max(1, Number(item.qty) || 1)
     const i = prev.findIndex(x => x.id === item.id)
-    if (i === -1) return [...prev, { ...item, qty: add }]
-    const next = [...prev]; next[i] = { ...next[i], qty: next[i].qty + add }; return next
+    const next = i === -1
+      ? [...prev, { ...item, qty: add }]
+      : prev.map((x, j) => (j === i ? { ...x, qty: x.qty + add } : x))
+    holdLine(next.find(x => x.id === item.id))
+    return next
   })
-  const setCartQty = (id, qty) => setCart(prev => qty <= 0 ? prev.filter(x => x.id !== id) : prev.map(x => x.id === id ? { ...x, qty } : x))
-  const removeFromCart = (id) => setCart(prev => prev.filter(x => x.id !== id))
-  const clearCart = () => setCart([])
+  const setCartQty = (id, qty) => setCart(prev => {
+    if (qty <= 0) { dropLine(id); return prev.filter(x => x.id !== id) }
+    const next = prev.map(x => (x.id === id ? { ...x, qty } : x))
+    holdLine(next.find(x => x.id === id))
+    return next
+  })
+  const removeFromCart = (id) => { dropLine(id); setCart(prev => prev.filter(x => x.id !== id)) }
   const [requirements, setRequirements] = useState(initialRequirements)
   const [deliveryStatusByOrder, setDeliveryStatusByOrder] = useState({})
   const [deliveryNotice, setDeliveryNotice] = useState(null)
@@ -4132,7 +4500,7 @@ export default function CustomerMobileApp() {
       onCheckout={() => setScreen('checkout')} onContinue={() => setScreen('shop')} />
   } else if (screen === 'checkout') {
     content = <CheckoutScreen cart={cart} customerSession={customerSession}
-      onPlaced={clearCart} onGoOrders={() => setScreen('orders')} onBack={() => setScreen('cart')} />
+      onPlaced={() => setCart([])} onGoOrders={() => setScreen('orders')} onBack={() => setScreen('cart')} />
   } else if (screen === 'orders') {
     content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} deliveryStatusByOrder={deliveryStatusByOrder} />
   } else if (screen === 'orderDetails') {

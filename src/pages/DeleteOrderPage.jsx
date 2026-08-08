@@ -5,7 +5,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
 /* The exact word the user must type to arm the deletion. */
-const CONFIRM_WORD = 'Confirme'
+const CONFIRM_WORD = 'Confirmed'
 
 /* Related-data tables counted for the warning (label → table). order_items uses
    the soft-delete flag elsewhere, but a full delete removes every row. */

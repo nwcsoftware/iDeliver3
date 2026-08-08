@@ -4,7 +4,7 @@ import {
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, Unlock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
-  Eye, Pin, PinOff, User, Building, Handshake, Megaphone, MegaphoneOff,
+  Eye, Pin, PinOff, User, Building, Handshake, Megaphone, MegaphoneOff, Loader,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
@@ -58,7 +58,9 @@ const ORDER_TYPES = [
   { value: 'flowers',     label: 'Flowers' },
   { value: 'bakery',      label: 'Bakery' },
 ]
-// Physical delivery progress of the materials
+// Physical delivery progress of the materials. 'Pending' sits BEFORE the list:
+// it's what a customer-app order carries until the call center confirms it.
+const DELIVERY_PENDING  = 'Pending'
 const DELIVERY_STATUSES = ['Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered']
 // Money collection state (derived from payments)
 const COLLECTION_FULL    = 'Money Fully collected'
@@ -104,7 +106,9 @@ function isRowLocked(o)   { return o?.isclosed === true || o?.is_locked === true
 
 // Once the driver has picked the order up (delivery status past "Awaiting
 // Pickup"), the assigned driver can no longer be changed.
-function isPickedUp(o)    { return !!o?.delivery_status && o.delivery_status !== 'Awaiting Pickup' }
+// 'Pending' (customer-app order, not yet confirmed) counts as not picked up,
+// exactly like 'Awaiting Pickup'.
+function isPickedUp(o)    { return !!o?.delivery_status && !['Awaiting Pickup', 'Pending'].includes(o.delivery_status) }
 
 // Fully paid = the whole balance has been collected; there's nothing left to
 // collect, so the list shows a "paid" hint instead of the quick-Pay button.
@@ -845,6 +849,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const savedOrderIdRef = useRef(null)
   const driverSearchRef = useRef(null)
   const handledEditRef  = useRef(null)   // deep-link: open an order from ?edit=<id>
+  // True from the moment an ?edit= link is followed until that order's form is
+  // on screen — drives the blocking "Opening order…" overlay.
+  const [openingOrder,  setOpeningOrder]  = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [search,    setSearch]    = useState('')
@@ -926,9 +933,33 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Closed Orders date grouping — null until the first load picks a default.
   const [openGroups,           setOpenGroups]           = useState(null)
   // Daily list groups (Delivery Orders / Ads & Services) — tracks which are
-  // COLLAPSED (both open by default).
-  const [collapsedGroups,      setCollapsedGroups]      = useState(() => new Set())
-  const [pendingsOpen,         setPendingsOpen]         = useState(false)
+  // COLLAPSED. Ads & Services starts folded so the day opens on the delivery
+  // orders; the user expands it when they want it.
+  const [collapsedGroups,      setCollapsedGroups]      = useState(() => new Set(['story']))
+  // Filters bar: collapsed by default, or always open when pinned. The pin is a
+  // per-device preference so it survives reloads.
+  const [filtersOpen,          setFiltersOpen]          = useState(false)
+  const [filtersPinned,        setFiltersPinned]        = useState(() => {
+    try { return localStorage.getItem('ideliver:deliveriesFiltersPinned') === '1' } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('ideliver:deliveriesFiltersPinned', filtersPinned ? '1' : '0') } catch { /* ignore */ }
+  }, [filtersPinned])
+  const filtersShown = filtersPinned || filtersOpen
+
+  // Clicking anywhere outside the bar folds the filters away again — unless
+  // they're pinned, which is the whole point of the pin. Dropdowns inside the
+  // bar (driver, customer, customer type…) are DOM children of it, so opening
+  // one doesn't count as an outside click.
+  const toolbarRef = useRef(null)
+  useEffect(() => {
+    if (!filtersOpen || filtersPinned) return undefined
+    const onDown = (e) => {
+      if (!toolbarRef.current?.contains(e.target)) setFiltersOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [filtersOpen, filtersPinned])
   const [totalsExpanded,       setTotalsExpanded]       = useState(false)  // floating-bar breakdown panel
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
   const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
@@ -1022,21 +1053,30 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   useEffect(() => { fetchLookups() }, [fetchLookups])
 
   // Deep link: /deliveries?edit=<orderId> opens that order and jumps to Items.
+  // Opening pulls the order's items, packages, services and payments, which
+  // takes a moment — `openingOrder` blocks the screen with a "loading" overlay
+  // so the user can't click into a half-open form.
   useEffect(() => {
     const editId = searchParams.get('edit')
-    if (!editId || loading.orders || handledEditRef.current === editId) return
+    if (!editId || handledEditRef.current === editId) return
+    setOpeningOrder(true)                       // the link was followed — hold the screen
+    if (loading.orders) return                  // …while the orders list is still loading
     const o = orders.find(x => x.id === editId)
     if (!o) return   // wait until the orders list includes it
     // 2nd-party users may only deep-link into their own orders.
-    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(editId))) return
+    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(editId))) { setOpeningOrder(false); return }
     handledEditRef.current = editId
     setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('edit'); return p }, { replace: true })
     ;(async () => {
-      await openEdit(o)
-      setSectionsOpen(s => ({ ...s, items: true }))
-      setTimeout(() => {
-        document.getElementById('order-section-items')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }, 350)
+      try {
+        await openEdit(o)
+        setSectionsOpen(s => ({ ...s, items: true }))
+        setTimeout(() => {
+          document.getElementById('order-section-items')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 350)
+      } finally {
+        setOpeningOrder(false)
+      }
     })()
   }, [searchParams, orders, loading.orders])
 
@@ -1060,6 +1100,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── filter ──────────────────────────────────────────────── */
 
   function matchScheduledDate(o) {
+    // Ads & Services (Story) orders run over a period rather than on a delivery
+    // day, so the scheduled-date range never hides them — every other filter
+    // still applies.
+    if (isStoryOrder(o)) return true
     if (!dateFrom && !dateTo) return true
     const sd = o.scheduled_date ? o.scheduled_date.slice(0, 10) : ''
     if (!sd) return false                              // no date → excluded once a date filter is set
@@ -1208,6 +1252,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     () => customers.map(c => ({ value: c.id, label: c.company_name || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unnamed contact' })),
     [customers])
 
+  // Everything currently narrowing the list, for the "N active" badge.
+  const activeFilterCount =
+    (filter !== 'all' ? 1 : 0) + (confirmFilter !== 'all' ? 1 : 0) +
+    (payFilter ? 1 : 0) + (flagFilter ? 1 : 0) +
+    (driverFilter.length ? 1 : 0) + (customerFilter.length ? 1 : 0) +
+    (categoryFilter.length ? 1 : 0) + (sourceFilter ? 1 : 0) +
+    (orderTypeFilter ? 1 : 0) + (dateFrom || dateTo ? 1 : 0)
+
   const hasAdvancedFilters = driverFilter.length || customerFilter.length || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
   function clearAdvancedFilters() {
     setDriverFilter([]); setCustomerFilter([]); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
@@ -1264,31 +1316,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return arr
   })()
 
-  // Ads & Services (Story) orders always appear in the daily list regardless of the
-  // status/confirm/payment/flag/driver/customer/date/type filters — they're matched
-  // only by the search box (plus ownership + not-closed). Sorted like the main list.
-  const storyRows = useMemo(() => {
-    const q = search.toLowerCase()
-    const list = orders.filter(o => {
-      if (!isStoryOrder(o)) return false
-      if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(o.id))) return false
-      if (closed ? o.isclosed !== true : o.isclosed === true) return false
-      return !search || [
-        o.order_number, o.recipient_name, o.recipient_mobile, o.recipient_whatsapp,
-        o.delivery_address, o.pickup_address, o.main_account,
-        o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
-        o.customer?.account_number,
-      ].some(v => String(v ?? '').toLowerCase().includes(q))
-    })
-    const get = sort.col && SORT_GETTERS[sort.col]
-    if (!get || !sort.dir) return list
-    return [...list].sort((a, b) => {
-      const va = get(a), vb = get(b)
-      const cmp = (typeof va === 'number' && typeof vb === 'number')
-        ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
-      return sort.dir === 'asc' ? cmp : -cmp
-    })
-  }, [orders, search, partyContactId, ownedOrderIds, closed, sort])
+  // Ads & Services (Story) orders obey the search and every filter EXCEPT the
+  // scheduled-date range (see matchScheduledDate) — `sorted` already has the
+  // whole chain applied, so the group is just its Story slice.
+  const storyRows = useMemo(() => sorted.filter(isStoryOrder), [sorted])
 
   /* Closed Orders is grouped by date, Outlook-style. Only the open group renders
      its rows, which is what keeps the page quick — there are far more closed
@@ -1316,8 +1347,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   })
 
   // Closed Orders: date groups (Outlook-style). Daily list: split into
-  // "Delivery Orders" (respects every filter) and "Ads & Services" (Story — search
-  // only, via storyRows), both collapsible with counts.
+  // "Delivery Orders" and "Ads & Services" (Story), both fed by the same
+  // filtered+sorted list and both collapsible with counts.
   const renderGroups = closed
     ? groups.map(g => ({ ...g, open: openGroupSet.has(g.key), showHeader: true, onToggle: () => toggleGroup(g.key) }))
     : (() => {
@@ -1706,6 +1737,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setAds([]); setOrigAdIds([]); setCustomerItems([])
     setSectionsOpen(defaultNewSections())
     setCustomerInput(''); setError(''); setModal('add')
+  }
+
+  /* Opening an order loads its items, packages, services, invoices, ads and
+     payments — enough round-trips to be noticeable. Every user-facing entry
+     point goes through here so the blocking "Opening order…" overlay is shown
+     until the form is actually on screen. */
+  async function openEditWithOverlay(o) {
+    setOpeningOrder(true)
+    try { await openEdit(o) } finally { setOpeningOrder(false) }
   }
 
   async function openEdit(o) {
@@ -2536,14 +2576,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   // Online order confirmation — sets the order_confirmed flag (not the status).
+  // Customer-app orders arrive as 'Pending': nobody has agreed to collect them
+  // yet. Confirming here is that agreement, so the delivery starts its normal
+  // life at 'Awaiting Pickup' with the money still due.
   async function quickConfirmOrder(order, confirmed = true) {
     rememberOrder(order.id)
     setQuickBusy(true)
+    const startsDelivery = confirmed && order.delivery_status === DELIVERY_PENDING
     await supabase.from('delivery_orders')
       .update({
         order_confirmed: confirmed,
         confirmed_at:    confirmed ? new Date().toISOString() : null,
         confirmed_by:    confirmed ? (currentUser?.user_id || null) : null,
+        ...(startsDelivery ? {
+          delivery_status:          'Awaiting Pickup',
+          collection_from_customer: COLLECTION_DUE,
+        } : {}),
       })
       .eq('id', order.id)
     await fetchOrders()
@@ -2888,8 +2936,24 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
+      {/* Opening an order from a deep link (e.g. the header bell's list) pulls
+          its items, packages, services and payments first. Block the screen
+          until the form is up, so nothing can be clicked mid-load. */}
+      {openingOrder && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-wait">
+          <div className="card px-6 py-5 flex items-center gap-3 shadow-2xl shadow-black/50">
+            <Loader className="w-5 h-5 text-brand-400 animate-spin" />
+            <div>
+              <p className="text-sm font-medium text-slate-100">Opening order…</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Loading its items, packages and payments.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar — sticky top bar holding search, filters and actions */}
-      <div className="sticky top-0 z-20 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
+      <div ref={toolbarRef}
+        className="sticky top-0 z-20 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -2902,6 +2966,67 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               </button>
             )}
           </div>
+
+          {/* Filters live under this line — this opens them, and the pin keeps
+              them open (remembered per device). */}
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={() => setFiltersOpen(o => !o)}
+              title={filtersShown ? 'Hide filters' : 'Show filters'}
+              className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                activeFilterCount > 0 || filtersShown
+                  ? 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+                  : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'}`}>
+              <Filter className="w-4 h-4" /> Filters
+              {activeFilterCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-500/25 text-brand-200 border border-brand-500/40">
+                  {activeFilterCount}
+                </span>
+              )}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${filtersShown ? '' : '-rotate-90'}`} />
+            </button>
+            <button type="button" onClick={() => setFiltersPinned(v => !v)}
+              title={filtersPinned ? 'Unpin — the filters can be collapsed again' : 'Pin — keep the filters always open'}
+              className={`inline-flex items-center justify-center h-9 w-9 rounded-lg border transition-colors ${
+                filtersPinned
+                  ? 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+                  : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'}`}>
+              {filtersPinned ? <Pin className="w-4 h-4" /> : <PinOff className="w-4 h-4" />}
+            </button>
+          </div>
+          {!closed && (
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => setAuditOpen(true)}
+                title="Check the daily orders for possible errors"
+                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                  auditRows.length
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'
+                    : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'}`}>
+                <AlertTriangle className="w-4 h-4" /> Check orders
+                {auditRows.length > 0 && (
+                  <span className="ml-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                    {auditRows.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={openAddStory}
+                title="New ads / services (Story) order — no route or delivery"
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-medium border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/15 transition-colors">
+                <Tag className="w-4 h-4" /> Add Ad
+              </button>
+              <button className="btn-primary h-9 py-0 px-3 gap-1.5" onClick={openAdd}>
+                <Plus className="w-4 h-4" /> Add Order
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Filters — everything below the search line, shown when opened or pinned */}
+        {filtersShown && (
+        <div className="mt-3 space-y-3 border-t border-white/5 pt-3">
+        {/* Status / payment / flag chips */}
+        <div className="flex items-center gap-3 flex-wrap">
           {!closed && (
             <div className="flex items-center gap-1 flex-wrap">
               <CheckCircle2 className="w-4 h-4 text-slate-500" />
@@ -2971,36 +3096,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 )
               })}
           </div>
-          {!closed && (
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onClick={() => setAuditOpen(true)}
-                title="Check the daily orders for possible errors"
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                  auditRows.length
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'
-                    : 'border-surface-border text-slate-400 hover:text-slate-100 hover:bg-surface-hover'}`}>
-                <AlertTriangle className="w-4 h-4" /> Check orders
-                {auditRows.length > 0 && (
-                  <span className="ml-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                    {auditRows.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={openAddStory}
-                title="New ads / services (Story) order — no route or delivery"
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/15 transition-colors">
-                <Tag className="w-4 h-4" /> Add Ad
-              </button>
-              <button className="btn-primary" onClick={openAdd}>
-                <Plus className="w-4 h-4" /> Add Order
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Advanced filters */}
+        {/* Driver / customer / type / source / dates */}
         <div className="flex items-end gap-2 flex-wrap">
           {/* Driver & Customer: type to search, tick as many as needed. */}
           <SearchMultiSelect
@@ -3089,11 +3187,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <X className="w-3.5 h-3.5" /> Clear
             </button>
           )}
-          <button onClick={() => setPendingsOpen(true)}
-            className="btn-ghost ml-auto py-1.5 px-3 text-xs text-teal-300 border border-teal-500/30 bg-teal-500/10 hover:bg-teal-500/15">
-            <Wallet className="w-4 h-4" /> Display Pendings
-          </button>
         </div>
+        </div>
+        )}
       </div>
 
       {/* List */}
@@ -3126,7 +3222,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           <tbody onMouseLeave={() => setHoverSummary(null)}>
             {loading.orders && orders.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : (sorted.length === 0 && (closed || storyRows.length === 0)) ? (
+            ) : sorted.length === 0 ? (
               <tr><td colSpan={partyContactId ? 8 : 10} className="px-4 py-10 text-center text-slate-500">{closed ? 'No closed orders found' : 'No orders found'}</td></tr>
             ) : renderGroups.flatMap(g => [
               // Group header — click to expand/collapse (Closed Orders date groups
@@ -3143,6 +3239,21 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       <span className="text-[11px] text-slate-500">
                         {g.orders.length} order{g.orders.length === 1 ? '' : 's'}
                       </span>
+                      {/* Ads & Services: how many of the group's ads are running
+                          right now, next to the order count. */}
+                      {(() => {
+                        const ads = (g.orders ?? []).flatMap(o => (Array.isArray(o?.ads) ? o.ads : []))
+                        if (ads.length === 0) return null
+                        const active = ads.filter(a => adStatus(a.start_at, a.end_at)?.label === 'Active').length
+                        return (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                            active > 0
+                              ? 'bg-green-500/10 text-green-300 border-green-500/30'
+                              : 'bg-slate-500/10 text-slate-400 border-slate-500/30'}`}>
+                            {active} of {ads.length} ad{ads.length === 1 ? '' : 's'} active
+                          </span>
+                        )
+                      })()}
                       {!g.open && g.orders.length > 0 && (
                         <span className="text-[10px] text-slate-600 ml-auto">click to show</span>
                       )}
@@ -3413,7 +3524,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           <Eye className="w-4 h-4" />
                         </button>
                       ) : (
-                        <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
+                        <button onClick={() => openEditWithOverlay(o)} className="btn-ghost p-1.5 text-slate-500"
                           title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -3444,7 +3555,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       title="View order details">
                       <Eye className="w-4 h-4" />
                     </button>
-                    <button onClick={() => openEdit(o)} className="btn-ghost p-1.5 text-slate-500"
+                    <button onClick={() => openEditWithOverlay(o)} className="btn-ghost p-1.5 text-slate-500"
                       title={isRowLocked(o) ? 'View (locked)' : 'Edit'}>
                       <Edit2 className="w-4 h-4" />
                     </button>
@@ -4030,6 +4141,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <label className="label">Delivery Status</label>
                     <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.delivery_status} onChange={e => fld('delivery_status', e.target.value)}
                       disabled={!!partyContactId || !canEditDeliveryStatus}>
+                      {/* 'Pending' isn't a settable step — it's what an
+                          unconfirmed customer-app order carries — but it must
+                          still render while the order sits there. */}
+                      {form.delivery_status === DELIVERY_PENDING && (
+                        <option value={DELIVERY_PENDING}>{DELIVERY_PENDING}</option>
+                      )}
                       {DELIVERY_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     {!partyContactId && !canEditDeliveryStatus && (
@@ -4821,7 +4938,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               return (
                 <div key={ad.id} className="px-4 py-3 space-y-2">
                   <div className="text-xs">
-                    <button type="button" onClick={() => openEdit(order)} className="font-mono text-brand-400 hover:underline">{order.order_number}</button>
+                    <button type="button" onClick={() => openEditWithOverlay(order)} className="font-mono text-brand-400 hover:underline">{order.order_number}</button>
                     <span className="text-slate-400"> · {cust}</span>
                   </div>
                   <div className="text-[11px] text-slate-400">
@@ -5247,72 +5364,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         </div>
       )}
 
-      {/* ── Pendings Summary ───────────────────────────────────── */}
-      {pendingsOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="card w-full max-w-lg flex flex-col" style={{ maxHeight: '85vh' }}>
-
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-teal-400" />
-                <h3 className="text-sm font-semibold text-slate-100">Pendings Summary</h3>
-              </div>
-              <button onClick={() => setPendingsOpen(false)} className="btn-ghost p-1.5">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              <p className="text-xs text-slate-500">
-                Based on <span className="text-slate-200 font-semibold">{pendingsSummary.count}</span> filtered order{pendingsSummary.count === 1 ? '' : 's'}
-                {hasAdvancedFilters || filter !== 'all' || confirmFilter !== 'all' || payFilter || search ? ' (current filters applied)' : ''}.
-              </p>
-
-              {pendingsSummary.rows.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-8">No amounts for the current filter.</p>
-              ) : (
-                <div className="rounded-xl border border-surface-border overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-surface-hover border-b border-surface-border text-slate-500 text-xs uppercase tracking-wider">
-                        <th className="text-left  px-4 py-2.5 font-medium">Currency</th>
-                        <th className="text-right px-4 py-2.5 font-medium">Total Orders</th>
-                        <th className="text-right px-4 py-2.5 font-medium">Total Paid</th>
-                        <th className="text-right px-4 py-2.5 font-medium">Total Pending</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pendingsSummary.rows.map(r => (
-                        <tr key={r.cur} className="border-t border-surface-border/50">
-                          <td className="px-4 py-2.5 text-slate-300 font-semibold">{r.cur}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-200">{fmtMoney(r.order, r.cur)}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-200">{fmtMoney(r.paid, r.cur)}</td>
-                          <td className={`px-4 py-2.5 text-right font-bold ${r.pending > 0 ? 'text-yellow-400' : r.pending < 0 ? 'text-cyan-400' : 'text-green-400'}`}>
-                            {fmtMoney(r.pending, r.cur)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <p className="text-[11px] text-slate-600">
-                Pending = Total Orders − Total Paid. A negative value means collected more than billed (credit).
-              </p>
-            </div>
-
-            {/* Footer */}
-            <div className="flex-shrink-0 px-5 py-4 border-t border-surface-border flex justify-end">
-              <button className="btn-primary" onClick={() => setPendingsOpen(false)}>
-                <Check className="w-4 h-4" /> Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Amounts hover preview (follows the cursor; read-only) ── */}
       {showSummary && hoverSummary && !popover && (

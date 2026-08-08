@@ -48,10 +48,27 @@ module.exports = {
           '55%':           { transform: 'scale(1.2) rotate(-6deg)' },
           '75%':           { transform: 'scale(1.1) rotate(3deg)' },
         },
+        // Decorative backdrop in the customer app: parcels bobbing about and a
+        // cart drifting across behind the content.
+        'bg-float': {
+          '0%, 100%': { transform: 'translateY(0) rotate(0deg)' },
+          '50%':      { transform: 'translateY(-14px) rotate(6deg)' },
+        },
+        'bg-drift': {
+          '0%':   { transform: 'translateX(-30%)' },
+          '100%': { transform: 'translateX(130%)' },
+        },
+        'bg-sway': {
+          '0%, 100%': { transform: 'translateX(0) rotate(-4deg)' },
+          '50%':      { transform: 'translateX(18px) rotate(4deg)' },
+        },
       },
       animation: {
         'bell-ring': 'bell-ring 2.2s ease-in-out infinite',
         'msg-nudge': 'msg-nudge 0.9s ease-in-out 3',
+        'bg-float':  'bg-float 7s ease-in-out infinite',
+        'bg-drift':  'bg-drift 26s linear infinite',
+        'bg-sway':   'bg-sway 9s ease-in-out infinite',
       },
     },
   },

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Package, PackageCheck, Store, CreditCard, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Package, PackageCheck, Store, CreditCard, Wallet, Boxes, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AppProvider } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import Header from './Header'
@@ -10,6 +10,8 @@ import { checkSubscriptionAccess, accessDeniedMessage } from '../../lib/subscrip
 import DeliveriesPage from '../../pages/DeliveriesPage'
 import ShopInventoryPage from '../../pages/ShopInventoryPage'
 import MySubscriptionPage from '../../pages/MySubscriptionPage'
+import PartnerStatementPage from '../../pages/PartnerStatementPage'
+import ShopStockPage from '../../pages/ShopStockPage'
 import logo from '../../assets/Logo.png'
 
 // Supplier & Partner users get a locked-down portal: the only screens they can
@@ -21,6 +23,8 @@ const navItems = [
   { to: '/sold-orders',      icon: Package,      label: 'Sold Orders' },
   { to: '/completed-orders', icon: PackageCheck, label: 'Completed Orders' },
   { to: '/my-shop',          icon: Store,        label: 'My Shop', supplierOnly: true },
+  { to: '/my-inventory',     icon: Boxes,        label: 'Inventory', supplierOnly: true },
+  { to: '/my-statement',     icon: Wallet,       label: 'My Statement' },
   { to: '/my-subscription',  icon: CreditCard,   label: 'My Subscription' },
 ]
 
@@ -183,6 +187,10 @@ export default function PartnerShell() {
                 {isSupplier && (
                   <Route path="/my-shop"        element={<ShopInventoryPage partyContactId={partyContactId} />} />
                 )}
+                {isSupplier && (
+                  <Route path="/my-inventory"   element={<ShopStockPage partyContactId={partyContactId} />} />
+                )}
+                <Route path="/my-statement"     element={<PartnerStatementPage partyContactId={partyContactId} />} />
                 <Route path="/my-subscription"  element={<MySubscriptionPage partyContactId={partyContactId} />} />
                 {/* Any other path falls back to the default screen. */}
                 <Route path="*" element={<Navigate to="/sold-orders" replace />} />
