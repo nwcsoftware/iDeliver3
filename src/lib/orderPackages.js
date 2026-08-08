@@ -1,5 +1,28 @@
 import { supabase } from './supabase'
 
+/* Package tracking number — YYYYMMDD-HHMMSS-mmm, e.g.
+
+     20260812-140709-482
+
+   Self-contained, so it can be issued the moment a package row is added: it
+   needs neither the order (which may not have a number yet) nor the partner.
+   The milliseconds make it unique; `taken` guards the (vanishingly rare) case
+   of two rows landing on the same millisecond. */
+export function buildTrackingNumber(taken = [], now = new Date()) {
+  const pad  = (n, w = 2) => String(n).padStart(w, '0')
+  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const base = `${date}-${time}-${pad(now.getMilliseconds(), 3)}`
+
+  const used = new Set((taken || []).filter(Boolean).map(String))
+  if (!used.has(base)) return base
+  for (let i = 1; i < 100; i++) {
+    const candidate = `${base}-${pad(i)}`
+    if (!used.has(candidate)) return candidate
+  }
+  return `${base}-${Date.now().toString().slice(-4)}`
+}
+
 /* A package row is considered "filled" once it has any meaningful content. */
 function isFilled(p) {
   return [p.tracking_number, p.provider_id, p.category, p.type, p.package_size, p.vehicle_type,
@@ -19,6 +42,15 @@ function isFilled(p) {
  */
 export async function saveOrderPackages({ orderId, packages, origIds = [], companyId = null, contactCode = null, userId = null }) {
   const valid    = packages.filter(isFilled)
+  // Safety net: anything that still has no tracking number gets one here, so a
+  // package can never reach the database without one.
+  const issued = valid.map(p => p.tracking_number?.trim()).filter(Boolean)
+  for (const p of valid) {
+    if (!p.tracking_number?.trim()) {
+      p.tracking_number = buildTrackingNumber(issued)
+      issued.push(p.tracking_number)
+    }
+  }
   const keepIds  = valid.filter(p => p._id).map(p => p._id)
   const toDelete = origIds.filter(id => !keepIds.includes(id))
 

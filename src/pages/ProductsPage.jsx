@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Tag, DollarSign, Package, Barcode, Circle, Loader2, RefreshCw, Wrench,
+  Tag, DollarSign, Package, Barcode, Circle, Loader2, RefreshCw, Wrench, Upload, Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -39,7 +39,13 @@ const EMPTY_FORM = {
   // start as Retail, the common case.
   is_retail: true, is_returnable: false, is_service: false, is_advertisement: false,
   category_id: '',
+  // Presentation in the customer app, mirroring the supplier's shop item form:
+  // up to MAX_IMAGES photos (first = cover), optional colours and sizes.
+  images: [], colors: [], sizes: [], is_displayed: false,
 }
+
+const MAX_IMAGES = 3
+const MAX_COLORS = 8
 
 export default function ProductsPage() {
   const { COMPANY_ID } = useApp()
@@ -51,6 +57,7 @@ export default function ProductsPage() {
   const [filter,      setFilter]      = useState('active')   // 'active' | 'inactive' | 'all'
   const [modal,       setModal]       = useState(null)        // null | 'add' | product row
   const [form,        setForm]        = useState(EMPTY_FORM)
+  const [sizeInput,   setSizeInput]   = useState('')   // size being typed
   const [saving,      setSaving]      = useState(false)
   const [error,       setError]       = useState('')
   const [toggling,    setToggling]    = useState(null)
@@ -138,8 +145,66 @@ export default function ProductsPage() {
   }, [modal, form.is_retail, form.is_returnable, form.is_service, form.is_advertisement])
 
   function openAdd()    { setForm(EMPTY_FORM); setError(''); setProgress(null); setModal('add'); setAddingCat(false); setNewCatName('') }
-  function openEdit(p)  { setForm({ ...EMPTY_FORM, ...p, category_id: p.category_id ?? '' }); setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName('') }
+  function openEdit(p)  {
+    setForm({
+      ...EMPTY_FORM, ...p,
+      category_id: p.category_id ?? '',
+      // Tolerate rows saved before fix116 (single image_url, no variants).
+      images: Array.isArray(p.images) && p.images.length ? p.images.filter(Boolean).slice(0, MAX_IMAGES)
+            : (p.image_url ? [p.image_url] : []),
+      colors: Array.isArray(p.colors) ? p.colors : [],
+      sizes:  Array.isArray(p.sizes)  ? p.sizes  : [],
+    })
+    setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName(''); setSizeInput('')
+  }
   function closeModal() { setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('') }
+
+  /* Photos, colours and sizes — the same rules as the supplier's shop items, so
+     a product presents identically wherever it is sold. */
+
+  function onPickImage(e) {
+    const files = [...(e.target.files || [])]
+    e.target.value = ''
+    if (files.length === 0) return
+    const room = MAX_IMAGES - form.images.length
+    if (room <= 0) { setError(`Up to ${MAX_IMAGES} photos per product.`); return }
+    const chosen = files.slice(0, room)
+    if (files.length > room) setError(`Only ${room} more photo${room === 1 ? '' : 's'} could be added (max ${MAX_IMAGES}).`)
+    else setError('')
+    for (const file of chosen) {
+      if (!file.type.startsWith('image/')) { setError('Please choose image files only.'); continue }
+      if (file.size > 750 * 1024)          { setError('Each image must be under 750 KB.'); continue }
+      const reader = new FileReader()
+      reader.onload = () => setForm(f => (
+        f.images.length >= MAX_IMAGES ? f : { ...f, images: [...f.images, String(reader.result || '')] }))
+      reader.readAsDataURL(file)
+    }
+  }
+  const removeImage = i => setForm(f => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }))
+  // The first photo is the cover shown on the customer app's card.
+  const makeCover = i => setForm(f => (i === 0 ? f : { ...f, images: [f.images[i], ...f.images.filter((_, idx) => idx !== i)] }))
+
+  const addColor    = ()          => setForm(f => (f.colors.length >= MAX_COLORS ? f : { ...f, colors: [...f.colors, { name: '', image: null }] }))
+  const setColor    = (i, patch)  => setForm(f => ({ ...f, colors: f.colors.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) }))
+  const removeColor = i           => setForm(f => ({ ...f, colors: f.colors.filter((_, idx) => idx !== i) }))
+  function onPickColorImage(i, e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setError('Please choose an image file.'); return }
+    if (file.size > 400 * 1024) { setError('Colour photo must be under 400 KB.'); return }
+    const reader = new FileReader()
+    reader.onload = () => { setColor(i, { image: String(reader.result || '') }); setError('') }
+    reader.readAsDataURL(file)
+  }
+
+  function addSize() {
+    const v = sizeInput.trim()
+    if (!v) return
+    setForm(f => (f.sizes.some(x => x.toLowerCase() === v.toLowerCase()) ? f : { ...f, sizes: [...f.sizes, v] }))
+    setSizeInput('')
+  }
+  const removeSize = v => setForm(f => ({ ...f, sizes: f.sizes.filter(x => x !== v) }))
 
   /* Create a new product category inline and select it for this product. */
   async function createCategory() {
@@ -183,6 +248,13 @@ export default function ProductsPage() {
       // can never keep a stale second kind.
       ...kindFlags(kind),
       category_id:      form.category_id           || null,
+      images:           form.images,
+      // Cover mirrored into the original single-image column.
+      image_url:        form.images[0] || null,
+      colors:           form.colors.filter(c => c.name?.trim()).map(c => ({ name: c.name.trim(), image: c.image || null })),
+      sizes:            form.sizes,
+      // Whether customers see it in the 3asari3 shop (fix115).
+      is_displayed:     !!form.is_displayed,
     }
 
     let err = null
@@ -497,6 +569,120 @@ export default function ProductsPage() {
                     onChange={e => fld('reorder_quantity', e.target.value)} placeholder="0" />
                 </div>
               </div>
+
+              {/* Photos — the first is the cover shown in the customer app */}
+              <div>
+                <label className="label">Photos</label>
+                <div className="flex items-start gap-3 flex-wrap">
+                  {form.images.map((src, i) => (
+                    <div key={i} className="relative w-20 h-20 flex-shrink-0">
+                      <img src={src} alt="" className="w-20 h-20 rounded-md object-cover border border-surface-border" />
+                      <button type="button" onClick={() => removeImage(i)} title="Remove photo"
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500/90 text-white flex items-center justify-center hover:bg-red-500">
+                        <X className="w-3 h-3" />
+                      </button>
+                      {i === 0 ? (
+                        <span className="absolute bottom-0 inset-x-0 text-[9px] text-center bg-brand-600/80 text-white rounded-b-md py-0.5">Cover</span>
+                      ) : (
+                        <button type="button" onClick={() => makeCover(i)} title="Use as cover photo"
+                          className="absolute bottom-0 inset-x-0 text-[9px] text-center bg-slate-900/80 text-slate-300 rounded-b-md py-0.5 hover:text-white">
+                          Make cover
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {form.images.length < MAX_IMAGES && (
+                    <label className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-dashed border-surface-border flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-500 hover:text-slate-300">
+                      <Upload className="w-4 h-4" />
+                      <span className="text-[10px]">Add photo</span>
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={onPickImage} />
+                    </label>
+                  )}
+                  {form.images.length === 0 && (
+                    <div className="w-20 h-20 rounded-md bg-surface-hover border border-surface-border flex items-center justify-center flex-shrink-0">
+                      <ImageIcon className="w-5 h-5 text-slate-600" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1.5">
+                  Up to {MAX_IMAGES} photos, max 750 KB each. The first one is the cover shown in the customer app.
+                </p>
+              </div>
+
+              {/* Colours (optional) */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="label">Colours <span className="text-slate-600 normal-case">(optional)</span></label>
+                  {form.colors.length < MAX_COLORS && (
+                    <button type="button" onClick={addColor}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
+                      <Plus className="w-3 h-3" /> Add colour
+                    </button>
+                  )}
+                </div>
+                {form.colors.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">No colours — the product is sold as-is.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {form.colors.map((c, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <label className="w-12 h-12 flex-shrink-0 rounded-md border border-surface-border bg-surface-hover overflow-hidden cursor-pointer flex items-center justify-center"
+                          title="Colour photo (optional)">
+                          {c.image
+                            ? <img src={c.image} alt="" className="w-full h-full object-cover" />
+                            : <ImageIcon className="w-4 h-4 text-slate-600" />}
+                          <input type="file" accept="image/*" className="hidden" onChange={e => onPickColorImage(i, e)} />
+                        </label>
+                        <input className="input flex-1" value={c.name} placeholder="e.g. Black, Red, Navy Blue"
+                          onChange={e => setColor(i, { name: e.target.value })} />
+                        <button type="button" onClick={() => removeColor(i)} title="Remove colour"
+                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <p className="text-[10px] text-slate-500">A colour photo is optional (max 400 KB) — customers see it as a swatch.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Sizes (optional) */}
+              <div>
+                <label className="label">Sizes <span className="text-slate-600 normal-case">(optional)</span></label>
+                {form.sizes.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {form.sizes.map(v => (
+                      <span key={v} className="inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 bg-brand-500/15 text-brand-200 border border-brand-500/30">
+                        {v}
+                        <button type="button" onClick={() => removeSize(v)} title={"Remove " + v}
+                          className="text-brand-300/70 hover:text-brand-100"><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input className="input flex-1" value={sizeInput} placeholder="e.g. 20 L or XL — press Enter to add"
+                    onChange={e => setSizeInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSize() } }} />
+                  <button type="button" onClick={addSize} disabled={!sizeInput.trim()}
+                    className="btn-ghost px-3 py-2 text-xs border border-surface-border disabled:opacity-40">Add</button>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Add each size the product comes in. Customers must pick one before adding it to their cart.
+                </p>
+              </div>
+
+              {/* Customer-app visibility */}
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" className="w-4 h-4 accent-emerald-500 mt-0.5" checked={!!form.is_displayed}
+                  onChange={e => fld('is_displayed', e.target.checked)} />
+                <span className="text-sm text-slate-200">
+                  Show this item in the customer app
+                  <span className="block text-[11px] text-slate-500">
+                    Lists it in the customer app’s 3asari3 shop. Off keeps it internal.
+                  </span>
+                </span>
+              </label>
 
               {/* Kind — one choice only; it drives the code prefix. */}
               <div>

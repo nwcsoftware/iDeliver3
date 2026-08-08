@@ -34,6 +34,7 @@ import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
 import ChangeRequestsPage     from './pages/ChangeRequestsPage'
+import PackageLabelsPage      from './pages/PackageLabelsPage'
 import DeveloperAccountPage    from './pages/DeveloperAccountPage'
 import AppSettingsPage         from './pages/AppSettingsPage'
 import MessagesPage            from './pages/MessagesPage'
@@ -111,6 +112,7 @@ function AppShell() {
                 <Route path="/price-list"           element={<PriceListPage />} />
                 <Route path="/returnable-items"     element={<ReturnableItemsPage />} />
                 <Route path="/packages"             element={<PackagesReportPage />} />
+                <Route path="/package-labels"       element={<PackageLabelsPage />} />
                 <Route path="/daily-collection"     element={<DailyCollectionPage />} />
                 <Route path="/account-transactions" element={<AccountTransactionsPage />} />
                 <Route path="/account-statements" element={<ContactStatementsPage />} />

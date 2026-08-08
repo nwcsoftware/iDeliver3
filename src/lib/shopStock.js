@@ -141,9 +141,11 @@ export async function releaseCartLine({ customerId, cartLineKey }) {
 export async function convertReservationsToSales({ customerId, orderId, cart = [], companyId = null }) {
   try {
     const rows = cart
-      .filter(it => it.shop_item_id || it.id)
+      // Only real shop_inventory lines move stock — catalog items carry no
+      // shop_item_id and have no ledger of their own.
+      .filter(it => it.shop_item_id)
       .map(it => ({
-        item_id:          it.shop_item_id || it.id,
+        item_id:          it.shop_item_id,
         owner_contact_id: it.owner_contact_id ?? null,
         movement_type:    'sold',
         quantity:         Math.abs(num(it.qty)) || 1,

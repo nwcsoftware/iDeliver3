@@ -27,7 +27,7 @@ import MapPicker from '../components/contacts/MapPicker'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { buildContactExtraFields, contactTypeExtras } from '../lib/contactFields'
 import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages'
-import { saveOrderPackages } from '../lib/orderPackages'
+import { saveOrderPackages, buildTrackingNumber } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
 import TagLocationField from '../components/orders/TagLocationField'
@@ -986,7 +986,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const toggleSection = (id, val) => setSectionsOpen(s => ({ ...s, [id]: val }))
   const openSection   = (id) => setSectionsOpen(s => (s[id] ? s : { ...s, [id]: true }))
   // Add a package from the section header (works even while the subform is collapsed/unmounted).
-  const addPackage    = () => { openSection('packages'); setPackages(p => [...p, { ...EMPTY_PACKAGE, ...(partyContactId ? { provider_id: partyContactId } : {}), _key: Date.now() }]) }
+  const addPackage    = () => {
+    openSection('packages')
+    setPackages(p => [...p, {
+      ...EMPTY_PACKAGE,
+      ...(partyContactId ? { provider_id: partyContactId } : {}),
+      // Auto tracking number, issued right away — it stands on its own, so a
+      // brand-new order (no order number yet) is no obstacle.
+      tracking_number: buildTrackingNumber(p.map(x => x.tracking_number)),
+      _key: Date.now(),
+    }])
+  }
 
   /* ── lookups ─────────────────────────────────────────────── */
 
@@ -2168,10 +2178,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         }))
       : retailInvoices
 
-    // Package provider and reference are mandatory on every package row.
+    // A package must name its provider. The reference is system-issued, so it
+    // is filled in here rather than demanded from the user.
     for (const p of packagesEff) {
-      if (!p.provider_id)             return setError('Each package needs a Package provider.')
-      if (!p.tracking_number?.trim()) return setError('Each package needs a Package reference.')
+      if (!p.provider_id) return setError('Each package needs a Package provider.')
     }
 
     // Backstop for "Mark Closed": besides the disabled button, re-verify the close
@@ -2236,7 +2246,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       delivery_zone_id:     form.delivery_zone_id        || null,
       driver_id:            form.driver_id               || null,
       status:                   toDbStatus(form.status),
-      delivery_status:          form.delivery_status || null,
+      delivery_status:          (modal !== 'add' && form.driver_id && !isConfirmed(modal)
+                                  && (form.delivery_status || DELIVERY_PENDING) === DELIVERY_PENDING)
+                                  ? 'Awaiting Pickup'
+                                  : (form.delivery_status || null),
       collection_from_customer: collectionStatus,
       payment_status:       derivedPaymentStatus,
       ...closeCols,
@@ -2268,7 +2281,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // center confirms them via the popover.
       ...(modal === 'add'
         ? { order_confirmed: !addNeedsConfirm, order_source: addSource }
-        : {}),
+        // Assigning a driver on an existing unconfirmed order confirms it, the
+        // same as doing it from the list. The driver field is read-only for
+        // 2nd-party users, so this only ever fires from the office.
+        : (form.driver_id && !isConfirmed(modal)
+            ? {
+                order_confirmed: true,
+                confirmed_at:    new Date().toISOString(),
+                confirmed_by:    currentUser?.user_id || null,
+              }
+            : {})),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
 
@@ -2515,9 +2537,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // Order status is set by the driver app — only admins/super admins may change
     // it by hand. Backstops the hidden list button.
     if (type === 'status' && !canEditOrderStatus) return
-    // Nothing can be done to an order until it's confirmed — only the confirm
-    // toggle ('online') stays available. Backstops the disabled buttons.
-    if (type !== 'online' && !isConfirmed(order)) return
+    // Nothing can be done to an order until it's confirmed — except the confirm
+    // toggle ('online') and assigning a driver, which confirms the order itself
+    // (see quickAssignDriver). Backstops the disabled buttons.
+    if (!['online', 'driver'].includes(type) && !isConfirmed(order)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const width = type === 'driver' ? 240 : type === 'fee' ? 220 : 176
     setDriverQuickSearch('')
@@ -2532,9 +2555,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   async function quickAssignDriver(order, driverId) {
     rememberOrder(order.id)
-    if (!isConfirmed(order)) { setPopover(null); return }   // driver can't be assigned until confirmed
+    // Giving the order to a driver IS the agreement to deliver it, so an
+    // unconfirmed order is confirmed by the same action (clearing the driver
+    // is not — that undoes an assignment, it doesn't accept the order).
+    if (!isConfirmed(order) && !driverId) { setPopover(null); return }
     setQuickBusy(true)
-    await supabase.from('delivery_orders').update({ driver_id: driverId || null }).eq('id', order.id)
+    await supabase.from('delivery_orders')
+      .update({ driver_id: driverId || null, ...confirmOnAssignPatch(order) })
+      .eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
   }
@@ -2573,6 +2601,24 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     }).eq('id', order.id)
     await fetchOrders()
     setQuickBusy(false); setPopover(null)
+  }
+
+  /* Columns that confirm an order, used both by the confirm popover and by
+     assigning a driver. Empty when the order is already confirmed, so it can be
+     spread into any update unconditionally. */
+  function confirmOnAssignPatch(order) {
+    if (isConfirmed(order)) return {}
+    return {
+      order_confirmed: true,
+      confirmed_at:    new Date().toISOString(),
+      confirmed_by:    currentUser?.user_id || null,
+      // Same as confirming by hand: a pending delivery starts its normal life
+      // at 'Awaiting Pickup' with the money still due.
+      ...(order.delivery_status === DELIVERY_PENDING ? {
+        delivery_status:          'Awaiting Pickup',
+        collection_from_customer: COLLECTION_DUE,
+      } : {}),
+    }
   }
 
   // Online order confirmation — sets the order_confirmed flag (not the status).
@@ -3405,9 +3451,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     })()
                   ) : (
                   <div className="flex items-center gap-1.5">
-                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId || !isConfirmed(o)}
+                    <button type="button" disabled={isRowLocked(o) || isPickedUp(o) || !!partyContactId}
                       onClick={(e) => openPopover('driver', o, e)}
-                      title={partyContactId ? 'Assigned by the operations team' : (o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Confirm the order first to assign a driver' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver')}
+                      title={partyContactId ? 'Assigned by the operations team' : (o.isclosed ? 'Closed — locked' : isDeactivated(o) ? 'Deactivated — locked' : !isConfirmed(o) ? 'Assign a driver — this confirms the order' : isPickedUp(o) ? 'Picked up — driver locked' : normalizeStatus(o.status) === 'in_progress' ? 'In progress — out for delivery' : 'Assign driver')}
                       className="btn-ghost p-1 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Truck className={`w-3.5 h-3.5 ${normalizeStatus(o.status) === 'in_progress' ? 'animate-truck' : ''}`} />
                     </button>

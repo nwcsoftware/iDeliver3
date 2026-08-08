@@ -24,6 +24,7 @@ const pageTitles = {
   '/settings/header-background': 'Header Background',
   '/settings/subscriptions': 'Subscriptions',
   '/settings/change-requests': 'Change Requests',
+  '/package-labels': 'Package Labels',
   '/sold-orders':      'Sold Orders',
   '/completed-orders': 'Completed Orders',
   '/supplier-settlements': 'Supplier Settlements',

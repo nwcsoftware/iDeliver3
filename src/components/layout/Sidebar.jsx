@@ -32,6 +32,7 @@ const secondaryNav = [
   { to: '/price-list',           icon: ClipboardList,   label: 'Price List' },
   { to: '/returnable-items',     icon: RotateCcw,       label: 'Returnable Items' },
   { to: '/packages',             icon: Boxes,           label: 'Packages' },
+  { to: '/package-labels',       icon: Tags,            label: 'Package Labels' },
   { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
   { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
   { to: '/account-statements',   icon: BookText,        label: 'Account Statements' },

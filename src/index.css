@@ -114,3 +114,73 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ── Package labels (Package Labels page) ────────────────────────────────────
+   60 × 62 mm, one label per printed page. Everything else on the page is
+   hidden while printing, so the sheet contains only the labels. */
+.label-sheet {
+  width: 60mm;
+  height: 62mm;
+  padding: 4mm 4mm 3mm;
+  box-sizing: border-box;
+  background: #fff;
+  color: #000;
+  font-family: "Segoe UI", Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* keep the logo and the white patch behind the reference exactly as shown */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  page-break-after: always;
+  break-after: page;
+}
+.label-sheet:last-child { page-break-after: auto; break-after: auto; }
+
+/* Logo on the left, order number with our phone under it on the right. The
+   logo keeps its own proportions — height is fixed, width follows. */
+.label-order   { display: flex; align-items: center; gap: 2mm;
+                 border-bottom: 1.5px solid #000; padding-bottom: 1.2mm; }
+.label-logo    { height: 7.5mm; width: auto; object-fit: contain; flex-shrink: 0; }
+.label-idbox   { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 1mm; }
+.label-orderno { font-size: 8pt; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+.label-cotel   { font-size: 7.5pt; color: #333; white-space: nowrap; }
+.label-line    { display: flex; gap: 2mm; align-items: baseline; margin-top: 1.6mm; font-size: 8pt; }
+.label-line span { color: #444; text-transform: uppercase; letter-spacing: .4px; font-size: 6.5pt; min-width: 9mm; }
+.label-line b  { font-size: 9.5pt; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The sender is secondary to the recipient, so it prints a size down. */
+.label-from b  { font-size: 8pt; }
+.label-address { margin-top: .8mm; font-size: 7.5pt; line-height: 1.28; max-height: 8mm; overflow: hidden; }
+/* Phone numbers sit beside the name they belong to. */
+.label-tel     { font-style: normal; font-size: 7.5pt; color: #333; margin-left: auto; white-space: nowrap; }
+/* Package price, delivery fee and the order total (which may span currencies). */
+.label-money   { margin-top: .8mm; border-top: .3mm solid #bbb; padding-top: 1mm; font-size: 7.5pt; }
+.label-money > div { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-top: .9mm; }
+.label-money span  { color: #444; text-transform: uppercase; letter-spacing: .3px; font-size: 6.5pt; }
+.label-money b     { font-weight: 700; }
+/* The money rule closes the package/delivery rows; the total then floats in
+   the middle of the space left before the barcode. */
+.label-money   { border-bottom: .3mm solid #000; padding-bottom: 1.2mm; }
+.label-total-band { flex: 1; display: flex; align-items: center; }
+.label-total   { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; }
+.label-total span { color: #444; text-transform: uppercase; letter-spacing: .3px; font-size: 6.5pt; }
+.label-total b { font-size: 9.5pt; font-weight: 800; }
+/* The reference + barcode sit at the foot of the label. */
+.label-code    { padding-top: .6mm; text-align: center; }
+/* The barcode fills the strip; the reference sits on top of its lower edge on
+   a white patch, so the bars stay scannable and no extra height is needed. */
+.label-barcode { position: relative; line-height: 0; }
+.label-ref     {
+  position: absolute; left: 50%; bottom: -0.3mm; transform: translateX(-50%);
+  background: #fff; padding: 0 1mm; line-height: 1;
+  font-family: "Consolas", "Courier New", monospace; font-size: 7.5pt; letter-spacing: .3px;
+}
+.label-ref-plain { font-family: "Consolas", "Courier New", monospace; font-size: 8.5pt; }
+.label-code svg { width: 92%; height: 9.5mm; }
+
+@media print {
+  @page { size: 60mm 62mm; margin: 0; }
+  html, body { background: #fff !important; }
+  /* Only the labels print — the app chrome is hidden by print:hidden classes. */
+  .label-sheet { margin: 0; }
+}

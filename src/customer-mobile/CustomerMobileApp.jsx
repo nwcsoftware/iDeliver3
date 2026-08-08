@@ -40,9 +40,17 @@ import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
 import { reserveCartLine, releaseCartLine, convertReservationsToSales, summarise as summariseStock } from '../lib/shopStock'
 
 const CUSTOMER_MOBILE_MODULE = 'iDeliver Customer Mobile'
+// Stamped on every order placed from this app — the office filters by it.
+const CUSTOMER_APP_ORDER_TYPE = 'Customer Mobile Application'
 const DEFAULT_COMPANY_ID = '0e7eae0e-9a0b-4408-8847-e03232c0a460'
 const COMPANY_ID = String(import.meta.env.VITE_COMPANY_ID || DEFAULT_COMPANY_ID || '').trim() || null
 const CUSTOMER_SESSION_KEY = 'ideliver_customer_mobile_session'
+// The delivery company's own shop ("3asari3"), as opposed to the local-market
+// shops. Set VITE_HOUSE_SHOP_CONTACT_ID to pin it to a contact id; otherwise the
+// owner's name is matched.
+const HOUSE_SHOP_CONTACT_ID = String(import.meta.env.VITE_HOUSE_SHOP_CONTACT_ID || '').trim() || null
+const HOUSE_SHOP_NAME_MATCH = /3asari3|عصاري|عالسريع/i
+const HOUSE_SHOP_LABEL = '3asari3'
 const CUSTOMER_LANGUAGE_KEY = 'ideliver_customer_mobile_language'
 
 const languageOptions = [
@@ -60,6 +68,9 @@ const translations = {
     addressName: 'Address name',
     addAddress: 'Add Address',
     viewItem: 'View item',
+    loadingAddress: 'Loading your address…',
+    localMarket: 'Local market',
+    houseShop: '3asari3 shop',
     shopItemLocked: 'From the shop — change the quantity or remove it',
     homeWelcome: '3asari3 fast delivery welcomes you',
     available: '{{count}} available',
@@ -289,6 +300,9 @@ const translations = {
     add: 'إضافة',
     addAddress: 'إضافة عنوان',
     viewItem: 'عرض الصنف',
+    loadingAddress: 'جارٍ تحميل عنوانك…',
+    localMarket: 'السوق المحلي',
+    houseShop: 'متجر عالسريع',
     shopItemLocked: 'من المتجر — يمكنك تغيير الكمية أو حذف الصنف',
     homeWelcome: 'عالسريع للتوصيل السريع يرحّب بك',
     available: 'متوفر {{count}}',
@@ -524,6 +538,9 @@ translations.fr = {
   add: 'Ajouter',
   addAddress: 'Ajouter une adresse',
   viewItem: 'Voir l’article',
+  loadingAddress: 'Chargement de votre adresse…',
+  localMarket: 'Marché local',
+  houseShop: 'Boutique 3asari3',
   shopItemLocked: 'Depuis la boutique — modifiez la quantité ou supprimez',
   homeWelcome: '3asari3 fast delivery vous souhaite la bienvenue',
   typeCustomerRequirement: 'Écrivez ici ce dont vous avez besoin…',
@@ -686,6 +703,9 @@ translations.ro = {
   add: 'Adauga',
   addAddress: 'Adauga adresa',
   viewItem: 'Vezi produsul',
+  loadingAddress: 'Se incarca adresa ta…',
+  localMarket: 'Piata locala',
+  houseShop: 'Magazin 3asari3',
   shopItemLocked: 'Din magazin — schimba cantitatea sau elimina',
   homeWelcome: '3asari3 fast delivery iti ureaza bun venit',
   typeCustomerRequirement: 'Scrie aici de ce ai nevoie…',
@@ -1613,6 +1633,8 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
   const [catFilter,   setCatFilter]   = useState([])
   const [filterOpen,  setFilterOpen]  = useState(false)
   const [preview,     setPreview]     = useState(null)   // item shown in the popup
+  const [market,      setMarket]      = useState('local') // 'local' | 'house'
+  const [houseItems,  setHouseItems]  = useState([])     // 3asari3's own catalog
   const [stock,       setStock]       = useState({})     // itemId → { available, tracked }
   // Variant choices inside the popup (reset each time one is opened).
   const [pickedColor, setPickedColor] = useState('')
@@ -1671,6 +1693,49 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
       else { setItems(data || []); setError('') }
       setLoading(false)
 
+      // 3asari3's own inventory is the office Products catalog — real goods only
+      // (services and advertisements aren't shoppable). Mapped into the same
+      // shape as a shop item so every card, popup and cart path is shared.
+      try {
+        let { data: prods, error: prodErr } = await supabase
+          .from('products')
+          .select('id,name,description,unit_price,currency,image_url,images,colors,sizes,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
+          .eq('is_active', true)
+          .eq('is_displayed', true)      // published to the customer app (fix115)
+          .eq('is_service', false)
+          .eq('is_advertisement', false)
+          .order('name')
+        if (prodErr && /images|colors|sizes/.test(prodErr.message)) {
+          ;({ data: prods } = await supabase
+            .from('products')
+            .select('id,name,description,unit_price,currency,image_url,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
+            .eq('is_active', true).eq('is_displayed', true)
+            .eq('is_service', false).eq('is_advertisement', false)
+            .order('name'))
+        }
+        if (!cancelled) {
+          setHouseItems((prods ?? []).map(pr => ({
+            id: `prod:${pr.id}`,
+            product_id: pr.id,
+            name: pr.name,
+            description: pr.description,
+            price: pr.unit_price,
+            currency: pr.currency || 'USD',
+            image_url: pr.image_url,
+            images: Array.isArray(pr.images) && pr.images.length
+              ? pr.images.filter(Boolean)
+              : (pr.image_url ? [pr.image_url] : []),
+            categories: pr.category?.name ? [pr.category.name] : [],
+            // Colours and sizes come from the catalog too (fix116).
+            colors: Array.isArray(pr.colors) ? pr.colors : [],
+            sizes:  Array.isArray(pr.sizes)  ? pr.sizes  : [],
+            owner_contact_id: null,
+            owner: { company_name: HOUSE_SHOP_LABEL },
+            _house: true,
+          })))
+        }
+      } catch { /* the local market still works without the catalog */ }
+
       // Availability per item (fix113): on hand − what other carts hold.
       // Items with NO stock ledger at all are treated as untracked and stay
       // freely purchasable, so shops that don't count stock are unaffected.
@@ -1701,6 +1766,11 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
   }, [])
 
   const shopName = o => (o ? (o.company_name || `${o.first_name ?? ''} ${o.last_name ?? ''}`.trim() || 'Shop') : 'Shop')
+  // Is this item stocked by 3asari3 itself rather than a local-market shop?
+  const isHouseItem = it => (
+    HOUSE_SHOP_CONTACT_ID
+      ? it.owner_contact_id === HOUSE_SHOP_CONTACT_ID
+      : HOUSE_SHOP_NAME_MATCH.test(shopName(it.owner)))
 
   // Up to 3 photos per item (fix105); older rows only have `image_url`.
   const itemImages = it => {
@@ -1752,7 +1822,12 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
 
   const q = search.trim().toLowerCase()
   const catSet = new Set(catFilter.map(c => c.toLowerCase()))
-  const filtered = items.filter(it =>
+  // Local market = the shops' items; 3asari3 = the company's own catalog, plus
+  // any shop items stocked under its own contact.
+  const source = market === 'house'
+    ? [...houseItems, ...items.filter(isHouseItem)]
+    : items
+  const filtered = source.filter(it =>
     (!q || it.name?.toLowerCase().includes(q)
         || itemCats(it).some(c => c.toLowerCase().includes(q))
         || shopName(it.owner).toLowerCase().includes(q))
@@ -1776,7 +1851,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
     onAdd?.({
       // One cart line per colour/size combination.
       id: [preview.id, pickedColor, pickedSize].filter(Boolean).join('::'),
-      shop_item_id: preview.id,
+      // Catalog items aren't shop_inventory rows — they hold no stock.
+      shop_item_id: preview._house ? null : preview.id,
+      product_id:   preview.product_id ?? null,
       name: preview.name,
       variant_label: variant || null,
       color: pickedColor || null,
@@ -1836,6 +1913,45 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
               )}
             </button>
           </label>
+
+          {/* Market switch — a water drop resting over the chosen word. The
+              track clips its contents, so nothing can poke out at the corners;
+              the drop overshoots slightly as it lands, like liquid settling. */}
+          <div className="relative mx-auto mt-3 flex h-12 w-full max-w-xs items-center overflow-hidden rounded-full border border-sky-200/70 bg-gradient-to-b from-sky-100/70 to-sky-200/50 p-1 shadow-inner">
+            <span aria-hidden
+              className="pointer-events-none absolute inset-y-[3px] left-[3px] w-[calc(50%-3px)] rounded-full
+                         bg-sky-400/35 backdrop-blur-[2px] backdrop-saturate-150
+                         shadow-[0_8px_16px_-6px_rgba(2,132,199,0.55),inset_0_-6px_10px_-6px_rgba(2,132,199,0.55),inset_0_2px_3px_rgba(255,255,255,0.75)]
+                         ring-1 ring-inset ring-white/50
+                         transition-transform duration-500 ease-[cubic-bezier(.34,1.4,.64,1)] motion-reduce:transition-none"
+              style={{ transform: market === 'house' ? 'translateX(100%)' : 'translateX(0)' }}>
+              {/* Two highlights give the bead of water its curved surface: a
+                  bright spot up-left and a wide soft sheen across the top. */}
+              <span className="absolute left-[18%] top-[18%] h-2.5 w-4 -rotate-12 rounded-full bg-white/80 blur-[2px]" />
+              <span className="absolute inset-x-3 top-1 h-2 rounded-full bg-white/35 blur-[3px]" />
+              {/* …and a pale rim at the bottom, where light passes through. */}
+              <span className="absolute inset-x-4 bottom-[3px] h-1.5 rounded-full bg-sky-100/60 blur-[2px]" />
+            </span>
+
+            {[
+              { id: 'local', label: t('localMarket') },
+              { id: 'house', label: t('houseShop') },
+            ].map(tab => {
+              const on = market === tab.id
+              return (
+                <button key={tab.id} type="button" onClick={() => setMarket(tab.id)}
+                  className={cx(
+                    'relative z-10 flex-1 rounded-full px-2 text-center transition-all duration-300',
+                    on
+                      // Magnified through the drop.
+                      ? 'text-[15px] font-extrabold text-sky-950 [text-shadow:0_1px_1px_rgba(255,255,255,0.65)]'
+                      // Beside it: smaller and just out of focus.
+                      : 'text-[11px] font-semibold text-sky-900/45 blur-[0.6px]')}>
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
 
           {filterOpen && (<>
             <div className="fixed inset-0 z-20" onClick={() => setFilterOpen(false)} />
@@ -1999,7 +2115,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                           openPreview({ ...it, shop: g.name })
                           return
                         }
-                        onAdd?.({ id: it.id, shop_item_id: it.id, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: g.name, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null })
+                        onAdd?.({ id: it.id, shop_item_id: it._house ? null : it.id, product_id: it.product_id ?? null, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: g.name, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null })
                       }}
                       className={cx('mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold',
                         soldOut(it) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-sky-600 text-white hover:bg-sky-700')}>
@@ -2240,6 +2356,10 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
   const { t } = useI18n()
   const [customer, setCustomer] = useState(null)
   const [address, setAddress]   = useState('')
+  // The delivery address is fetched (profile + primary saved address). Until it
+  // lands the order can't be placed — otherwise a quick tap sends an order with
+  // an empty address.
+  const [addressLoading, setAddressLoading] = useState(true)
   const [notes, setNotes]       = useState('')
   const [placing, setPlacing]   = useState(false)
   const [error, setError]       = useState('')
@@ -2248,7 +2368,8 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
   useEffect(() => {
     let cancelled = false
     async function load() {
-      if (!customerSession?.contact_id) return
+      if (!customerSession?.contact_id) { setAddressLoading(false); return }
+      setAddressLoading(true)
       const { data } = await supabase.from('contacts')
         .select('id,first_name,last_name,company_name,mobile,whatsapp_number,address,city')
         .eq('id', customerSession.contact_id).single()
@@ -2270,6 +2391,7 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
 
       const primary = saved?.find(a => a.is_primary) || saved?.[0]
       setAddress(addressText(primary) || [data.address, data.city].filter(Boolean).join(', '))
+      setAddressLoading(false)
     }
     load(); return () => { cancelled = true }
   }, [customerSession])
@@ -2304,6 +2426,7 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       order_details_text: lines.join('\n'),
       special_instructions: [t('cashOnDelivery'), notes.trim()].filter(Boolean).join(' — '),
       order_source: 'customer application',
+      order_type: CUSTOMER_APP_ORDER_TYPE,
       status: 'pending',
       payment_status: 'unpaid',
       // Nobody has agreed to collect this yet — the call center's confirmation
@@ -2326,7 +2449,8 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
         parcel_description: it.variant_label ? `${it.name} (${it.variant_label})` : it.name,
         // The shop_inventory product this line came from. `it.id` is the cart
         // line key, which encodes the variant — the product id is separate.
-        shop_item_id: it.shop_item_id || it.id,
+        // Only shop_inventory lines carry a shop_item_id; catalog lines don't.
+        shop_item_id: it.shop_item_id || null,
         variant_color: it.color || null,
         variant_size:  it.size  || null,
         supplier_id: it.owner_contact_id || null,
@@ -2410,9 +2534,9 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       </main>
       {cart.length > 0 && (
         <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-sky-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(14,165,233,0.28)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
-          <button onClick={placeOrder} disabled={placing}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
-            {placing ? t('placingOrder') : t('placeOrder')}
+          <button onClick={placeOrder} disabled={placing || addressLoading || !address.trim()}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+            {placing ? t('placingOrder') : addressLoading ? t('loadingAddress') : t('placeOrder')}
           </button>
         </div>
       )}
@@ -2699,6 +2823,9 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
   const { t } = useI18n()
   const [customers, setCustomers] = useState([])
   const [addresses, setAddresses] = useState([])
+  // Saved addresses are fetched after the customer loads; the request can't be
+  // submitted until they're in, so the prefilled locations are never missed.
+  const [addrLoading, setAddrLoading] = useState(true)
   const [customerId, setCustomerId] = useState('')
   const [pickupAddress, setPickupAddress] = useState('')
   const [deliveryAddress, setDeliveryAddress] = useState('')
@@ -2758,6 +2885,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
     setDeliveryAddress(current => current || selectedCustomer.default_delivery_address || selectedCustomer.address || '')
 
     let cancelled = false
+    setAddrLoading(true)
     async function loadAddresses() {
       let query = supabase
         .from('contact_addresses')
@@ -2771,11 +2899,13 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       if (cancelled) return
 
       if (addressError) {
+        setAddrLoading(false)
         setAddresses([])
         return
       }
 
       setAddresses(data || [])
+      setAddrLoading(false)
       const primary = data?.find(address => address.is_primary) || data?.[0]
       const primaryText = addressText(primary)
       if (primaryText) {
@@ -2860,6 +2990,7 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       order_details_text: orderDetailsText,
       special_instructions: notes.trim() || null,
       order_source: 'customer application',
+      order_type: CUSTOMER_APP_ORDER_TYPE,
       status: 'pending',
       payment_status: 'unpaid',
       // Nobody has agreed to collect this yet — the call center's confirmation
@@ -3008,8 +3139,9 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
         )}
 
         <div className="fixed bottom-[76px] left-0 z-20 w-full max-w-full px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95">
-          <button type="button" onClick={submitRequest} disabled={saving || loading} className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-            {saving ? t('submitting') : t('submitRequest')}
+          <button type="button" onClick={submitRequest} disabled={saving || loading || addrLoading}
+            className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+            {saving ? t('submitting') : (loading || addrLoading) ? t('loadingAddress') : t('submitRequest')}
           </button>
         </div>
       </main>
@@ -4201,15 +4333,15 @@ export default function CustomerMobileApp() {
   // Cart lines hold stock in the supplier's inventory (fix113): every change
   // here mirrors into shop_reservations so the shop owner sees what is
   // reserved. All best-effort — a failed reservation never blocks shopping.
-  const holdLine = (line) => reserveCartLine({
-    itemId: line.shop_item_id || line.id,
+  const holdLine = (line) => (line.shop_item_id ? reserveCartLine({
+    itemId: line.shop_item_id,
     ownerContactId: line.owner_contact_id,
     customerId: customerSession?.contact_id,
     cartLineKey: line.id,
     variantLabel: line.variant_label,
     quantity: line.qty,
     companyId: COMPANY_ID,
-  })
+  }) : undefined)
   const dropLine = (id) => releaseCartLine({ customerId: customerSession?.contact_id, cartLineKey: id })
 
   const addToCart = (item) => setCart(prev => {
