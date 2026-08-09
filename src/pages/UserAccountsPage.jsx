@@ -131,6 +131,10 @@ export default function UserAccountsPage() {
   // Supplier & Partner contacts — a login for either role MUST be linked to one
   // (via contact_id) so the 2nd-party user only sees their own orders.
   const [partyContacts, setPartyContacts] = useState([])
+  /* The contact each login is linked to, by id. The signed-in name comes from
+     this contact (verify_login returns COALESCE(contact.first_name, username)),
+     so a wrong link makes the header show somebody else — worth showing here. */
+  const [linkedContacts, setLinkedContacts] = useState({})
   const isPartyRole = form.role === 'supplier' || form.role === 'partner'
 
   const BASE_COLS   = 'id,username,email,mobile,role,status,contact_id,last_login_at,must_change_password,created_at'
@@ -138,11 +142,13 @@ export default function UserAccountsPage() {
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
-    const load = (cols) => supabase
-      .from('user_accounts')
-      .select(cols)
-      .neq('role', 'super_admin')                  // exclude the top-level admin
-      .order('created_at', { ascending: true })
+    // A super admin manages every account, including other super admins. Plain
+    // admins never see super-admin rows.
+    const load = (cols) => {
+      let q = supabase.from('user_accounts').select(cols)
+      if (!isSuperAdmin) q = q.neq('role', 'super_admin')
+      return q.order('created_at', { ascending: true })
+    }
 
     let { data, error: e } = await load(BASE_COLS + DEVICE_COLS)
     // The device columns arrive with supabase-fix101.sql; until it's applied,
@@ -152,7 +158,7 @@ export default function UserAccountsPage() {
     if (e) setError(friendlyError(e.message))
     else   { setUsers(data ?? []); setError('') }
     setLoading(false)
-  }, [])
+  }, [isSuperAdmin])
 
   useEffect(() => { if (isAdmin) fetchUsers() }, [isAdmin, fetchUsers])
 
@@ -168,6 +174,20 @@ export default function UserAccountsPage() {
       setPartyContacts(data ?? [])
     })()
   }, [isAdmin])
+
+  /* Resolve the contacts the listed logins are linked to, so the page can show
+     WHO each account signs in as — and make a wrong link obvious. */
+  useEffect(() => {
+    const ids = [...new Set(users.map(u => u.contact_id).filter(Boolean))]
+    if (ids.length === 0) { setLinkedContacts({}); return }
+    ;(async () => {
+      const { data } = await supabase
+        .from('contacts')
+        .select('id, first_name, last_name, company_name, code, contact_types')
+        .in('id', ids)
+      setLinkedContacts(Object.fromEntries((data ?? []).map(c => [c.id, c])))
+    })()
+  }, [users])
 
   // Display name for a contact: company first, else person, then code.
   function contactLabel(c) {
@@ -372,6 +392,14 @@ export default function UserAccountsPage() {
                         Must reset
                       </span>
                     )}
+                    {/* The name this account appears under once signed in. */}
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {u.contact_id
+                        ? (linkedContacts[u.contact_id]
+                            ? `Signs in as ${contactLabel(linkedContacts[u.contact_id])}`
+                            : 'Linked contact')
+                        : 'Signs in as the username'}
+                    </p>
                   </td>
                   <td className="px-4 py-3 text-slate-400">{u.email || '—'}</td>
                   <td className="px-4 py-3 text-slate-400">{u.mobile ? formatMobile(u.mobile) : '—'}</td>
@@ -467,10 +495,35 @@ export default function UserAccountsPage() {
             </div>
 
             <div className="p-5 space-y-4">
-              {form.contact_id && (
+              {form.contact_id && isPartyRole && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/10 border border-brand-500/30 text-brand-300 text-[11px]">
                   <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
                   This login will be linked to the selected contact, so they’ll see only their own orders.
+                </div>
+              )}
+
+              {/* An office login carries no scoping, but a linked contact still
+                  supplies the name shown once signed in — so if it points at the
+                  wrong person, that is what everyone sees. Always show it, and
+                  let it be removed. */}
+              {modal !== 'add' && !isPartyRole && form.contact_id && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
+                  <p className="text-[11px] uppercase tracking-wider text-amber-300 font-semibold">Linked contact</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-slate-200 flex-1 truncate">
+                      {linkedContacts[form.contact_id]
+                        ? contactLabel(linkedContacts[form.contact_id])
+                        : 'Unknown contact'}
+                    </span>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, contact_id: '' }))}
+                      className="btn-ghost py-1 px-2 text-[11px] text-slate-300 border border-surface-border hover:text-red-300">
+                      <X className="w-3.5 h-3.5" /> Remove link
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    This account signs in under this name. Remove the link to sign in under the
+                    username instead.
+                  </p>
                 </div>
               )}
               <div>
@@ -625,7 +678,16 @@ export default function UserAccountsPage() {
                 They will be required to change it the next time they sign in.
               </p>
               <div>
-                <label className="label">New password *</label>
+                <div className="flex items-center justify-between">
+                  <label className="label">New password *</label>
+                  {/* Same convenience as creating an account: a strong password
+                      in one click, shown so it can be handed over. */}
+                  <button type="button"
+                    onClick={() => { setResetPw(generatePassword()); setShowPw(true); setResetErr('') }}
+                    className="text-[11px] text-brand-300 hover:text-brand-200 mb-1">
+                    Generate
+                  </button>
+                </div>
                 <div className="relative">
                   <input type={showPw ? 'text' : 'password'} className="input pr-10" value={resetPw}
                     onChange={e => { setResetPw(e.target.value); setResetErr('') }}

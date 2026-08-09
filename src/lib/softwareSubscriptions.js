@@ -9,7 +9,8 @@ import { supabase } from './supabase'
 
    Only the super admin writes here; admins read. */
 
-export const REMINDER_DAYS = 10          // how early the reminder starts
+export const REMINDER_DAYS = 10          // how early the start-up reminder fires
+export const LICENSE_NOTICE_DAYS = 30    // how early the header bar appears
 
 export const CYCLES = [
   { value: 'one_time',   label: 'One-time payment', months: 0  },
@@ -114,10 +115,10 @@ export function subscriptionStatus(row, today = todayStr()) {
    From REMINDER_DAYS before expiry (and after it), unless a CONFIRMED payment
    already covers past the expiry date — that is the "valid renewal, payment
    confirmed" that the reminder must respect. */
-export function needsReminder(row, today = todayStr()) {
+export function needsReminder(row, today = todayStr(), withinDays = REMINDER_DAYS) {
   if (!row || row.is_active === false || !row.expiry_date) return false
   const days = daysUntil(row.expiry_date, today)
-  if (days == null || days > REMINDER_DAYS) return false
+  if (days == null || days > withinDays) return false
   const { coveredUntil } = paymentSummary(row)
   if (coveredUntil && coveredUntil > row.expiry_date) return false
   return true
@@ -165,9 +166,9 @@ export async function fetchSoftwareSubscriptions(companyId = null) {
 
 /* Just what the start-up reminder needs: live subscriptions at or past their
    reminder window, with the payments that might excuse them. */
-export async function fetchDueSoftwareSubscriptions(companyId = null, today = todayStr()) {
+export async function fetchDueSoftwareSubscriptions(companyId = null, { today = todayStr(), withinDays = REMINDER_DAYS } = {}) {
   const limit = new Date(`${today}T00:00:00`)
-  limit.setDate(limit.getDate() + REMINDER_DAYS)
+  limit.setDate(limit.getDate() + withinDays)
   try {
     let q = supabase.from('software_subscriptions').select(SELECT)
       .eq('is_active', true)
@@ -176,7 +177,7 @@ export async function fetchDueSoftwareSubscriptions(companyId = null, today = to
     if (companyId) q = q.eq('company_id', companyId)
     const { data, error } = await q
     if (error) return { rows: [], error: error.message }
-    return { rows: (data ?? []).filter(r => needsReminder(r, today)), error: null }
+    return { rows: (data ?? []).filter(r => needsReminder(r, today, withinDays)), error: null }
   } catch (e) {
     return { rows: [], error: e?.message || '' }
   }

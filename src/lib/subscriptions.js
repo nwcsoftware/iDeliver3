@@ -194,3 +194,41 @@ export function contactLabel(c) {
   const name = (c.company_name?.trim()) || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unnamed'
   return c.code ? `${name} (${c.code})` : name
 }
+
+/* ── expiry notice (the bar in the portal header) ───────────────────────── */
+
+export const SUBSCRIPTION_NOTICE_DAYS = 30
+
+/* Whole days from `today` to `dateStr`; negative once the date has passed. */
+export function daysUntilDate(dateStr, today = todayStr()) {
+  if (!dateStr) return null
+  const a = new Date(`${today}T00:00:00`)
+  const b = new Date(`${dateStr}T00:00:00`)
+  if (isNaN(a) || isNaN(b)) return null
+  return Math.round((b - a) / 86400000)
+}
+
+/* What a 2nd party should be warned about, from their own subscription rows.
+
+   Only a subscription that is PAID and ACTIVE counts as cover, so the notice
+   follows the same rule that lets them sign in. The furthest such end date is
+   their real expiry — a renewal already paid and activated therefore clears the
+   notice by itself. A later row that is not yet paid/activated does not count
+   as cover, but is reported as a pending renewal so the wording can say so.
+
+   Returns null when there is nothing to say. */
+export function subscriptionNotice(rows, today = todayStr(), withinDays = SUBSCRIPTION_NOTICE_DAYS) {
+  const list = rows ?? []
+  const covering = list.filter(r => r.is_paid && r.is_active && r.end_date)
+  const current  = covering.sort((a, b) => String(a.end_date).localeCompare(String(b.end_date))).pop() || null
+
+  // Anything dated past the cover that hasn't been paid/activated yet.
+  const pendingRenewal = list.some(r =>
+    r.end_date && (!current || r.end_date > current.end_date) && !(r.is_paid && r.is_active))
+
+  if (!current) return { row: null, days: null, expired: true, pendingRenewal, none: true }
+
+  const days = daysUntilDate(current.end_date, today)
+  if (days == null || days > withinDays) return null
+  return { row: current, days, expired: days < 0, pendingRenewal, none: false }
+}

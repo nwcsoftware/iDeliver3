@@ -4,6 +4,8 @@ import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, Search, M
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
+import LicenseNotice from '../LicenseNotice'
+import PartnerSubscriptionNotice from '../PartnerSubscriptionNotice'
 
 // Orders still waiting for someone to confirm them — what the "Unconfirmed"
 // chip on the Deliveries page shows. Mirrors DeliveriesPage's isConfirmed
@@ -232,6 +234,14 @@ export default function Header() {
 
       {/* Title */}
       <h1 className="relative text-sm font-semibold text-slate-100 flex-1 drop-shadow">{title}</h1>
+
+      {/* Expiry bar — stays put from a month before expiry until renewal. Each
+          component renders only for the roles it serves: the office sees the
+          company's software licences, a 2nd party sees their own subscription. */}
+      <div className="relative" style={{ WebkitAppRegion: 'no-drag' }}>
+        <LicenseNotice />
+        <PartnerSubscriptionNotice />
+      </div>
 
       {/* Actions */}
       <div
