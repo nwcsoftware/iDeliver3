@@ -456,6 +456,33 @@ export function AppProvider({ children }) {
     })
   }, [fetchOneOrder])
 
+  /* Refresh several orders in one round trip and splice them in. Used after a
+     bulk action, so confirming twenty orders costs one small query instead of
+     re-downloading the whole table. Ids that come back empty are dropped from
+     the list — they no longer exist, or are no longer visible to us. */
+  const refreshOrdersIntoState = useCallback(async (ids) => {
+    const wanted = [...new Set((ids || []).filter(Boolean))]
+    if (wanted.length === 0) return
+    const rows = []
+    for (let i = 0; i < wanted.length; i += 100) {          // stay well inside URL limits
+      let q = supabase.from('delivery_orders').select(ORDER_SELECT).in('id', wanted.slice(i, i + 100))
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data, error } = await q
+      if (error) return
+      if (data) rows.push(...data)
+    }
+    const byId = new Map(rows.map(r => [r.id, r]))
+    const asked = new Set(wanted)
+    setOrders(prev => {
+      const seen = new Set(prev.map(o => o.id))
+      const kept = prev
+        .filter(o => !asked.has(o.id) || byId.has(o.id))     // vanished rows fall out
+        .map(o => byId.get(o.id) ?? o)
+      const added = rows.filter(r => !seen.has(r.id))        // brand-new rows go to the front
+      return added.length ? [...added, ...kept] : kept
+    })
+  }, [])
+
   // Apply a realtime change to the orders array in place. The postgres_changes
   // payload only carries delivery_orders columns (not the nested relations we
   // render), so for insert/update we fetch just that one row; delete removes by id.
@@ -534,6 +561,9 @@ export function AppProvider({ children }) {
     <AppContext.Provider value={{
       drivers, fetchDrivers,
       orders,  fetchOrders,
+      // Targeted refreshes — always prefer these to fetchOrders() after a
+      // mutation: they fetch only the rows that changed.
+      refreshOrder: refreshOrderIntoState, refreshOrders: refreshOrdersIntoState,
       ordersFullyLoaded, loadFullOrderHistory,
       zones,   fetchZones,
       loading, stats,

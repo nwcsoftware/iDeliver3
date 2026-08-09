@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ClipboardPen, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
   Send, CheckCircle2, Ban, PlayCircle, Flag, Undo2, DollarSign, Package,
+  FileText, Upload, Download, Paperclip,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
@@ -25,6 +26,21 @@ const emptyForm = () => ({
 const fmtMoney = (v, c) => `${Number(v || 0).toLocaleString(undefined, {
   minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c || 'USD'}`
 const fmtWhen = ts => (ts ? new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—')
+
+/* The quotation is stored inline on the request as a data URL (fix119), so the
+   document travels with the row. Keep it small — 3 MB is a generous signed
+   quotation and well inside what a text column carries comfortably. */
+const MAX_PDF_MB = 3
+const hasQuotation = r => !!r?.quotation_pdf
+const readPdf = (file) => new Promise((resolve, reject) => {
+  const fr = new FileReader()
+  fr.onload  = () => resolve(String(fr.result))
+  fr.onerror = () => reject(new Error('Could not read the file.'))
+  fr.readAsDataURL(file)
+})
+/* Save it under the request number, whatever the file was called on disk. */
+const quotationName = (r) =>
+  r?.quotation_filename || `${r?.request_no || 'quotation'}.pdf`
 
 /* Settings → Change Requests.
 
@@ -51,6 +67,7 @@ export default function ChangeRequestsPage() {
   const [saving,  setSaving]  = useState(false)
   const [formErr, setFormErr] = useState('')
   const [busyId,  setBusyId]  = useState(null)
+  const [pdfErr,  setPdfErr]  = useState('')      // quotation upload problems
 
   // Super-admin assessment panel + admin rejection reason
   const [assessFor, setAssessFor] = useState(null)
@@ -175,7 +192,10 @@ export default function ChangeRequestsPage() {
   const cancel  = (r) => act(r, { status: 'cancelled' })
 
   function openAssess(r) {
+    setPdfErr('')
     setAssess({
+      quotation_pdf:      r.quotation_pdf      || '',
+      quotation_filename: r.quotation_filename || '',
       classification: r.classification || 'enhancement',
       assessment_summary: r.assessment_summary || '',
       risk_notes: r.risk_notes || '',
@@ -186,17 +206,56 @@ export default function ChangeRequestsPage() {
     })
     setAssessFor(r)
   }
+  /* Attach / replace the quotation PDF on the request being priced. */
+  async function pickPdf(file) {
+    setPdfErr('')
+    if (!file) return
+    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      setPdfErr('The quotation must be a PDF file.'); return
+    }
+    if (file.size > MAX_PDF_MB * 1024 * 1024) {
+      setPdfErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — the limit is ${MAX_PDF_MB} MB.`); return
+    }
+    try {
+      const dataUrl = await readPdf(file)
+      setAssess(a => ({ ...a, quotation_pdf: dataUrl, quotation_filename: file.name }))
+    } catch (e) { setPdfErr(e.message) }
+  }
+
   async function saveAssessment() {
     const r = assessFor
     setBusyId(r.id)
-    const err = await patchChangeRequest(r.id, {
-      ...assess,
+    const stampPdf = assess.quotation_pdf && assess.quotation_pdf !== r.quotation_pdf
+    const who = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
+    const {
+      quotation_pdf, quotation_filename, ...assessment
+    } = assess
+    const base = {
+      ...assessment,
       price: assess.price === '' ? 0 : Number(assess.price),
       status: 'quoted',
-      assessed_by_name: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null,
+      assessed_by_name: who,
       assessed_at: new Date().toISOString(),
       rejection_reason: null, rejected_at: null,
-    })
+    }
+    const withPdf = {
+      ...base,
+      quotation_pdf: quotation_pdf || null,
+      quotation_filename: quotation_filename || null,
+      // Stamp who attached the document, and when — but only on a new upload,
+      // so re-saving the assessment doesn't rewrite the original record.
+      ...(stampPdf
+        ? { quotation_uploaded_at: new Date().toISOString(), quotation_uploaded_by: who }
+        : quotation_pdf ? {} : { quotation_uploaded_at: null, quotation_uploaded_by: null }),
+    }
+
+    let err = await patchChangeRequest(r.id, withPdf)
+    // fix119 not run yet: save the assessment anyway and say what is missing,
+    // rather than losing the whole quote over the attachment.
+    if (err && /quotation_/i.test(err) && /column|schema cache/i.test(err)) {
+      const fallback = await patchChangeRequest(r.id, base)
+      err = fallback || 'The price was saved, but the quotation PDF needs supabase-fix119.sql — run it, then attach the file again.'
+    }
     setBusyId(null); setAssessFor(null)
     if (err) { setError(err); return }
     load()
@@ -329,7 +388,16 @@ export default function ChangeRequestsPage() {
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs">{r.requested_by_name || '—'}</td>
                   <td className="px-4 py-3 text-right text-slate-200 tabular-nums whitespace-nowrap">
-                    {Number(r.price) > 0 ? fmtMoney(r.price, r.currency) : '—'}
+                    <span className="inline-flex items-center gap-1.5">
+                      {Number(r.price) > 0 ? fmtMoney(r.price, r.currency) : '—'}
+                      {hasQuotation(r) && (
+                        <a href={r.quotation_pdf} download={quotationName(r)} onClick={e => e.stopPropagation()}
+                          title={`Download the quotation (${quotationName(r)})`}
+                          className="text-brand-300 hover:text-brand-200">
+                          <Paperclip className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${st.cls}`}>{st.label}</span>
@@ -626,6 +694,20 @@ export default function ChangeRequestsPage() {
                       <span>Price: <b>{Number(view.price) > 0 ? fmtMoney(view.price, view.currency) : 'No charge'}</b></span>
                       <span>Target: {view.target_delivery || '—'}</span>
                     </div>
+                    {hasQuotation(view) && (
+                      <a href={view.quotation_pdf} download={quotationName(view)}
+                        className="mt-2 inline-flex items-center gap-2 rounded-lg border border-brand-500/30 bg-brand-500/10
+                                   px-3 py-2 text-xs text-brand-200 hover:bg-brand-500/15 transition-colors">
+                        <FileText className="w-4 h-4" />
+                        <span className="truncate max-w-[14rem]">{quotationName(view)}</span>
+                        <Download className="w-3.5 h-3.5 ml-auto" />
+                      </a>
+                    )}
+                    {hasQuotation(view) && view.quotation_uploaded_at && (
+                      <p className="text-[11px] text-slate-500">
+                        Quotation attached by {view.quotation_uploaded_by || '—'} · {fmtWhen(view.quotation_uploaded_at)}
+                      </p>
+                    )}
                     <p className="text-[11px] text-slate-500">Assessed by {view.assessed_by_name || '—'} · {fmtWhen(view.assessed_at)}</p>
                     {view.approved_at && (
                       <p className="text-[11px] text-teal-300">Price accepted by {view.approved_by_name || '—'} · {fmtWhen(view.approved_at)}</p>
@@ -704,6 +786,44 @@ export default function ChangeRequestsPage() {
                 <input className="input" value={assess.target_delivery} placeholder="e.g. v3.00.017"
                   onChange={e => setAssess(a => ({ ...a, target_delivery: e.target.value }))} />
               </div>
+
+              {/* The signed quotation, attached to the request itself so the
+                  requester can read the same document the price came from. */}
+              <div>
+                <label className="label">Quotation (PDF)</label>
+                {assess.quotation_pdf ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-hover/40 px-3 py-2">
+                    <FileText className="w-4 h-4 text-brand-300 flex-shrink-0" />
+                    <span className="text-xs text-slate-200 truncate flex-1">
+                      {assess.quotation_filename || 'quotation.pdf'}
+                    </span>
+                    <a href={assess.quotation_pdf} download={assess.quotation_filename || 'quotation.pdf'}
+                      title="Download" className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100">
+                      <Download className="w-3.5 h-3.5" />
+                    </a>
+                    <label title="Replace" className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100 cursor-pointer">
+                      <Upload className="w-3.5 h-3.5" />
+                      <input type="file" accept="application/pdf" className="hidden"
+                        onChange={e => { pickPdf(e.target.files?.[0]); e.target.value = '' }} />
+                    </label>
+                    <button type="button" title="Remove"
+                      onClick={() => setAssess(a => ({ ...a, quotation_pdf: '', quotation_filename: '' }))}
+                      className="btn-ghost p-1.5 text-slate-400 hover:text-red-400">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2 rounded-lg border border-dashed border-surface-border px-3 py-2.5
+                                    text-xs text-slate-400 hover:bg-surface-hover cursor-pointer">
+                    <Upload className="w-4 h-4 text-slate-500" />
+                    Attach the quotation — PDF, up to {MAX_PDF_MB} MB
+                    <input type="file" accept="application/pdf" className="hidden"
+                      onChange={e => { pickPdf(e.target.files?.[0]); e.target.value = '' }} />
+                  </label>
+                )}
+                {pdfErr && <p className="text-[11px] text-red-400 mt-1">{pdfErr}</p>}
+              </div>
+
               <p className="text-[11px] text-slate-500">
                 Saving sends the quote back to the requester. No work starts until they accept the price.
               </p>

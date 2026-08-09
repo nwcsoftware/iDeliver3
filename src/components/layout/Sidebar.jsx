@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -54,6 +54,8 @@ const settingsSubItems = [
   { to: '/settings/users',        icon: UserCog,   label: 'User Accounts' },
   // Admins may view/search the list; only the super admin can change it.
   { to: '/settings/subscriptions', icon: CreditCard, label: 'Subscriptions' },
+  // The company's own software subscriptions — admins read, super admin edits.
+  { to: '/settings/software-subscriptions', icon: AppWindow, label: 'Software Subscriptions' },
   // Admins raise change requests here; the super admin prices and approves them.
   { to: '/settings/change-requests', icon: ClipboardPen, label: 'Change Requests' },
 ]

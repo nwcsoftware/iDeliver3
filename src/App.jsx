@@ -33,12 +33,14 @@ import UserAccountsPage       from './pages/UserAccountsPage'
 import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
+import SoftwareSubscriptionsPage from './pages/SoftwareSubscriptionsPage'
 import ChangeRequestsPage     from './pages/ChangeRequestsPage'
 import PackageLabelsPage      from './pages/PackageLabelsPage'
 import DeveloperAccountPage    from './pages/DeveloperAccountPage'
 import AppSettingsPage         from './pages/AppSettingsPage'
 import MessagesPage            from './pages/MessagesPage'
 import BroadcastPopup         from './components/messages/BroadcastPopup'
+import SoftwareSubscriptionAlert from './components/SoftwareSubscriptionAlert'
 import ResetOrdersPage        from './pages/ResetOrdersPage'
 import DeleteOrderPage         from './pages/DeleteOrderPage'
 import DeleteOrdersRangePage   from './pages/DeleteOrdersRangePage'
@@ -94,6 +96,8 @@ function AppShell() {
       <HashRouter>
         <div className="h-screen flex flex-col overflow-hidden">
           <BroadcastPopup />
+          {/* "Your software subscription is due" — office roles, once per launch. */}
+          <SoftwareSubscriptionAlert />
           <Header />
           <div className="flex flex-1 overflow-hidden">
             <Sidebar />
@@ -132,6 +136,7 @@ function AppShell() {
                 <Route path="/settings/shop-categories" element={<ShopCategoriesPage />} />
                 <Route path="/settings/header-background" element={<HeaderBackgroundPage />} />
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
+                <Route path="/settings/software-subscriptions" element={<SoftwareSubscriptionsPage />} />
                 <Route path="/settings/change-requests" element={<ChangeRequestsPage />} />
                 <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
                 <Route path="/settings/delete-orders-range" element={<DeleteOrdersRangePage />} />

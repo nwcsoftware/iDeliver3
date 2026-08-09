@@ -732,7 +732,7 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DeliveriesPage({ closed = false, partyContactId = null }) {
-  const { orders, drivers, zones, fetchOrders, loading, COMPANY_ID, showSummary, appSettings } = useApp()
+  const { orders, drivers, zones, refreshOrder, loading, COMPANY_ID, showSummary, appSettings } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
   // Minutes before an order's scheduled start time at which its row turns red (0 = off).
@@ -741,7 +741,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [now, setNow] = useState(() => Date.now())
 
   // Keep the user on the order they just acted on. Changing a status/payment/etc.
-  // calls fetchOrders(), which briefly flips the list to a "Loading…" row — that
+  // refreshes that row, which can reflow the list — the browser then jumps to the
   // collapses the page height and the browser jumps to the top. We record the
   // touched order and re-scroll to it (and flash it) after every refresh, whether
   // that's an in-place data update or a full page reload.
@@ -1244,13 +1244,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // dropped from the reminder IMMEDIATELY and UNCONDITIONALLY (before/ regardless of
   // the network round-trip) so the popup closes at once and never re-shows this
   // session — the DB write + refetch then persist the confirmation.
-  async function activateAd(adId) {
+  async function activateAd(adId, orderId) {
     setAdsIgnored(prev => new Set(prev).add(adId))
     setAdActivating(adId)
     const { error } = await supabase.from('ads').update({ confirmed_ads: true }).eq('id', adId)
     setAdActivating(null)
     if (error) { setError(`Could not activate the ad: ${error.message}`) }
-    await fetchOrders()
+    await refreshOrder(orderId)
   }
   const ignoreAd = adId => setAdsIgnored(prev => new Set(prev).add(adId))
 
@@ -2075,7 +2075,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     }).eq('id', o.id)
     if (ue) { setPayError(ue.message); setPaySaving(false); return }
 
-    await fetchOrders(); closePay(); setPaySaving(false)
+    await refreshOrder(o.id); closePay(); setPaySaving(false)
   }
 
   /* ── items helpers ───────────────────────────────────────── */
@@ -2524,7 +2524,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       }
     }
 
-    await fetchOrders(); closeModal(); setSaving(false)
+    await refreshOrder(orderId); closeModal(); setSaving(false)
   }
 
   /* ── toggle cancel ───────────────────────────────────────── */
@@ -2563,7 +2563,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     await supabase.from('delivery_orders')
       .update({ driver_id: driverId || null, ...confirmOnAssignPatch(order) })
       .eq('id', order.id)
-    await fetchOrders()
+    await refreshOrder(order.id)
     setQuickBusy(false); setPopover(null)
   }
 
@@ -2581,7 +2581,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       patch.delivery_status = 'In Transit'
     }
     await supabase.from('delivery_orders').update(patch).eq('id', order.id)
-    await fetchOrders()
+    await refreshOrder(order.id)
     setQuickBusy(false); setPopover(null)
   }
 
@@ -2599,7 +2599,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       currency,
       total_amount: Math.max(0, totals[currency] || 0),
     }).eq('id', order.id)
-    await fetchOrders()
+    await refreshOrder(order.id)
     setQuickBusy(false); setPopover(null)
   }
 
@@ -2640,7 +2640,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         } : {}),
       })
       .eq('id', order.id)
-    await fetchOrders()
+    await refreshOrder(order.id)
     setQuickBusy(false); setPopover(null)
   }
 
@@ -2650,7 +2650,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     rememberOrder(o.id)
     setToggling(o.id)
     await supabase.from('delivery_orders').update({ is_flagged: !isFlagged(o) }).eq('id', o.id)
-    await fetchOrders()
+    await refreshOrder(o.id)
     setToggling(null)
   }
 
@@ -2663,7 +2663,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     if (['cancelled', 'failed'].includes(o.status)) {
       setToggling(o.id)
       await supabase.from('delivery_orders').update({ status: 'pending' }).eq('id', o.id)
-      await fetchOrders()
+      await refreshOrder(o.id)
       setToggling(null)
       return
     }
@@ -2716,7 +2716,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       cancellation_requested_by: currentUser?.user_id || null,
       cancellation_requested_at: new Date().toISOString(),
     }).eq('id', o.id)
-    await fetchOrders()
+    await refreshOrder(o.id)
     setToggling(null)
     setCancelModal(null)
   }
@@ -2736,7 +2736,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       closed_by: currentUser?.user_id || null,
       closed_by_name: currentUserName,
     }).eq('id', o.id)
-    await fetchOrders()
+    await refreshOrder(o.id)
     setToggling(null)
   }
 
@@ -2753,7 +2753,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       closed_by: null,
       closed_by_name: null,
     }).eq('id', o.id)
-    await fetchOrders()
+    await refreshOrder(o.id)
     setToggling(null)
   }
 
@@ -2790,7 +2790,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         : (e.message || 'Could not lock the order.'))
       return
     }
-    await fetchOrders()
+    await refreshOrder(modal.id)
     setModal(m => (m && m !== 'add')
       ? { ...m, is_locked: true, is_locked_by: currentUserName, why_is_locked: why }
       : m)
@@ -2807,7 +2807,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     }).eq('id', modal.id)
     setToggling(null)
     if (e) { setError(e.message || 'Could not unlock the order.'); return }
-    await fetchOrders()
+    await refreshOrder(modal.id)
     setModal(m => (m && m !== 'add')
       ? { ...m, is_locked: false, is_locked_by: null, why_is_locked: null }
       : m)
@@ -4992,7 +4992,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </div>
                   <p className="text-[11px] text-slate-500">This ad is scheduled to start now.</p>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => activateAd(ad.id)} disabled={adActivating === ad.id}
+                    <button onClick={() => activateAd(ad.id, order.id)} disabled={adActivating === ad.id}
                       className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
                       <Check className="w-3.5 h-3.5" /> {adActivating === ad.id ? 'Activating…' : 'Activate now'}
                     </button>
