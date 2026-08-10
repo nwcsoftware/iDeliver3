@@ -76,8 +76,9 @@ export default function ChangeRequestsPage() {
   const [rejectFor, setRejectFor] = useState(null)
   const [rejectWhy, setRejectWhy] = useState('')
   // The admin's counter-proposal, and the conversation behind the open request.
+  const [acceptFor, setAcceptFor] = useState(null)   // agreeing is a two-step act
   const [reviseFor, setReviseFor] = useState(null)
-  const [revise,    setRevise]    = useState({ price: '', message: '' })
+  const [revise,    setRevise]    = useState({ message: '' })
   const [history,   setHistory]   = useState([])
   const [historyErr, setHistoryErr] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -305,12 +306,11 @@ export default function ChangeRequestsPage() {
     if (!err) {
       await record({
         request_id: r.id, round: Number(r.quote_round || 1), action: 'revision_requested',
-        price: revise.price === '' ? null : Number(revise.price),
         currency: r.currency || 'USD',
         message: revise.message.trim() || null,
       })
     }
-    setBusyId(null); setReviseFor(null); setRevise({ price: '', message: '' })
+    setBusyId(null); setReviseFor(null); setRevise({ message: '' })
     if (err) { setError(err); return }
     setView(null); load()
   }
@@ -357,6 +357,10 @@ export default function ChangeRequestsPage() {
   }
 
   const mine = (r) => r.requested_by === currentUser?.user_id
+  /* Answering a quotation is an administration decision, not a personal one —
+     any admin (not only the colleague who raised it) may agree to the price or
+     send it back for revision. Editing and withdrawing stay with the raiser. */
+  const canAnswerQuote = (r) => r?.status === 'quoted' && canView
   const meName = () =>
     `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
   /* Record a step, and surface a missing-ledger hint without failing the action
@@ -492,12 +496,12 @@ export default function ChangeRequestsPage() {
                         <button onClick={() => recall(r)} disabled={busyId === r.id} title="Recall to draft"
                           className="btn-ghost p-1.5 text-slate-400 hover:text-amber-300"><Undo2 className="w-4 h-4" /></button>
                       )}
-                      {r.status === 'quoted' && (mine(r) || isSuperAdmin) && (
+                      {canAnswerQuote(r) && (
                         <>
-                          <button onClick={() => { setRevise({ price: '', message: '' }); setReviseFor(r) }} disabled={busyId === r.id}
+                          <button onClick={() => { setRevise({ message: '' }); setReviseFor(r) }} disabled={busyId === r.id}
                             title="Please revise — send it back with the price you propose"
                             className="btn-ghost p-1.5 text-orange-300 hover:text-orange-200"><MessageSquare className="w-4 h-4" /></button>
-                          <button onClick={() => acceptQuote(r)} disabled={busyId === r.id}
+                          <button onClick={() => setAcceptFor(r)} disabled={busyId === r.id}
                             title={`Agree to the quoted price${Number(r.price) > 0 ? ` (${fmtMoney(r.price, r.currency)})` : ''} and proceed`}
                             className="btn-ghost p-1.5 text-teal-300 hover:text-teal-200"><CheckCircle2 className="w-4 h-4" /></button>
                         </>
@@ -830,7 +834,7 @@ export default function ChangeRequestsPage() {
                             <div className="flex items-center gap-3 mt-1 flex-wrap">
                               {h.price != null && (
                                 <span className="text-slate-200 text-xs">
-                                  {h.action === 'revision_requested' ? 'Proposed' : 'Price'}:
+                                  Price:
                                   <b className="ml-1">{fmtMoney(h.price, h.currency)}</b>
                                 </span>
                               )}
@@ -861,15 +865,15 @@ export default function ChangeRequestsPage() {
                 )}
               </div>
               <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
-                {view.status === 'quoted' && (mine(view) || isSuperAdmin) && (
+                {canAnswerQuote(view) && (
                   <>
                     <button
-                      onClick={() => { setRevise({ price: '', message: '' }); setReviseFor(view) }}
+                      onClick={() => { setRevise({ message: '' }); setReviseFor(view) }}
                       title="Send it back with the price you have in mind"
                       className="btn-ghost px-4 py-2 text-sm border border-orange-500/40 text-orange-300 hover:bg-orange-500/10">
                       <MessageSquare className="w-4 h-4" /> Please revise
                     </button>
-                    <button onClick={() => { acceptQuote(view); setView(null) }} className="btn-primary px-4 py-2 text-sm">
+                    <button onClick={() => setAcceptFor(view)} className="btn-primary px-4 py-2 text-sm">
                       <CheckCircle2 className="w-4 h-4" /> Agree &amp; proceed
                     </button>
                   </>
@@ -997,6 +1001,58 @@ export default function ChangeRequestsPage() {
         </div>
       )}
 
+      {/* ── Agreeing to a quotation: step two ──────────────────── */}
+      {acceptFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[80] p-4"
+          onClick={() => busyId !== acceptFor.id && setAcceptFor(null)}>
+          <div className="card w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-teal-300 flex-shrink-0" />
+              <h3 className="text-sm font-semibold text-slate-100">
+                Agree to this quotation — {acceptFor.request_no}
+              </h3>
+            </div>
+
+            <div className="rounded-lg border border-surface-border bg-surface-hover/40 px-3 py-2.5 space-y-1">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[11px] uppercase tracking-wider text-slate-500">Agreed price</span>
+                <b className="text-base text-slate-100">{fmtMoney(acceptFor.price, acceptFor.currency)}</b>
+              </div>
+              {acceptFor.ready_by && (
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[11px] uppercase tracking-wider text-slate-500">Ready by</span>
+                  <span className="text-xs text-teal-300">{acceptFor.ready_by}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Spell out the consequences before the second click. */}
+            <div className="text-xs text-slate-400 space-y-1.5">
+              <p className="text-slate-300">What happens next:</p>
+              <p>· The price above is accepted on behalf of the administration and becomes chargeable.</p>
+              <p>· Development starts{acceptFor.ready_by ? `, to be ready by ${acceptFor.ready_by}` : ''}.</p>
+              <p>· The request is locked — it can no longer be edited or withdrawn.</p>
+              <p>· Your acceptance is recorded in the quotation history with your name and today’s date.</p>
+              <p className="text-amber-300/90">If the price or the scope still needs discussion, cancel and use “Please revise” instead.</p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setAcceptFor(null)} disabled={busyId === acceptFor.id}
+                className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button
+                onClick={async () => { const r = acceptFor; await acceptQuote(r); setAcceptFor(null); setView(null) }}
+                disabled={busyId === acceptFor.id}
+                className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
+                {busyId === acceptFor.id
+                  ? <Loader className="w-4 h-4 animate-spin" />
+                  : <CheckCircle2 className="w-4 h-4" />}
+                Yes, I agree — proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Admin asks for a revised price ─────────────────────── */}
       {reviseFor && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[75] p-4">
@@ -1006,19 +1062,13 @@ export default function ChangeRequestsPage() {
             </h3>
             <p className="text-[11px] text-slate-400">
               Quoted at <b className="text-slate-200">{fmtMoney(reviseFor.price, reviseFor.currency)}</b>.
-              Say what you would agree to; the request goes back for a new quotation.
+              Send it back with your comments and it will be reviewed again.
             </p>
             <div>
-              <label className="label">Price you propose ({reviseFor.currency || 'USD'})</label>
-              <input type="number" min="0" step="0.01" className="input" autoFocus
-                value={revise.price} placeholder="Optional"
-                onChange={e => setRevise(v => ({ ...v, price: e.target.value }))} />
-            </div>
-            <div>
               <label className="label">Message *</label>
-              <textarea className="input min-h-[80px] resize-y" value={revise.message}
+              <textarea className="input min-h-[100px] resize-y" value={revise.message} autoFocus
                 onChange={e => setRevise(v => ({ ...v, message: e.target.value }))}
-                placeholder="Why the quoted price doesn’t work, or what to change in the scope…" />
+                placeholder="What should be reconsidered or changed in the scope…" />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={() => setReviseFor(null)}
