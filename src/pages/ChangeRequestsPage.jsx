@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ClipboardPen, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
   Send, CheckCircle2, Ban, PlayCircle, Flag, Undo2, DollarSign, Package,
-  FileText, Upload, Download, Paperclip,
+  FileText, Upload, Download, Paperclip, MessageSquare, History, CalendarCheck,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
@@ -10,6 +10,7 @@ import {
   REQUEST_TYPES, MODULES, PRIORITIES, LINE_TYPES, CLASSIFICATIONS, STATUSES,
   adminCanEdit, needsSuperAdmin, needsAdmin, nextRequestNo,
   fetchChangeRequests, saveChangeRequest, patchChangeRequest, deleteChangeRequest, isMissingTable,
+  fetchQuoteHistory, logQuoteEvent, QUOTE_ACTIONS, isMissingQuoteLedger,
 } from '../lib/changeRequests'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
@@ -74,6 +75,11 @@ export default function ChangeRequestsPage() {
   const [assess,    setAssess]    = useState({})
   const [rejectFor, setRejectFor] = useState(null)
   const [rejectWhy, setRejectWhy] = useState('')
+  // The admin's counter-proposal, and the conversation behind the open request.
+  const [reviseFor, setReviseFor] = useState(null)
+  const [revise,    setRevise]    = useState({ price: '', message: '' })
+  const [history,   setHistory]   = useState([])
+  const [historyErr, setHistoryErr] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
 
   const load = useCallback(async () => {
@@ -85,6 +91,19 @@ export default function ChangeRequestsPage() {
   }, [COMPANY_ID])
 
   useEffect(() => { if (canView) load() }, [canView, load])
+
+  /* The pricing conversation for the request being viewed. */
+  useEffect(() => {
+    if (!view?.id) { setHistory([]); setHistoryErr(''); return }
+    let alive = true
+    ;(async () => {
+      const { rows: h, error: e } = await fetchQuoteHistory(view.id)
+      if (!alive) return
+      setHistory(h)
+      setHistoryErr(isMissingQuoteLedger(e) ? 'Quotation history needs supabase-fix120.sql.' : (e || ''))
+    })()
+    return () => { alive = false }
+  }, [view?.id])
 
   const counts = useMemo(() => ({
     forSuperAdmin: rows.filter(needsSuperAdmin).length,
@@ -196,6 +215,7 @@ export default function ChangeRequestsPage() {
     setAssess({
       quotation_pdf:      r.quotation_pdf      || '',
       quotation_filename: r.quotation_filename || '',
+      ready_by:           r.ready_by           || '',
       classification: r.classification || 'enhancement',
       assessment_summary: r.assessment_summary || '',
       risk_notes: r.risk_notes || '',
@@ -225,6 +245,7 @@ export default function ChangeRequestsPage() {
   async function saveAssessment() {
     const r = assessFor
     setBusyId(r.id)
+    const round = Number(r.quote_round || 0) + 1
     const stampPdf = assess.quotation_pdf && assess.quotation_pdf !== r.quotation_pdf
     const who = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
     const {
@@ -237,6 +258,10 @@ export default function ChangeRequestsPage() {
       assessed_by_name: who,
       assessed_at: new Date().toISOString(),
       rejection_reason: null, rejected_at: null,
+      // Each send is a new round; the admin may bounce it back any number of
+      // times before the price is agreed.
+      quote_round: round,
+      ready_by: assess.ready_by || null,
     }
     const withPdf = {
       ...base,
@@ -256,9 +281,38 @@ export default function ChangeRequestsPage() {
       const fallback = await patchChangeRequest(r.id, base)
       err = fallback || 'The price was saved, but the quotation PDF needs supabase-fix119.sql — run it, then attach the file again.'
     }
+    if (!err) {
+      await record({
+        request_id: r.id, round, action: 'quoted',
+        price: base.price, currency: base.currency || 'USD',
+        message: assess.assessment_summary || null,
+        ready_by: assess.ready_by || null,
+        quotation_pdf: quotation_pdf || null, quotation_filename: quotation_filename || null,
+      })
+    }
     setBusyId(null); setAssessFor(null)
     if (err) { setError(err); return }
     load()
+  }
+
+  /* The admin doesn't accept the quote: they send it back with the price they
+     have in mind. The request returns to the super admin, who may re-quote —
+     with a fresh PDF — as many times as it takes. */
+  async function sendRevision() {
+    const r = reviseFor
+    setBusyId(r.id)
+    const err = await patchChangeRequest(r.id, { status: 'revision_requested' })
+    if (!err) {
+      await record({
+        request_id: r.id, round: Number(r.quote_round || 1), action: 'revision_requested',
+        price: revise.price === '' ? null : Number(revise.price),
+        currency: r.currency || 'USD',
+        message: revise.message.trim() || null,
+      })
+    }
+    setBusyId(null); setReviseFor(null); setRevise({ price: '', message: '' })
+    if (err) { setError(err); return }
+    setView(null); load()
   }
 
   async function doReject() {
@@ -268,18 +322,29 @@ export default function ChangeRequestsPage() {
       status: 'rejected', rejection_reason: rejectWhy.trim() || 'No reason given',
       rejected_at: new Date().toISOString(),
     })
+    if (!err) {
+      await record({
+        request_id: r.id, round: Number(r.quote_round || 0), action: 'rejected',
+        message: rejectWhy.trim() || 'No reason given',
+      })
+    }
     setBusyId(null); setRejectFor(null); setRejectWhy('')
     if (err) { setError(err); return }
     load()
   }
 
-  // The requesting admin accepts the quoted price → work may start.
+  // The requesting admin accepts the standing quote → the price is agreed and
+  // work may start. The promised delivery date rides on the accepted quote.
   async function acceptQuote(r) {
     await act(r, {
       status: 'approved',
       approved_by: currentUser?.user_id || null,
-      approved_by_name: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null,
+      approved_by_name: meName(),
       approved_at: new Date().toISOString(),
+    })
+    await record({
+      request_id: r.id, round: Number(r.quote_round || 1), action: 'accepted',
+      price: r.price, currency: r.currency || 'USD', ready_by: r.ready_by || null,
     })
   }
 
@@ -292,6 +357,20 @@ export default function ChangeRequestsPage() {
   }
 
   const mine = (r) => r.requested_by === currentUser?.user_id
+  const meName = () =>
+    `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
+  /* Record a step, and surface a missing-ledger hint without failing the action
+     the user just took — the request itself is already updated by then. */
+  const record = async (entry) => {
+    const err = await logQuoteEvent({
+      actor_id: currentUser?.user_id || null, actor_name: meName(),
+      actor_role: isSuperAdmin ? 'super_admin' : 'admin',
+      ...entry,
+    })
+    if (err) setError(isMissingQuoteLedger(err)
+      ? 'The step was applied, but its history needs supabase-fix120.sql.'
+      : err)
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -414,14 +493,19 @@ export default function ChangeRequestsPage() {
                           className="btn-ghost p-1.5 text-slate-400 hover:text-amber-300"><Undo2 className="w-4 h-4" /></button>
                       )}
                       {r.status === 'quoted' && (mine(r) || isSuperAdmin) && (
-                        <button onClick={() => acceptQuote(r)} disabled={busyId === r.id}
-                          title={`Accept the quoted price${Number(r.price) > 0 ? ` (${fmtMoney(r.price, r.currency)})` : ''} and confirm development`}
-                          className="btn-ghost p-1.5 text-teal-300 hover:text-teal-200"><CheckCircle2 className="w-4 h-4" /></button>
+                        <>
+                          <button onClick={() => { setRevise({ price: '', message: '' }); setReviseFor(r) }} disabled={busyId === r.id}
+                            title="Please revise — send it back with the price you propose"
+                            className="btn-ghost p-1.5 text-orange-300 hover:text-orange-200"><MessageSquare className="w-4 h-4" /></button>
+                          <button onClick={() => acceptQuote(r)} disabled={busyId === r.id}
+                            title={`Agree to the quoted price${Number(r.price) > 0 ? ` (${fmtMoney(r.price, r.currency)})` : ''} and proceed`}
+                            className="btn-ghost p-1.5 text-teal-300 hover:text-teal-200"><CheckCircle2 className="w-4 h-4" /></button>
+                        </>
                       )}
 
                       {/* Super admin: assess / reject / progress */}
-                      {isSuperAdmin && ['submitted', 'quoted', 'approved'].includes(r.status) && (
-                        <button onClick={() => openAssess(r)} title="Assess & price"
+                      {isSuperAdmin && ['submitted', 'quoted', 'revision_requested', 'approved'].includes(r.status) && (
+                        <button onClick={() => openAssess(r)} title={Number(r.quote_round || 0) > 0 ? 'Re-quote — send a revised price' : 'Assess & price'}
                           className="btn-ghost p-1.5 text-amber-300 hover:text-amber-200"><DollarSign className="w-4 h-4" /></button>
                       )}
                       {isSuperAdmin && !['rejected', 'completed'].includes(r.status) && (
@@ -708,10 +792,63 @@ export default function ChangeRequestsPage() {
                         Quotation attached by {view.quotation_uploaded_by || '—'} · {fmtWhen(view.quotation_uploaded_at)}
                       </p>
                     )}
+                    {view.ready_by && (
+                      <p className="text-xs text-slate-300 flex items-center gap-1.5">
+                        <CalendarCheck className="w-3.5 h-3.5 text-teal-300" />
+                        Ready by <b>{view.ready_by}</b>
+                        {view.status !== 'approved' && <span className="text-slate-500">(once the price is agreed)</span>}
+                      </p>
+                    )}
                     <p className="text-[11px] text-slate-500">Assessed by {view.assessed_by_name || '—'} · {fmtWhen(view.assessed_at)}</p>
                     {view.approved_at && (
                       <p className="text-[11px] text-teal-300">Price accepted by {view.approved_by_name || '—'} · {fmtWhen(view.approved_at)}</p>
                     )}
+                  </div>
+                )}
+
+                {/* Every step of the pricing conversation, oldest first. */}
+                {(history.length > 0 || historyErr) && (
+                  <div>
+                    <p className="label flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Quotation history</p>
+                    {historyErr && <p className="text-[11px] text-amber-300 mb-1.5">{historyErr}</p>}
+                    <div className="space-y-1.5 mt-1">
+                      {history.map(h => {
+                        const meta = QUOTE_ACTIONS[h.action] ?? { label: h.action }
+                        const fromSuper = h.actor_role === 'super_admin'
+                        const tone = h.action === 'accepted' ? 'border-teal-500/30 bg-teal-500/5'
+                          : h.action === 'rejected' ? 'border-red-500/30 bg-red-500/5'
+                          : h.action === 'revision_requested' ? 'border-orange-500/30 bg-orange-500/5'
+                          : 'border-amber-500/30 bg-amber-500/5'
+                        return (
+                          <div key={h.id} className={`rounded-lg border px-3 py-2 ${tone}`}>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-400 flex-wrap">
+                              <span className="uppercase tracking-wider font-semibold text-slate-300">{meta.label}</span>
+                              {h.round ? <span>· round {h.round}</span> : null}
+                              <span>· {fromSuper ? 'NXCORE' : 'Requester'}: {h.actor_name || '—'}</span>
+                              <span className="ml-auto">{fmtWhen(h.created_at)}</span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 flex-wrap">
+                              {h.price != null && (
+                                <span className="text-slate-200 text-xs">
+                                  {h.action === 'revision_requested' ? 'Proposed' : 'Price'}:
+                                  <b className="ml-1">{fmtMoney(h.price, h.currency)}</b>
+                                </span>
+                              )}
+                              {h.ready_by && <span className="text-xs text-slate-400">Ready by {h.ready_by}</span>}
+                              {h.quotation_pdf && (
+                                <a href={h.quotation_pdf} download={h.quotation_filename || `${view.request_no}-r${h.round}.pdf`}
+                                  className="inline-flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200">
+                                  <FileText className="w-3.5 h-3.5" />
+                                  {h.quotation_filename || 'quotation.pdf'}
+                                  <Download className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                            {h.message && <p className="text-slate-300 text-xs mt-1 whitespace-pre-wrap">{h.message}</p>}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
 
@@ -725,9 +862,17 @@ export default function ChangeRequestsPage() {
               </div>
               <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
                 {view.status === 'quoted' && (mine(view) || isSuperAdmin) && (
-                  <button onClick={() => { acceptQuote(view); setView(null) }} className="btn-primary px-4 py-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4" /> Accept price &amp; confirm
-                  </button>
+                  <>
+                    <button
+                      onClick={() => { setRevise({ price: '', message: '' }); setReviseFor(view) }}
+                      title="Send it back with the price you have in mind"
+                      className="btn-ghost px-4 py-2 text-sm border border-orange-500/40 text-orange-300 hover:bg-orange-500/10">
+                      <MessageSquare className="w-4 h-4" /> Please revise
+                    </button>
+                    <button onClick={() => { acceptQuote(view); setView(null) }} className="btn-primary px-4 py-2 text-sm">
+                      <CheckCircle2 className="w-4 h-4" /> Agree &amp; proceed
+                    </button>
+                  </>
                 )}
                 <button onClick={() => setView(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Close</button>
               </div>
@@ -741,7 +886,12 @@ export default function ChangeRequestsPage() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
           <div className="card w-full max-w-lg flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
-              <h3 className="text-sm font-semibold text-slate-100">Assess &amp; price — {assessFor.request_no}</h3>
+              <h3 className="text-sm font-semibold text-slate-100">
+                Assess &amp; price — {assessFor.request_no}
+                <span className="ml-2 text-[11px] font-normal text-slate-400">
+                  quotation #{Number(assessFor.quote_round || 0) + 1}
+                </span>
+              </h3>
               <button onClick={() => setAssessFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
             <div className="p-5 space-y-3 overflow-y-auto">
@@ -781,10 +931,18 @@ export default function ChangeRequestsPage() {
                   </select>
                 </div>
               </div>
-              <div>
-                <label className="label">Target delivery / release</label>
-                <input className="input" value={assess.target_delivery} placeholder="e.g. v3.00.017"
-                  onChange={e => setAssess(a => ({ ...a, target_delivery: e.target.value }))} />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Target delivery / release</label>
+                  <input className="input" value={assess.target_delivery} placeholder="e.g. v3.00.017"
+                    onChange={e => setAssess(a => ({ ...a, target_delivery: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Ready by</label>
+                  <input type="date" className="input" value={assess.ready_by || ''}
+                    onChange={e => setAssess(a => ({ ...a, ready_by: e.target.value }))} />
+                  <p className="text-[11px] text-slate-500 mt-1">The date promised once the price is agreed.</p>
+                </div>
               </div>
 
               {/* The signed quotation, attached to the request itself so the
@@ -825,13 +983,50 @@ export default function ChangeRequestsPage() {
               </div>
 
               <p className="text-[11px] text-slate-500">
-                Saving sends the quote back to the requester. No work starts until they accept the price.
+                Saving sends the quote back to the requester. They may accept it, or ask for a revision —
+                each round is kept with its date and its own PDF. No work starts until the price is agreed.
               </p>
             </div>
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
               <button onClick={() => setAssessFor(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
               <button onClick={saveAssessment} disabled={busyId === assessFor.id} className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
                 {busyId === assessFor.id ? <Loader className="w-4 h-4 animate-spin" /> : 'Send quote'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Admin asks for a revised price ─────────────────────── */}
+      {reviseFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[75] p-4">
+          <div className="card w-full max-w-md p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-100">
+              Ask for a revision — {reviseFor.request_no}
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Quoted at <b className="text-slate-200">{fmtMoney(reviseFor.price, reviseFor.currency)}</b>.
+              Say what you would agree to; the request goes back for a new quotation.
+            </p>
+            <div>
+              <label className="label">Price you propose ({reviseFor.currency || 'USD'})</label>
+              <input type="number" min="0" step="0.01" className="input" autoFocus
+                value={revise.price} placeholder="Optional"
+                onChange={e => setRevise(v => ({ ...v, price: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Message *</label>
+              <textarea className="input min-h-[80px] resize-y" value={revise.message}
+                onChange={e => setRevise(v => ({ ...v, message: e.target.value }))}
+                placeholder="Why the quoted price doesn’t work, or what to change in the scope…" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setReviseFor(null)}
+                className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button onClick={sendRevision} disabled={busyId === reviseFor.id || !revise.message.trim()}
+                className="btn-primary px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                {busyId === reviseFor.id ? <Loader className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+                Please revise
               </button>
             </div>
           </div>

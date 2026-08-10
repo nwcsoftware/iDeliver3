@@ -49,6 +49,7 @@ export const STATUSES = {
   draft:       { label: 'Draft',       cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' },
   submitted:   { label: 'Submitted',   cls: 'bg-brand-500/10 text-brand-300 border-brand-500/30' },
   quoted:      { label: 'Quoted',      cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
+  revision_requested: { label: 'Revision asked', cls: 'bg-orange-500/10 text-orange-300 border-orange-500/30' },
   approved:    { label: 'Approved',    cls: 'bg-teal-500/10 text-teal-300 border-teal-500/30' },
   in_progress: { label: 'In progress', cls: 'bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30' },
   completed:   { label: 'Completed',   cls: 'bg-green-500/10 text-green-300 border-green-500/30' },
@@ -61,8 +62,9 @@ export const STATUSES = {
    submitted. Everything from "quoted" onwards is read-only for them. */
 export const adminCanEdit = (r) => ['draft', 'submitted'].includes(r?.status)
 
-/* Requests waiting on the super admin (the sidebar/notification count). */
-export const needsSuperAdmin = (r) => r?.status === 'submitted'
+/* Requests waiting on the super admin: newly submitted, or sent back by the
+   admin asking for a different price. */
+export const needsSuperAdmin = (r) => ['submitted', 'revision_requested'].includes(r?.status)
 /* Requests waiting on the requesting admin to accept the price. */
 export const needsAdmin = (r) => r?.status === 'quoted'
 
@@ -161,6 +163,62 @@ export async function patchChangeRequest(id, patch) {
 export async function deleteChangeRequest(id) {
   const { error } = await supabase.from('change_requests').delete().eq('id', id)
   return error ? error.message : null
+}
+
+/* ── quotation rounds (fix120) ─────────────────────────────────────────────
+
+   Every step of the pricing conversation is recorded: who did what, when, at
+   what price, and with which PDF. The live figures stay on the request itself;
+   these rows are the history behind them. */
+
+export const QUOTE_ACTIONS = {
+  quoted:             { label: 'Quotation sent',      by: 'super_admin' },
+  revision_requested: { label: 'Revision requested',  by: 'admin' },
+  accepted:           { label: 'Price accepted',      by: 'admin' },
+  rejected:           { label: 'Request rejected',    by: 'super_admin' },
+}
+
+export const isMissingQuoteLedger = (msg = '') =>
+  /change_request_quotes/i.test(msg) && /not exist|schema cache/i.test(msg)
+
+/* The whole conversation for one request, oldest first. */
+export async function fetchQuoteHistory(requestId) {
+  if (!requestId) return { rows: [], error: null }
+  try {
+    const { data, error } = await supabase
+      .from('change_request_quotes')
+      .select('*')
+      .eq('request_id', requestId)
+      .order('created_at', { ascending: true })
+    if (error) return { rows: [], error: error.message }
+    return { rows: data ?? [], error: null }
+  } catch (e) {
+    return { rows: [], error: e?.message || '' }
+  }
+}
+
+/* Record one step. Never fails the caller's action: if fix120 hasn't been run
+   the step simply isn't logged, and the message says so. */
+export async function logQuoteEvent(entry) {
+  try {
+    const { error } = await supabase.from('change_request_quotes').insert([{
+      request_id: entry.request_id,
+      round:      entry.round ?? 1,
+      action:     entry.action,
+      actor_id:   entry.actor_id   || null,
+      actor_name: entry.actor_name || null,
+      actor_role: entry.actor_role || null,
+      price:      entry.price === '' || entry.price == null ? null : Number(entry.price),
+      currency:   entry.currency || 'USD',
+      message:    entry.message  || null,
+      ready_by:   entry.ready_by || null,
+      quotation_pdf:      entry.quotation_pdf      || null,
+      quotation_filename: entry.quotation_filename || null,
+    }])
+    return error ? error.message : null
+  } catch (e) {
+    return e?.message || 'Could not record the quotation step.'
+  }
 }
 
 export const isMissingTable = (msg = '') =>
