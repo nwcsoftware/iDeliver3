@@ -156,7 +156,7 @@ export function orderAmountBreakdown(o, filterContactId = null) {
 
   const buckets = {}   // cur -> category sums
   const bucket = cur => (buckets[cur] ||= {
-    packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0,
+    packages: 0, services: 0, localRetail: 0, externalRetail: 0, ads: 0, fees: 0, discount: 0, vat: 0,
     // Per-line detail (source name + amount) so the popup can itemise each
     // package / service / external invoice when there's more than one.
     packageLines: [], serviceLines: [], externalLines: [],
@@ -195,6 +195,10 @@ export function orderAmountBreakdown(o, filterContactId = null) {
     b.externalLines.push({ name: (r.shop_name || '').trim(), amount: amt, paid: !!r.exclude_calculation })
   }
   if (!filterContactId) {
+    // Ads (Story orders) are sold time rather than goods, but they are money on
+    // the order all the same — orderTotalsByCurrency has always counted them, so
+    // the breakdown must too or the two disagree.
+    for (const a of (o.ads ?? [])) bucket(a.currency || 'USD').ads += Number(a.price) || 0
     if (Number(o.delivery_fee)   > 0) bucket(feeCur).fees       += Number(o.delivery_fee)
     if (Number(o.discount_amount)) bucket(discountCur).discount += Math.abs(Number(o.discount_amount))
     if (Number(o.vat_amount)      > 0) bucket(feeCur).vat        += Number(o.vat_amount)
@@ -211,15 +215,16 @@ export function orderAmountBreakdown(o, filterContactId = null) {
     const services       = round2(b.services)
     const localRetail    = round2(b.localRetail)
     const externalRetail = round2(b.externalRetail)
+    const ads            = round2(b.ads)
     const fees           = round2(b.fees)
     const discount       = round2(b.discount)
     const vat            = round2(b.vat)
-    const total          = round2(packages + services + localRetail + externalRetail + fees - discount + vat)
+    const total          = round2(packages + services + localRetail + externalRetail + ads + fees - discount + vat)
     const coll           = round2(collected[cur] || 0)
     const hasLines       = b.packageLines.length || b.serviceLines.length || b.externalLines.length
     if (total === 0 && coll === 0 && !hasLines) continue
     rows.push({
-      cur, packages, services, localRetail, externalRetail, fees, discount, vat,
+      cur, packages, services, localRetail, externalRetail, ads, fees, discount, vat,
       packageLines: b.packageLines, serviceLines: b.serviceLines, externalLines: b.externalLines,
       total, collected: coll,
       balance:    round2(total - coll),
@@ -306,6 +311,10 @@ export function AmountSummaryContent({ order, filterContactId = null }) {
                 </>)}
                 <CategoryRows groupLabel="External retail invoices" itemLabel="External retail invoice"
                   lines={r.externalLines} sum={r.externalRetail} cur={r.cur} hideName={partyView} />
+                {!partyView && r.ads > 0 && (<>
+                  <span className="text-slate-500">Ads &amp; sponsorships</span>
+                  <span className="text-right">{fmtAmount(r.ads, r.cur)}</span>
+                </>)}
                 {!partyView && (<>
                   <span className="text-slate-500">Delivery fees</span>
                   <span className="text-right">{fmtAmount(r.fees, r.cur)}</span>

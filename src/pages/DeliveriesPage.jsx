@@ -540,6 +540,7 @@ const TOTALS_BREAKDOWN_ROWS = [
   { key: 'services',       label: 'Order services' },
   { key: 'externalRetail', label: 'Local market invoices' },
   { key: 'localRetail',    label: '3asari3 retails' },
+  { key: 'ads',            label: 'Ads & sponsorships' },
   { key: 'fees',           label: 'Delivery fees' },
   { key: 'vat',            label: 'VAT',                      labelCls: 'text-brand-400' },
   { key: 'total',          label: 'Gross amount',             tone: 'strong',  strong: true },
@@ -961,6 +962,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return () => document.removeEventListener('mousedown', onDown)
   }, [filtersOpen, filtersPinned])
   const [totalsExpanded,       setTotalsExpanded]       = useState(false)  // floating-bar breakdown panel
+  // The ads group's own totals panel — folded away by default, and independent
+  // of whether the ads group itself is open.
+  const [adsTotalsOpen,        setAdsTotalsOpen]        = useState(false)
   const [popover,              setPopover]              = useState(null)   // { type:'driver'|'status'|'fee', order, x, y }
   const [hoverSummary,         setHoverSummary]         = useState(null)   // { order, x, y } — amounts preview following the cursor
   const hoverPanelRef = useRef(null)
@@ -1110,10 +1114,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── filter ──────────────────────────────────────────────── */
 
   function matchScheduledDate(o) {
-    // Ads & Services (Story) orders run over a period rather than on a delivery
-    // day, so the scheduled-date range never hides them — every other filter
-    // still applies.
-    if (isStoryOrder(o)) return true
+    // On the daily list, Ads & Services (Story) orders run over a period rather
+    // than on a delivery day, so the scheduled-date range never hides them —
+    // every other filter still applies. Closed Orders is a record of finished
+    // work, so there the date range applies to them like anything else.
+    if (isStoryOrder(o) && !closed) return true
     if (!dateFrom && !dateTo) return true
     const sd = o.scheduled_date ? o.scheduled_date.slice(0, 10) : ''
     if (!sd) return false                              // no date → excluded once a date filter is set
@@ -1396,10 +1401,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      fees, discount, vat, total, collected, balance, to-collect, pending) across
      the filtered orders, per currency — feeds the expandable totals panel on the
      floating bar. Same categories as the per-order amounts popup. */
-  const totalsBreakdown = (() => {
+  const sumBreakdown = (list) => {
     const acc = {}   // cur -> category sums
-    const ensure = cur => (acc[cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, fees: 0, discount: 0, vat: 0, usedPettyCash: 0, total: 0, balance: 0, collectedByDriver: 0, collectedByOffice: 0, pending: 0 })
-    for (const o of filtered) {
+    const ensure = cur => (acc[cur] ||= { packages: 0, services: 0, localRetail: 0, externalRetail: 0, ads: 0, fees: 0, discount: 0, vat: 0, usedPettyCash: 0, total: 0, balance: 0, collectedByDriver: 0, collectedByOffice: 0, pending: 0 })
+    for (const o of list) {
       // 2nd-party view: only this contact's packages / external invoices count.
       for (const r of orderAmountBreakdown(o, partyContactId)) {
         const b = ensure(r.cur)
@@ -1443,7 +1448,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       out.pending = round2(acc[c].collectedByDriver || 0)
       return out
     })
-  })()
+  }
+
+  /* Ads & Services money is reported on its own — an ad is sold time, not a
+     delivery, and mixing it into the delivery figures made both harder to read.
+     On the daily list the ads group carries its own summary (below) and the
+     floating bar's breakdown covers deliveries only. Closed Orders has no ads
+     group, so there everything stays in the one total. */
+  const adsRows      = closed ? [] : filtered.filter(isStoryOrder)
+  const deliveryRows = closed ? filtered : filtered.filter(o => !isStoryOrder(o))
+
+  const totalsBreakdown = sumBreakdown(deliveryRows)
+  const adsBreakdown    = sumBreakdown(adsRows)
 
   // Rows shown in the "Totals breakdown" popup. For 2nd-party (supplier/partner)
   // logins we only surface their own packages + external retail invoices totals;
@@ -3310,6 +3326,75 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   </td>
                 </tr>
               )] : []),
+              // Ads & Services: its own money, summarised under the group header
+              // and folded away separately from the group.
+              ...(g.key === 'story' && adsBreakdown.length > 0 ? [(
+                <tr key="ads-totals" className="bg-fuchsia-500/[0.04] border-b border-surface-border/60">
+                  <td colSpan={partyContactId ? 8 : 10} className="px-0 py-0">
+                    <button type="button" onClick={() => setAdsTotalsOpen(v => !v)}
+                      className="w-full flex items-center gap-2 px-10 py-1.5 hover:bg-surface-hover/40 transition-colors text-left">
+                      {adsTotalsOpen
+                        ? <ChevronDown className="w-3.5 h-3.5 text-fuchsia-300/70 flex-shrink-0" />
+                        : <ChevronRight className="w-3.5 h-3.5 text-fuchsia-300/50 flex-shrink-0" />}
+                      <Megaphone className="w-3.5 h-3.5 text-fuchsia-300/80 flex-shrink-0" />
+                      <span className="text-[11px] font-semibold text-fuchsia-200/90 uppercase tracking-wider">Ads totals</span>
+                      {/* Folded away, the headline figures still read at a glance. */}
+                      {!adsTotalsOpen && (
+                        <span className="text-[11px] text-slate-400 flex items-center gap-3 ml-2">
+                          {adsBreakdown.map(r => (
+                            <span key={r.cur}>
+                              <span className="text-slate-500">Gross</span> {fmtAmount(r.total, r.cur)}
+                              <span className="text-slate-600"> · </span>
+                              <span className="text-slate-500">Pending</span> {fmtAmount(r.balance, r.cur)}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-slate-600 ml-auto">
+                        counted separately from the totals below
+                      </span>
+                    </button>
+
+                    {adsTotalsOpen && (
+                      <div className="px-10 pb-3 pt-1 overflow-x-auto">
+                        <table className="text-xs min-w-[26rem]">
+                          <thead>
+                            <tr>
+                              <th className="text-left font-medium text-slate-500 pr-6 pb-1"></th>
+                              {adsBreakdown.map(r => (
+                                <th key={r.cur} className="text-right font-medium text-slate-400 pl-6 pb-1">{r.cur}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {breakdownRows.map((row, ri) => {
+                              // Only the lines that actually carry a figure for ads.
+                              if (adsBreakdown.every(r => round2(r[row.key] || 0) === 0)) return null
+                              return (
+                                <tr key={row.key} className={ri % 2 ? 'bg-surface-hover/20' : ''}>
+                                  <td className={`pr-6 py-0.5 whitespace-nowrap ${row.labelCls || 'text-slate-400'} ${row.strong ? 'font-semibold text-slate-200' : ''}`}>
+                                    {row.label}
+                                  </td>
+                                  {adsBreakdown.map(r => {
+                                    const v = round2(r[row.key] || 0)
+                                    return (
+                                      <td key={r.cur}
+                                        className={`text-right pl-6 py-0.5 tabular-nums whitespace-nowrap ${
+                                          row.strong ? 'font-semibold text-slate-100' : 'text-slate-300'}`}>
+                                        {row.neg && v !== 0 ? '−' : ''}{fmtAmount(Math.abs(v), r.cur)}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )] : []),
               ...(g.open ? g.orders.map(o => (
               <tr key={o.id} id={`order-row-${o.id}`}
                 onMouseEnter={(e) => setHoverSummary({ order: o, x: e.clientX, y: e.clientY })}
@@ -3647,7 +3732,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             <div className="flex items-center gap-2 px-5 py-2.5 border-b border-surface-border">
               <Receipt className="w-4 h-4 text-blue-300" />
               <span className="text-sm font-semibold text-slate-100">Totals breakdown</span>
-              <span className="text-xs text-slate-500">· {pendingsSummary.count} filtered order{pendingsSummary.count === 1 ? '' : 's'}</span>
+              {/* Count what these figures actually cover: ads are summed in their
+                  own panel inside the Ads & Services group, not here. */}
+              <span className="text-xs text-slate-500">
+                · {deliveryRows.length} {closed ? 'filtered' : 'delivery'} order{deliveryRows.length === 1 ? '' : 's'}
+                {adsRows.length > 0 && (
+                  <span className="text-slate-600"> · {adsRows.length} ad{adsRows.length === 1 ? '' : 's'} counted separately</span>
+                )}
+              </span>
             </div>
             {totalsBreakdown.length === 0 ? (
               <p className="px-5 py-6 text-sm text-slate-500 text-center">No amounts for the current filter.</p>
