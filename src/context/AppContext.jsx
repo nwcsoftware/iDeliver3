@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { supabase, fetchAllRows } from '../lib/supabase'
+import { supabase, fetchAllRows, HEAVY_PAGE_SIZE } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { fetchHeaderBackgrounds, pickCurrent } from '../lib/headerBackground'
 
@@ -421,7 +421,7 @@ export function AppProvider({ children }) {
         q = q.or(`created_at.gte.${cutoff.toISOString()},scheduled_date.gte.${cutoff.toISOString().slice(0, 10)}`)
       }
       return q
-    })
+    }, HEAVY_PAGE_SIZE)
     if (data) {
       // `data` is present even when the fetch ended early, so a slow page never
       // leaves the app with an empty list it will happily render.

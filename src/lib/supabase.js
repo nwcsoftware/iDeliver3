@@ -29,16 +29,35 @@ export const supabase = createClient(
    sort values can be skipped or duplicated across page boundaries. */
 export const PAGE_SIZE = 1000
 
+/* Heavy embedded selects need a smaller page. The `anon` role runs under a
+   short Postgres statement timeout, and one page of 1,000 orders WITH their
+   items, packages, invoices, payments and ads sits right at that limit — under
+   any load it is cancelled ("canceling statement due to statement timeout")
+   and the whole load fails. A few hundred rows per page finishes comfortably
+   and costs only a couple of extra round trips. */
+export const HEAVY_PAGE_SIZE = 300
+
 export async function fetchAllRows(build, pageSize = PAGE_SIZE) {
   const all = []
   for (let page = 0; ; page++) {
-    // One retry per page: these are large embedded selects and a single slow
-    // response (or a dropped connection) used to lose the whole fetch.
-    let { data, error } = await build()
-      .range(page * pageSize, page * pageSize + pageSize - 1)
+    // These are large embedded selects, so a page can be cancelled by the
+    // server's statement timeout. Retry it — and if it failed on time, retry it
+    // in halves, which usually gets under the limit.
+    const from = page * pageSize
+    let { data, error } = await build().range(from, from + pageSize - 1)
     if (error) {
-      ;({ data, error } = await build()
-        .range(page * pageSize, page * pageSize + pageSize - 1))
+      const timedOut = /timeout|canceling statement/i.test(error.message || '')
+      if (timedOut && pageSize > 50) {
+        const half = Math.ceil(pageSize / 2)
+        const a = await build().range(from, from + half - 1)
+        const b = a.error ? a : await build().range(from + half, from + pageSize - 1)
+        if (!a.error && !b.error) {
+          data = [...(a.data ?? []), ...(b.data ?? [])]
+          error = null
+        }
+      } else {
+        ;({ data, error } = await build().range(from, from + pageSize - 1))
+      }
     }
     if (error) {
       // Hand back what DID arrive. A partial list beats an empty screen, and
