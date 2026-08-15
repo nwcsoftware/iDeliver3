@@ -122,3 +122,10 @@ ALTER TABLE driver_settlement_orders ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "dev_anon_driver_settlement_orders" ON driver_settlement_orders;
 CREATE POLICY "dev_anon_driver_settlement_orders" ON driver_settlement_orders
   FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- A view runs with its CREATOR's rights unless told otherwise, which would
+-- bypass row-level security for every anon query (Supabase flags that as
+-- critical). security_invoker makes it run as the CALLER. See fix122.
+ALTER VIEW public.v_daily_order_summary SET (security_invoker = on);
+
+ALTER VIEW public.v_driver_due_to_pay SET (security_invoker = on);

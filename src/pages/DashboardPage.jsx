@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Package, Users, Truck, CheckCircle } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -34,7 +34,10 @@ function buildTrend(orders) {
 }
 
 export default function DashboardPage() {
-  const { stats, orders, drivers } = useApp()
+  const { stats, orders, drivers, loadFullOrderHistory } = useApp()
+  // The startup fetch only covers the last few days; this page reads
+  // further back, so it asks for the full history once.
+  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
 
   const trend   = buildTrend(orders)
   const pieData = [

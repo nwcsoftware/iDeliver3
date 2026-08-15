@@ -19,6 +19,47 @@ module.exports = {
           800: '#3730a3',
           900: '#312e81',
         },
+        /* ── Customer app palette ───────────────────────────────────────
+           The app paints with ROLES, not colour names: `shop` carries the
+           actions, `fresh` the confirmations and stock, `accent` the
+           highlights. Swapping the whole look is therefore this block alone.
+
+           ACTIVE: "Pomegranate & Olive" — pomegranate on cream, olive for
+           anything confirming, souk gold for highlights.
+           Also drafted: "Cedar & Saffron" —
+             shop  600 #0F5132 / 500 #14603A / 100 #E7EFE8 / 50 #FFF7EC
+             fresh 500 #DC9200 · accent 500 #F4A300
+           The page ground (#FFF8EF) and the shadow rgba values in
+           CustomerMobileApp.jsx follow whichever palette is active. */
+        shop: {
+          50:  '#FFF8EF',   // cream ground
+          100: '#FDEBE4',   // warm tint for cards / chips
+          200: '#F6CFC4',
+          300: '#EDA396',
+          400: '#DC6A5C',
+          500: '#C1272D',
+          600: '#B3122B',   // primary
+          700: '#8E0F22',
+          800: '#6B0B19',
+          900: '#4A0711',
+        },
+        fresh: {
+          50:  '#F3F5EC',
+          100: '#E4E9D6',
+          200: '#C9D3AD',
+          300: '#A8B77F',
+          400: '#859B57',
+          500: '#6B8043',
+          600: '#5A6E3A',   // olive — stock, confirmations
+          700: '#45542C',
+          800: '#333F21',
+          900: '#232C17',
+        },
+        accent: {
+          400: '#EFCB5C',
+          500: '#E4B429',   // souk gold
+          600: '#C2951A',
+        },
         surface: {
           DEFAULT: '#0f172a',
           card:    '#1e293b',
@@ -32,6 +73,28 @@ module.exports = {
       // Header bell "ringing" while orders await confirmation: a quick swing
       // every couple of seconds rather than a constant wobble.
       keyframes: {
+        /* Customer app motion. Content arrives rather than appearing: a short
+           rise with a fade, staggered per card by an inline delay. */
+        'rise-in': {
+          '0%':   { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        /* Loading placeholders sweep instead of blinking. */
+        'shimmer': {
+          '0%':   { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        /* The promo band's slow zoom keeps the hero alive without motion sickness. */
+        'ken-burns': {
+          '0%':   { transform: 'scale(1) translateX(0)' },
+          '100%': { transform: 'scale(1.08) translateX(-1.5%)' },
+        },
+        /* Press feedback for cards on touch. */
+        'pop': {
+          '0%':   { transform: 'scale(1)' },
+          '50%':  { transform: 'scale(0.97)' },
+          '100%': { transform: 'scale(1)' },
+        },
         'bell-ring': {
           '0%, 70%, 100%': { transform: 'rotate(0deg)' },
           '75%':           { transform: 'rotate(14deg)' },
@@ -69,6 +132,10 @@ module.exports = {
         'bg-float':  'bg-float 7s ease-in-out infinite',
         'bg-drift':  'bg-drift 26s linear infinite',
         'bg-sway':   'bg-sway 9s ease-in-out infinite',
+        'rise-in':   'rise-in .45s cubic-bezier(.22,1,.36,1) both',
+        'shimmer':   'shimmer 1.6s linear infinite',
+        'ken-burns': 'ken-burns 12s ease-in-out infinite alternate',
+        'pop':       'pop .25s ease-out',
       },
     },
   },

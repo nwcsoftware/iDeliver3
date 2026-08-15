@@ -33,6 +33,11 @@ SELECT
 FROM account_transactions at
 LEFT JOIN contacts c ON c.id = at.customer_id;
 
--- Let the app (anon) read the view. The view runs with its owner's rights, so
--- it reads the underlying tables regardless of their RLS (read-only summary).
+-- The view must run with the CALLER's permissions, not its creator's: without
+-- this it would bypass row-level security on account_transactions and contacts
+-- for every anon query (Supabase flags that as a critical finding). See fix122.
+ALTER VIEW account_transaction_summary_view SET (security_invoker = on);
+
+-- Let the app (anon) read the view itself; what it may see through the view is
+-- then decided by the policies on the tables underneath.
 GRANT SELECT ON account_transaction_summary_view TO anon, authenticated;

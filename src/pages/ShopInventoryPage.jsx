@@ -3,6 +3,7 @@ import {
   Store, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Eye, EyeOff, PackageOpen, Upload, Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ShopWorkingHours from '../components/ShopWorkingHours'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import { fetchShopCategoryNames } from '../lib/shopCategories'
@@ -284,6 +285,9 @@ export default function ShopInventoryPage({ partyContactId = null }) {
           <Plus className="w-4 h-4" /> Add Item
         </button>
       </div>
+
+      {/* When the shop takes orders — drives Open/Closed in the customer app. */}
+      {ownerId && <ShopWorkingHours contactId={ownerId} />}
 
       {!ownerId && (
         <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">

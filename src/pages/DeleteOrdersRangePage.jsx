@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect} from 'react'
 import { CalendarRange, AlertTriangle, CheckCircle2, Loader, X, Trash2, CheckSquare, Square } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -21,7 +21,10 @@ const todayStr = () => new Date().toISOString().slice(0, 10)
 const dateOnly = (v) => (v ? String(v).slice(0, 10) : '—')
 
 export default function DeleteOrdersRangePage() {
-  const { fetchOrders } = useApp()
+  const { fetchOrders, loadFullOrderHistory } = useApp()
+  // The startup fetch only covers the last few days; this page reads
+  // further back, so it asks for the full history once.
+  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
   const { currentUser, hasRole } = useAuth()
   // Permanently removing data is restricted to the super_admin (the developer).
   const isAdmin = hasRole('super_admin')

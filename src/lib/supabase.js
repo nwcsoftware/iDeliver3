@@ -32,11 +32,21 @@ export const PAGE_SIZE = 1000
 export async function fetchAllRows(build, pageSize = PAGE_SIZE) {
   const all = []
   for (let page = 0; ; page++) {
-    const { data, error } = await build()
+    // One retry per page: these are large embedded selects and a single slow
+    // response (or a dropped connection) used to lose the whole fetch.
+    let { data, error } = await build()
       .range(page * pageSize, page * pageSize + pageSize - 1)
-    if (error) return { data: null, error }
+    if (error) {
+      ;({ data, error } = await build()
+        .range(page * pageSize, page * pageSize + pageSize - 1))
+    }
+    if (error) {
+      // Hand back what DID arrive. A partial list beats an empty screen, and
+      // the caller is told it is partial so it can say so.
+      return { data: all.length ? all : null, error, partial: all.length > 0 }
+    }
     all.push(...(data ?? []))
     if ((data?.length ?? 0) < pageSize) break
   }
-  return { data: all, error: null }
+  return { data: all, error: null, partial: false }
 }

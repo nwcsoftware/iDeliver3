@@ -733,7 +733,8 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DeliveriesPage({ closed = false, partyContactId = null }) {
-  const { orders, drivers, zones, refreshOrder, loading, COMPANY_ID, showSummary, appSettings } = useApp()
+  const { orders, drivers, zones, refreshOrder, ordersError, loading, COMPANY_ID, showSummary, appSettings,
+          loadFullOrderHistory, ordersFullyLoaded } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
   // Minutes before an order's scheduled start time at which its row turns red (0 = off).
@@ -742,8 +743,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [now, setNow] = useState(() => Date.now())
 
   // Keep the user on the order they just acted on. Changing a status/payment/etc.
-  // refreshes that row, which can reflow the list — the browser then jumps to the
-  // collapses the page height and the browser jumps to the top. We record the
+  // refreshes that row, which can reflow the list and make the browser jump to
+  // the top. We record the
   // touched order and re-scroll to it (and flash it) after every refresh, whether
   // that's an in-place data update or a full page reload.
   const RESTORE_KEY = `ideliver_deliveries_lastorder_${closed ? 'closed' : partyContactId ? 'party' : 'daily'}`
@@ -931,6 +932,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // today's scheduled orders; the "Today" toggle sets/clears both boxes.
   const [dateFrom,             setDateFrom]             = useState(localTodayStr())
   const [dateTo,               setDateTo]               = useState(localTodayStr())
+
+  // The startup fetch covers the last week only. Closed Orders always needs
+  // more, and the daily list needs more as soon as the date filter reaches
+  // past that window — otherwise the page would quietly show a short list.
+  useEffect(() => {
+    if (ordersFullyLoaded) return
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+    if (closed || (dateFrom && dateFrom < weekAgo)) loadFullOrderHistory?.()
+  }, [closed, dateFrom, ordersFullyLoaded, loadFullOrderHistory])
+
   // Closed Orders date grouping — null until the first load picks a default.
   const [openGroups,           setOpenGroups]           = useState(null)
   // Daily list groups (Delivery Orders / Ads & Services) — tracks which are
@@ -3253,6 +3264,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         </div>
         )}
       </div>
+
+      {/* An interrupted load used to be silent: the page rendered whatever few
+          rows it had as though that were the whole day. Say it plainly. */}
+      {ordersError && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <p className="text-amber-200 text-xs leading-relaxed">
+            This list may be incomplete — loading was interrupted ({ordersError}). Reload the page to try again.
+          </p>
+        </div>
+      )}
 
       {/* List */}
       <div className="card overflow-hidden">

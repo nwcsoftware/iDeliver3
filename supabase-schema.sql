@@ -1300,3 +1300,12 @@ FROM companies c,
   ('David',   'Chen',    '+1 555 505 6060', 'david@example.com',  'off_duty',  'DL-1005', 'Returns Monday')
 ) AS d(first_name, last_name, mobile, email, driver_status, license, notes)
 WHERE c.code = 'ID3-MAIN';
+
+-- A view runs with its CREATOR's rights unless told otherwise, which would
+-- bypass row-level security for every anon query (Supabase flags that as
+-- critical). security_invoker makes it run as the CALLER. See fix122.
+ALTER VIEW public.v_daily_order_summary SET (security_invoker = on);
+
+ALTER VIEW public.v_driver_due_to_pay SET (security_invoker = on);
+
+ALTER VIEW public.v_credit_customer_balances SET (security_invoker = on);

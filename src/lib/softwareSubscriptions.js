@@ -206,7 +206,10 @@ export async function saveSoftwareSubscription(form, { companyId = null, userId 
     }
     const { error } = await supabase.from('software_subscriptions')
       .insert([{ ...payload, created_by: userId }])
-    return error ? installHint(error.message) : null
+      .select('*').single()
+    if (error) return installHint(error.message)
+    savePayment.last = data ?? null
+    return null
   } catch (e) {
     return e?.message || 'Could not save the subscription.'
   }
@@ -237,8 +240,11 @@ export async function savePayment(form, { userId = null } = {}) {
   }
   try {
     if (form.id) {
-      const { error } = await supabase.from('software_subscription_payments').update(payload).eq('id', form.id)
-      return error ? installHint(error.message) : null
+      const { data, error } = await supabase.from('software_subscription_payments')
+        .update(payload).eq('id', form.id).select('*').single()
+      if (error) return installHint(error.message)
+      savePayment.last = data ?? null       // the caller may want to receipt it
+      return null
     }
     const { error } = await supabase.from('software_subscription_payments')
       .insert([{ ...payload, created_by: userId }])

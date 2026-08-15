@@ -62,7 +62,7 @@ const DEFAULT_APP_SETTINGS = {
   // keep egress down on login. Operational pages (Deliveries, Dashboard) only need
   // recent orders; financial pages call loadFullOrderHistory() to pull everything.
   // 0 = unlimited (load the whole table, the pre-window behaviour).
-  ordersWindowDays: 90,
+  ordersWindowDays: 7,
   // Restriction (super-admin only): when true, a local-market retail invoice is
   // locked once the order is saved (cannot be edited/deleted, only new ones
   // added). When false, saved invoices stay editable until the order is closed.
@@ -110,6 +110,10 @@ export function AppProvider({ children }) {
   // True once the full order history (not just the recent window) is loaded into
   // `orders`. Financial pages wait for this before trusting balances.
   const [ordersFullyLoaded, setOrdersFullyLoaded] = useState(false)
+  // Set once a real list has been fetched, and the reason if a fetch failed.
+  // Until then a single-row refresh must not invent a list (see below).
+  const ordersLoadedRef = useRef(false)
+  const [ordersError, setOrdersError] = useState('')
   const ordersFullyLoadedRef = useRef(false)
 
   // Amounts summary popup show/hide preference (per user, persisted locally).
@@ -397,7 +401,14 @@ export function AppProvider({ children }) {
     // refresh after a mutation on a financial page never shrinks the full history
     // back to the recent window.
     const effectiveFull = full === undefined ? ordersFullyLoadedRef.current : full
-    const windowDays = effectiveFull ? 0 : (ordersWindowRef.current || 0)
+    // One week is all the daily desk needs, and it lands in a couple of
+    // seconds. Anything looking further back calls loadFullOrderHistory(),
+    // which lifts this cap — see the history pages.
+    const MAX_STARTUP_WINDOW_DAYS = 7
+    const requested = ordersWindowRef.current || 0
+    const windowDays = effectiveFull
+      ? 0
+      : (requested === 0 ? MAX_STARTUP_WINDOW_DAYS : Math.min(requested, MAX_STARTUP_WINDOW_DAYS))
     const { data, error } = await fetchAllRows(() => {
       let q = supabase
         .from('delivery_orders')
@@ -411,12 +422,16 @@ export function AppProvider({ children }) {
       }
       return q
     })
-    if (!error && data) {
+    if (data) {
+      // `data` is present even when the fetch ended early, so a slow page never
+      // leaves the app with an empty list it will happily render.
       setOrders(data)
-      const nowFull = windowDays === 0
+      const nowFull = windowDays === 0 && !error
       ordersFullyLoadedRef.current = nowFull
       setOrdersFullyLoaded(nowFull)
     }
+    ordersLoadedRef.current = ordersLoadedRef.current || !!data
+    setOrdersError(error ? (error.message || 'Could not load all orders.') : '')
     setLoading(l => ({ ...l, orders: false }))
   }, [])
 
@@ -451,7 +466,13 @@ export function AppProvider({ children }) {
     setOrders(prev => {
       const i = prev.findIndex(o => o.id === id)
       if (!row) return i === -1 ? prev : prev.filter(o => o.id !== id)
-      if (i === -1) return [row, ...prev]           // new order → front (list is newest-first)
+      if (i === -1) {
+        // Never prepend into a list that was never loaded: an empty list plus a
+        // few refreshed rows looks like "today has 3 orders", which is worse
+        // than showing nothing. Wait for a real fetch instead.
+        if (!ordersLoadedRef.current || prev.length === 0) return prev
+        return [row, ...prev]                       // new order → front (newest-first)
+      }
       const next = [...prev]; next[i] = row; return next
     })
   }, [fetchOneOrder])
@@ -478,7 +499,9 @@ export function AppProvider({ children }) {
       const kept = prev
         .filter(o => !asked.has(o.id) || byId.has(o.id))     // vanished rows fall out
         .map(o => byId.get(o.id) ?? o)
-      const added = rows.filter(r => !seen.has(r.id))        // brand-new rows go to the front
+      const added = (ordersLoadedRef.current && prev.length > 0)
+        ? rows.filter(r => !seen.has(r.id))                 // brand-new rows go to the front
+        : []
       return added.length ? [...added, ...kept] : kept
     })
   }, [])
@@ -560,7 +583,7 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider value={{
       drivers, fetchDrivers,
-      orders,  fetchOrders,
+      orders,  fetchOrders, ordersError,
       // Targeted refreshes — always prefer these to fetchOrders() after a
       // mutation: they fetch only the rows that changed.
       refreshOrder: refreshOrderIntoState, refreshOrders: refreshOrdersIntoState,

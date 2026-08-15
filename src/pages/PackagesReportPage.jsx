@@ -34,7 +34,10 @@ function deliveryDay(pk) {
 }
 
 export default function PackagesReportPage() {
-  const { COMPANY_ID } = useApp()
+  const { COMPANY_ID, loadFullOrderHistory } = useApp()
+  // The startup fetch only covers the last few days; this page reads
+  // further back, so it asks for the full history once.
+  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
 
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)

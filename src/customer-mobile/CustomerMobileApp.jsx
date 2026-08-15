@@ -33,6 +33,9 @@ import {
   Truck,
   Upload,
   User,
+  UtensilsCrossed, Croissant, Cake, Flower2, Wrench, Zap, Dumbbell, Shirt, Sofa, Sparkles, PawPrint, BookOpen, Car, Pill, Beef, Carrot, Baby, Laptop, Watch, ShoppingBasket,
+  Heart,
+  Clock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
@@ -75,6 +78,20 @@ const translations = {
     homeWelcome: '3asari3 fast delivery welcomes you',
     available: '{{count}} available',
     outOfStock: 'Out of stock',
+    addFavourite: 'Add to favourites',
+    removeFavourite: 'Remove from favourites',
+    favourites: 'Favourites',
+    noFavourites: 'Nothing hearted yet — tap the heart on an item to keep it here.',
+    openNow: 'Open',
+    closedNow: 'Closed',
+    opensLabel: 'Opens',
+    theShop: 'This shop',
+    isClosedNow: 'is closed right now',
+    closedToday: 'It is closed for today.',
+    scheduleQuestion: 'Would you like it delivered another day or time?',
+    scheduleFor: 'Schedule for',
+    addAnyway: 'Add anyway',
+    workingHours: 'Working hours',
     orderedCount: '{{count}} ordered',
     preparedOnRequest: 'Prepared on request',
     outOfStockNote: 'This item is out of stock at the moment and can’t be added to your cart.',
@@ -307,6 +324,20 @@ const translations = {
     homeWelcome: 'عالسريع للتوصيل السريع يرحّب بك',
     available: 'متوفر {{count}}',
     outOfStock: 'غير متوفر',
+    addFavourite: 'أضف إلى المفضلة',
+    removeFavourite: 'إزالة من المفضلة',
+    favourites: 'المفضلة',
+    noFavourites: 'لا يوجد شيء في المفضلة بعد — اضغط على القلب لحفظ الصنف هنا.',
+    openNow: 'مفتوح',
+    closedNow: 'مغلق',
+    opensLabel: 'يفتح',
+    theShop: 'هذا المتجر',
+    isClosedNow: 'مغلق حالياً',
+    closedToday: 'مغلق لهذا اليوم.',
+    scheduleQuestion: 'هل تريد التوصيل في يوم أو وقت آخر؟',
+    scheduleFor: 'حدد موعداً',
+    addAnyway: 'أضف على أي حال',
+    workingHours: 'ساعات العمل',
     orderedCount: 'تم طلبه {{count}} مرة',
     preparedOnRequest: 'يُحضّر عند الطلب',
     outOfStockNote: 'هذا الصنف غير متوفر حاليًا ولا يمكن إضافته إلى السلة.',
@@ -546,6 +577,15 @@ translations.fr = {
   typeCustomerRequirement: 'Écrivez ici ce dont vous avez besoin…',
   available: '{{count}} disponibles',
   outOfStock: 'Rupture de stock',
+  favourites: 'Favoris',
+  openNow: 'Ouvert',
+  closedNow: 'Fermé',
+  opensLabel: 'Ouvre',
+  isClosedNow: 'est fermée actuellement',
+  scheduleQuestion: 'Souhaitez-vous une livraison un autre jour ou à une autre heure ?',
+  scheduleFor: 'Programmer pour',
+  addAnyway: 'Ajouter quand même',
+  workingHours: 'Heures d’ouverture',
   orderedCount: '{{count}} commandés',
   preparedOnRequest: 'Préparé à la commande',
   outOfStockNote: 'Cet article est en rupture de stock et ne peut pas être ajouté au panier.',
@@ -711,6 +751,15 @@ translations.ro = {
   typeCustomerRequirement: 'Scrie aici de ce ai nevoie…',
   available: '{{count}} disponibile',
   outOfStock: 'Stoc epuizat',
+  favourites: 'Favorite',
+  openNow: 'Deschis',
+  closedNow: 'Închis',
+  opensLabel: 'Se deschide',
+  isClosedNow: 'este închis acum',
+  scheduleQuestion: 'Doriți livrarea în altă zi sau la altă oră?',
+  scheduleFor: 'Programează pentru',
+  addAnyway: 'Adaugă oricum',
+  workingHours: 'Program de lucru',
   orderedCount: '{{count}} comandate',
   preparedOnRequest: 'Preparat la comanda',
   outOfStockNote: 'Acest produs nu este disponibil momentan si nu poate fi adaugat in cos.',
@@ -931,7 +980,7 @@ function statusClass(status) {
   if (key === 'in transit') return 'bg-cyan-100 text-cyan-700'
   if (key === 'pending') return 'bg-amber-100 text-amber-700'
   if (key === 'confirmed') return 'bg-blue-100 text-blue-700'
-  if (key === 'completed' || key === 'delivered') return 'bg-emerald-100 text-emerald-700'
+  if (key === 'completed' || key === 'delivered') return 'bg-fresh-100 text-fresh-700'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -985,27 +1034,27 @@ function clearCustomerSession() {
    Each entry sets its own size, tint and timing so nothing moves in lockstep. */
 const BACKDROP_SHAPES = [
   // Big, slow anchors
-  { Icon: Boxes,        cls: 'left-[-6%]  top-[8%]   h-28 w-28 animate-bg-sway',  tint: 'text-sky-900/[0.07]', style: { animationDuration: '13s' } },
-  { Icon: Package,      cls: 'right-[-4%] top-[40%]  h-24 w-24 animate-bg-float', tint: 'text-sky-900/[0.07]', style: { animationDuration: '11s', animationDelay: '1.2s' } },
-  { Icon: ShoppingBag,  cls: 'left-[-5%]  bottom-[6%] h-24 w-24 animate-bg-float', tint: 'text-sky-900/[0.06]', style: { animationDuration: '12s', animationDelay: '2.4s' } },
+  { Icon: Boxes,        cls: 'left-[-6%]  top-[8%]   h-28 w-28 animate-bg-sway',  tint: 'text-shop-900/[0.07]', style: { animationDuration: '13s' } },
+  { Icon: Package,      cls: 'right-[-4%] top-[40%]  h-24 w-24 animate-bg-float', tint: 'text-shop-900/[0.07]', style: { animationDuration: '11s', animationDelay: '1.2s' } },
+  { Icon: ShoppingBag,  cls: 'left-[-5%]  bottom-[6%] h-24 w-24 animate-bg-float', tint: 'text-shop-900/[0.06]', style: { animationDuration: '12s', animationDelay: '2.4s' } },
   // Mid-sized
-  { Icon: Gift,         cls: 'right-[10%] top-[16%]  h-14 w-14 animate-bg-sway',  tint: 'text-sky-800/[0.09]', style: { animationDuration: '8s',  animationDelay: '0.5s' } },
-  { Icon: Package,      cls: 'left-[16%]  top-[56%]  h-16 w-16 animate-bg-float', tint: 'text-sky-800/[0.08]', style: { animationDuration: '6.5s', animationDelay: '1.8s' } },
-  { Icon: Boxes,        cls: 'right-[18%] bottom-[22%] h-16 w-16 animate-bg-sway', tint: 'text-sky-800/[0.08]', style: { animationDuration: '9.5s', animationDelay: '0.9s' } },
-  { Icon: Store,        cls: 'left-[40%]  top-[30%]  h-12 w-12 animate-bg-float', tint: 'text-sky-800/[0.07]', style: { animationDuration: '10s', animationDelay: '3.1s' } },
+  { Icon: Gift,         cls: 'right-[10%] top-[16%]  h-14 w-14 animate-bg-sway',  tint: 'text-shop-800/[0.09]', style: { animationDuration: '8s',  animationDelay: '0.5s' } },
+  { Icon: Package,      cls: 'left-[16%]  top-[56%]  h-16 w-16 animate-bg-float', tint: 'text-shop-800/[0.08]', style: { animationDuration: '6.5s', animationDelay: '1.8s' } },
+  { Icon: Boxes,        cls: 'right-[18%] bottom-[22%] h-16 w-16 animate-bg-sway', tint: 'text-shop-800/[0.08]', style: { animationDuration: '9.5s', animationDelay: '0.9s' } },
+  { Icon: Store,        cls: 'left-[40%]  top-[30%]  h-12 w-12 animate-bg-float', tint: 'text-shop-800/[0.07]', style: { animationDuration: '10s', animationDelay: '3.1s' } },
   // Small confetti-ish bits
-  { Icon: MapPin,       cls: 'left-[28%]  top-[80%]  h-9  w-9  animate-bg-float', tint: 'text-sky-700/[0.10]', style: { animationDuration: '5s',  animationDelay: '0.3s' } },
-  { Icon: ShoppingBag,  cls: 'right-[32%] top-[6%]   h-8  w-8  animate-bg-sway',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '5.5s', animationDelay: '2.2s' } },
-  { Icon: Gift,         cls: 'left-[8%]   top-[34%]  h-7  w-7  animate-bg-float', tint: 'text-sky-700/[0.10]', style: { animationDuration: '4.5s', animationDelay: '1.5s' } },
-  { Icon: Package,      cls: 'right-[6%]  bottom-[34%] h-8 w-8 animate-bg-sway',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '6s',  animationDelay: '2.9s' } },
+  { Icon: MapPin,       cls: 'left-[28%]  top-[80%]  h-9  w-9  animate-bg-float', tint: 'text-shop-700/[0.10]', style: { animationDuration: '5s',  animationDelay: '0.3s' } },
+  { Icon: ShoppingBag,  cls: 'right-[32%] top-[6%]   h-8  w-8  animate-bg-sway',  tint: 'text-shop-700/[0.10]', style: { animationDuration: '5.5s', animationDelay: '2.2s' } },
+  { Icon: Gift,         cls: 'left-[8%]   top-[34%]  h-7  w-7  animate-bg-float', tint: 'text-shop-700/[0.10]', style: { animationDuration: '4.5s', animationDelay: '1.5s' } },
+  { Icon: Package,      cls: 'right-[6%]  bottom-[34%] h-8 w-8 animate-bg-sway',  tint: 'text-shop-700/[0.10]', style: { animationDuration: '6s',  animationDelay: '2.9s' } },
 ]
 
 // Things that travel right across the screen — different heights, sizes, speeds.
 const BACKDROP_TRAVELLERS = [
-  { Icon: ShoppingCart, cls: 'top-[22%] h-16 w-16', tint: 'text-sky-900/[0.08]', style: { animationDuration: '22s' } },
-  { Icon: Bike,         cls: 'top-[52%] h-12 w-12', tint: 'text-sky-800/[0.09]', style: { animationDuration: '31s', animationDelay: '6s' } },
-  { Icon: Truck,        cls: 'top-[72%] h-20 w-20', tint: 'text-sky-900/[0.07]', style: { animationDuration: '40s', animationDelay: '14s' } },
-  { Icon: ShoppingCart, cls: 'top-[90%] h-9  w-9',  tint: 'text-sky-700/[0.10]', style: { animationDuration: '17s', animationDelay: '3s' } },
+  { Icon: ShoppingCart, cls: 'top-[22%] h-16 w-16', tint: 'text-shop-900/[0.08]', style: { animationDuration: '22s' } },
+  { Icon: Bike,         cls: 'top-[52%] h-12 w-12', tint: 'text-shop-800/[0.09]', style: { animationDuration: '31s', animationDelay: '6s' } },
+  { Icon: Truck,        cls: 'top-[72%] h-20 w-20', tint: 'text-shop-900/[0.07]', style: { animationDuration: '40s', animationDelay: '14s' } },
+  { Icon: ShoppingCart, cls: 'top-[90%] h-9  w-9',  tint: 'text-shop-700/[0.10]', style: { animationDuration: '17s', animationDelay: '3s' } },
 ]
 
 function AppBackdrop() {
@@ -1033,10 +1082,10 @@ function Shell({ children, activeTab, onTab }) {
 
   return (
     <div className="min-h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden bg-[#f8fdff] shadow-2xl shadow-cyan-950/10">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden bg-[#FFF8EF] shadow-2xl shadow-cyan-950/10">
         <AppBackdrop />
         <div className="relative z-10 flex-1 overflow-y-auto pb-20">{children}</div>
-        <nav className="fixed bottom-0 left-0 z-20 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95 px-4 py-3 backdrop-blur">
+        <nav className="fixed bottom-0 left-0 z-20 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-shop-100 bg-white/95 px-4 py-3 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
             {nav.map(item => {
               const Icon = item.icon
@@ -1048,7 +1097,7 @@ function Shell({ children, activeTab, onTab }) {
                   onClick={() => onTab(item.id)}
                   className={cx(
                     'flex h-11 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition',
-                    active ? 'bg-sky-100 text-sky-700' : 'text-slate-400 hover:bg-sky-50 hover:text-sky-700'
+                    active ? 'bg-shop-100 text-shop-700' : 'text-slate-400 hover:bg-shop-50 hover:text-shop-700'
                   )}
                 >
                   <Icon className="h-4 w-4" />
@@ -1065,11 +1114,11 @@ function Shell({ children, activeTab, onTab }) {
 
 function Header({ title, subtitle, right, back, onBack }) {
   return (
-    <header className="sticky top-0 z-10 rounded-b-[2rem] border-b border-sky-50 bg-white/95 px-5 pb-6 pt-5 shadow-[0_8px_24px_-6px_rgba(14,165,233,0.28)] backdrop-blur">
+    <header className="sticky top-0 z-10 rounded-b-[2rem] border-b border-shop-50 bg-white/95 px-5 pb-6 pt-5 shadow-[0_8px_24px_-6px_rgba(179,18,43,0.22)] backdrop-blur">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           {back && (
-            <button type="button" onClick={onBack} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+            <button type="button" onClick={onBack} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-shop-700">
               <ArrowLeft className="h-5 w-5" />
             </button>
           )}
@@ -1116,9 +1165,9 @@ function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
   if (!notice) return null
 
   return (
-    <div className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-sky-200 bg-white p-4 shadow-lg shadow-sky-200/70">
+    <div className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-shop-200 bg-white p-4 shadow-lg shadow-shop-200/70">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-shop-700">
           <Bell className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
@@ -1127,10 +1176,10 @@ function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
             {t('yourOrderNow', { order: notice.orderNumber || t('orderDetails'), status: translatedStatus(t, notice.deliveryStatus) })}
           </p>
           <div className="mt-3 flex gap-2">
-            <button type="button" onClick={onOpenOrders} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">
+            <button type="button" onClick={onOpenOrders} className="rounded-lg bg-shop-600 px-3 py-2 text-xs font-bold text-white">
               {t('viewOrders')}
             </button>
-            <button type="button" onClick={onClose} className="rounded-lg border border-sky-100 bg-white px-3 py-2 text-xs font-bold text-slate-500">
+            <button type="button" onClick={onClose} className="rounded-lg border border-shop-100 bg-white px-3 py-2 text-xs font-bold text-slate-500">
               {t('close')}
             </button>
           </div>
@@ -1142,7 +1191,7 @@ function DeliveryStatusNotice({ notice, onClose, onOpenOrders }) {
 
 function Section({ title, subtitle, children, action }) {
   return (
-    <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
+    <section className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/70">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-bold text-slate-950">{title}</h2>
@@ -1229,7 +1278,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
   return (
     <div className="min-h-screen overflow-y-auto bg-[#eaf8fb] px-5 py-6 text-[#071923]" dir={dir}>
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-full px-2 sm:px-0 md:max-w-md items-center">
-        <form onSubmit={submitLogin} className="w-full rounded-lg border border-sky-100 bg-white p-5 shadow-sm shadow-sky-100/70">
+        <form onSubmit={submitLogin} className="w-full rounded-lg border border-shop-100 bg-white p-5 shadow-sm shadow-shop-100/70">
           <div className="mb-7 text-center">
             <img src={ideliverLoginLogo} alt="iDeliver" className="mx-auto h-20 w-auto object-contain" />
             <h1 className="mt-6 text-3xl font-bold tracking-tight">{t('welcomeBack')}</h1>
@@ -1238,7 +1287,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
 
           <label className="block text-xs font-semibold text-slate-500">{t('username')}</label>
           <input
-            className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
+            className="mt-2 h-12 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-shop-300"
             value={identifier}
             onChange={event => { setIdentifier(event.target.value); setError('') }}
             placeholder={t('usernamePlaceholder')}
@@ -1248,7 +1297,7 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
 
           <label className="mt-5 block text-xs font-semibold text-slate-500">{t('password')}</label>
           <input
-            className="mt-2 h-12 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-sky-300"
+            className="mt-2 h-12 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-shop-300"
             type="password"
             value={password}
             onChange={event => { setPassword(event.target.value); setError('') }}
@@ -1263,13 +1312,13 @@ function LoginScreen({ onLogin, onOtp, onGoogleLogin }) {
             </div>
           )}
 
-          <button type="submit" disabled={loading} className="mt-8 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white shadow-sm shadow-sky-200 disabled:cursor-not-allowed disabled:bg-slate-300">
+          <button type="submit" disabled={loading} className="mt-8 flex h-12 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white shadow-sm shadow-shop-200 disabled:cursor-not-allowed disabled:bg-slate-300">
             {loading ? t('loginLoading') : t('login')}
           </button>
-          <button type="button" onClick={submitGoogleLogin} disabled={loading} className="mt-3 flex h-11 w-full items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-700 disabled:opacity-60">
+          <button type="button" onClick={submitGoogleLogin} disabled={loading} className="mt-3 flex h-11 w-full items-center justify-center rounded-lg border border-shop-100 bg-white text-sm font-bold text-slate-700 disabled:opacity-60">
             {t('loginWithGoogle')}
           </button>
-          <button type="button" onClick={onOtp} className="mt-4 flex h-10 w-full items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700">
+          <button type="button" onClick={onOtp} className="mt-4 flex h-10 w-full items-center justify-center rounded-lg border border-fresh-200 bg-fresh-50 text-xs font-bold text-fresh-700">
             {t('firstTimeOtp')}
           </button>
         </form>
@@ -1384,11 +1433,11 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
 
   return (
     <div className="min-h-dvh overflow-y-auto bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="mx-auto min-h-dvh w-full max-w-full px-2 sm:px-0 md:max-w-md bg-[#f8fdff] pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="mx-auto min-h-dvh w-full max-w-full px-2 sm:px-0 md:max-w-md bg-[#FFF8EF] pb-[max(1rem,env(safe-area-inset-bottom))]">
         <Header title={t('customerRegistration')} subtitle={t('firstTimeSetup')} back onBack={step === 'otp' ? () => setStep('details') : onBack} />
         <main className="space-y-3 px-4 py-4">
           {step === 'details' && (
-            <button type="button" onClick={submitGoogleLogin} disabled={googleLoading || saving} className="flex h-11 w-full items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-700 shadow-sm shadow-sky-100 disabled:opacity-60">
+            <button type="button" onClick={submitGoogleLogin} disabled={googleLoading || saving} className="flex h-11 w-full items-center justify-center rounded-lg border border-shop-100 bg-white text-sm font-bold text-slate-700 shadow-sm shadow-shop-100 disabled:opacity-60">
               {googleLoading ? t('loginLoading') : t('loginWithGoogle')}
             </button>
           )}
@@ -1398,7 +1447,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="block">
                   <span className="text-xs font-semibold text-slate-500">{t('fullName')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     value={fullName}
                     onChange={event => { setFullName(event.target.value); setError('') }}
                     placeholder={t('enterFullName')}
@@ -1408,7 +1457,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('mobileNumber')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     value={mobile}
                     onFocus={() => { if (isBlankMobile(mobile)) setMobile(MOBILE_PREFIX) }}
                     onBlur={() => { if (isBlankMobile(mobile)) setMobile('') }}
@@ -1421,7 +1470,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('username')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     value={username}
                     onChange={event => { setUsername(event.target.value); setError('') }}
                     placeholder={t('enterUsername')}
@@ -1432,7 +1481,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('emailAddress')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     type="email"
                     value={email}
                     onChange={event => { setEmail(event.target.value); setError('') }}
@@ -1446,7 +1495,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('signupAddress')} *</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     value={address}
                     onChange={event => { setAddress(event.target.value); setError('') }}
                     placeholder={t('enterAddress')}
@@ -1458,7 +1507,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('signupCity')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     value={city}
                     onChange={event => { setCity(event.target.value); setError('') }}
                     placeholder={t('enterCity')}
@@ -1479,7 +1528,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                         onClick={() => { setOtpChannel(value); setError('') }}
                         className={cx(
                           'h-10 rounded-md text-sm font-bold',
-                          otpChannel === value ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'
+                          otpChannel === value ? 'bg-white text-shop-700 shadow-sm' : 'text-slate-500'
                         )}
                       >
                         {label}
@@ -1491,7 +1540,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('password')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     type="password"
                     value={password}
                     onChange={event => { setPassword(event.target.value); setError('') }}
@@ -1503,7 +1552,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                 <label className="mt-3 block">
                   <span className="text-xs font-semibold text-slate-500">{t('confirmPassword')}</span>
                   <input
-                    className="mt-1.5 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-4 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                     type="password"
                     value={confirmPassword}
                     onChange={event => { setConfirmPassword(event.target.value); setError('') }}
@@ -1518,7 +1567,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                   </div>
                 )}
 
-                <button type="submit" className="mt-5 flex h-11 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white">
+                <button type="submit" className="mt-5 flex h-11 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white">
                   {t('sendOtp')}
                 </button>
               </Section>
@@ -1530,7 +1579,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                   {otp.map((digit, index) => (
                     <input
                       key={index}
-                      className="flex h-14 min-w-0 rounded-lg border border-sky-100 bg-slate-50 text-center text-xl font-bold outline-none focus:ring-2 focus:ring-sky-300"
+                      className="flex h-14 min-w-0 rounded-lg border border-shop-100 bg-slate-50 text-center text-xl font-bold outline-none focus:ring-2 focus:ring-shop-300"
                       inputMode="numeric"
                       value={digit}
                       onChange={event => { updateOtp(index, event.target.value); setError('') }}
@@ -1546,7 +1595,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
                   </div>
                 )}
 
-                <button type="submit" disabled={saving} className="mt-7 flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:opacity-60">
+                <button type="submit" disabled={saving} className="mt-7 flex h-12 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:opacity-60">
                   {saving ? t('creatingAccount') : t('verifyOtpCreate')}
                 </button>
               </Section>
@@ -1613,7 +1662,7 @@ function ItemGallery({ images = [], alt = '' }) {
           {images.map((_, i) => (
             <button key={i} type="button" onClick={() => goTo(i)} aria-label={`Photo ${i + 1}`}
               className={cx('h-1.5 rounded-full transition-all',
-                i === index ? 'w-4 bg-sky-600' : 'w-1.5 bg-slate-950/25')} />
+                i === index ? 'w-4 bg-shop-600' : 'w-1.5 bg-slate-950/25')} />
           ))}
         </div>
       </>)}
@@ -1621,7 +1670,43 @@ function ItemGallery({ images = [], alt = '' }) {
   )
 }
 
-function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
+import { shopOpenState, todayText } from '../lib/shopHours'
+
+/* Shop types as the customer sees them: an icon and a plural label. Keys match
+   DEFAULT_BUSINESS_TYPES (contacts.shop_type); anything else falls back to the
+   generic shop tile, so a type someone invents still browses correctly. */
+const SHOP_TYPE_META = {
+  'restaurant':          { label: 'Restaurants',   icon: UtensilsCrossed },
+  'fast food':           { label: 'Fast food',     icon: UtensilsCrossed },
+  'cafe':                { label: 'Cafés',         icon: Croissant },
+  'sweets':              { label: 'Sweets',        icon: Cake },
+  'bakery':              { label: 'Bakeries',      icon: Croissant },
+  'butcher':             { label: 'Butchers',      icon: Beef },
+  'supermarket':         { label: 'Supermarkets',  icon: ShoppingBasket },
+  'grocery':             { label: 'Groceries',     icon: ShoppingBasket },
+  'fruits & vegetables': { label: 'Fruit & veg',   icon: Carrot },
+  'pharmacy':            { label: 'Pharmacies',    icon: Pill },
+  'beauty & cosmetics':  { label: 'Beauty',        icon: Sparkles },
+  'flowers & gifts':     { label: 'Flowers',       icon: Flower2 },
+  'tools & hardware':    { label: 'Hardware',      icon: Wrench },
+  'power tools':         { label: 'Power tools',   icon: Zap },
+  'electronics':         { label: 'Electronics',   icon: Laptop },
+  'mobile & accessories':{ label: 'Mobile',        icon: Smartphone },
+  'sportswear':          { label: 'Sportswear',    icon: Shirt },
+  'gym equipment':       { label: 'Gym',           icon: Dumbbell },
+  'bicycles':            { label: 'Bicycles',      icon: Bike },
+  'home & furniture':    { label: 'Home',          icon: Sofa },
+  'toys & kids':         { label: 'Toys & kids',   icon: Baby },
+  'pet supplies':        { label: 'Pets',          icon: PawPrint },
+  'stationery & books':  { label: 'Books',         icon: BookOpen },
+  'auto parts':          { label: 'Auto parts',    icon: Car },
+  'watches & jewellery': { label: 'Watches',       icon: Watch },
+  'other':               { label: 'Other',         icon: Store },
+}
+const shopTypeMeta = (type) => SHOP_TYPE_META[String(type || '').trim().toLowerCase()]
+  || { label: (type || 'Shops'), icon: Store }
+
+function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onScheduleLater }) {
   const { t } = useI18n()
   const [items, setItems]     = useState([])
   const [loading, setLoading] = useState(true)
@@ -1634,6 +1719,15 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
   const [filterOpen,  setFilterOpen]  = useState(false)
   const [preview,     setPreview]     = useState(null)   // item shown in the popup
   const [market,      setMarket]      = useState('local') // 'local' | 'house'
+  // Shop-first browsing: null = the directory, otherwise the shop being viewed.
+  const [storeKey,    setStoreKey]    = useState(null)
+  const [typeFilter,  setTypeFilter]  = useState('')      // '' = every shop type
+  // Hearted items (fix121), keyed the same way a cart line is: shop item id, or
+  // `prod:<id>` for the house catalog.
+  const [favourites, setFavourites]   = useState(() => new Set())
+  const [favOnly,    setFavOnly]      = useState(false)
+  // A shop that is shut when the customer tries to buy from it.
+  const [closedShop, setClosedShop]   = useState(null)
   const [houseItems,  setHouseItems]  = useState([])     // 3asari3's own catalog
   const [stock,       setStock]       = useState({})     // itemId → { available, tracked }
   // Variant choices inside the popup (reset each time one is opened).
@@ -1673,7 +1767,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
     let cancelled = false
     async function load() {
       setLoading(true); setError('')
-      const OWNER = 'owner:contacts!owner_contact_id(id,company_name,first_name,last_name,partner_percentage,partner_percentage_type)'
+      const OWNER = 'owner:contacts!owner_contact_id(id,company_name,first_name,last_name,shop_type,profile_photo_url,address,opening_hours,hours_note,partner_percentage,partner_percentage_type)'
       const run = cols => supabase
         .from('shop_inventory')
         .select(cols)
@@ -1685,6 +1779,13 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
       // `images` (fix105), `categories` (fix103) and `colors`/`sizes` (fix106)
       // are newer columns — on a DB where a migration hasn't run yet, fall back
       // so the shop still lists.
+      if (e && /opening_hours|hours_note/.test(e.message)) {
+        const OWNER_OLD = OWNER.replace(',opening_hours,hours_note', '')
+        ;({ data, error: e } = await supabase.from('shop_inventory')
+          .select(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER_OLD}`)
+          .eq('is_displayed', true).eq('is_active', true)
+          .order('created_at', { ascending: false }))
+      }
       if (e && /images|categories|colors|sizes|is_made_to_order/.test(e.message)) {
         ;({ data, error: e } = await run(`id,name,description,price,currency,image_url,category,owner_contact_id, ${OWNER}`))
       }
@@ -1767,6 +1868,53 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
 
   const shopName = o => (o ? (o.company_name || `${o.first_name ?? ''} ${o.last_name ?? ''}`.trim() || 'Shop') : 'Shop')
   // Is this item stocked by 3asari3 itself rather than a local-market shop?
+  /* The customer's hearts, loaded once per sign-in. */
+  const favContactId = customerSession?.contact_id || customerSession?.id || null
+  useEffect(() => {
+    if (!favContactId) { setFavourites(new Set()); return undefined }
+    let alive = true
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('customer_favourites')
+        .select('shop_item_id, product_id')
+        .eq('customer_contact_id', favContactId)
+      if (!alive || error) return          // fix121 not run yet → no hearts, no noise
+      setFavourites(new Set((data ?? []).map(r =>
+        r.product_id ? `prod:${r.product_id}` : r.shop_item_id)))
+    })()
+    return () => { alive = false }
+  }, [favContactId])
+
+  const isFavourite = it => favourites.has(it?.id)
+
+  /* Heart / unheart. The list updates at once and is put right if the write
+     fails, so tapping never feels laggy. */
+  async function toggleFavourite(it) {
+    if (!favContactId || !it) return
+    const on = favourites.has(it.id)
+    setFavourites(prev => {
+      const next = new Set(prev)
+      on ? next.delete(it.id) : next.add(it.id)
+      return next
+    })
+    const target = it._house
+      ? { product_id: it.product_id, shop_item_id: null }
+      : { shop_item_id: it.id, product_id: null }
+    const q = supabase.from('customer_favourites')
+    const { error } = on
+      ? await (target.product_id
+          ? q.delete().eq('customer_contact_id', favContactId).eq('product_id', target.product_id)
+          : q.delete().eq('customer_contact_id', favContactId).eq('shop_item_id', target.shop_item_id))
+      : await q.insert([{ customer_contact_id: favContactId, ...target }])
+    if (error) {
+      setFavourites(prev => {                     // put it back
+        const next = new Set(prev)
+        on ? next.add(it.id) : next.delete(it.id)
+        return next
+      })
+    }
+  }
+
   const isHouseItem = it => (
     HOUSE_SHOP_CONTACT_ID
       ? it.owner_contact_id === HOUSE_SHOP_CONTACT_ID
@@ -1839,6 +1987,23 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
 
   // Build the cart line for whatever is selected in the popup. Items that offer
   // colours/sizes require a choice, so the order line is never ambiguous.
+  /* Is this item's shop taking orders now? Items carry their owner, so the
+     answer travels with the item rather than being looked up again. */
+  const itemShopState = (it) => shopOpenState(it?._house ? null : it?.owner)
+
+  /* Anything that puts goods in the cart goes through here: if the shop is
+     shut, the customer is asked whether to schedule instead of being allowed
+     to order food nobody will cook. */
+  function guardedAdd(it, line, shopLabel) {
+    const state = itemShopState(it)
+    if (state.keepsHours && !state.open) {
+      setClosedShop({ item: it, line, shopLabel, state })
+      return false
+    }
+    onAdd?.(line)
+    return true
+  }
+
   function addPreviewToCart() {
     // Guard as well as disable the button — nothing out of stock gets in.
     if (soldOut(preview)) { setVariantErr(t('outOfStockNote')); return }
@@ -1848,7 +2013,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
     if (sizes.length  > 0 && !pickedSize)  { setVariantErr(t('chooseSize'));  return }
 
     const variant = [pickedColor, pickedSize].filter(Boolean).join(' · ')
-    onAdd?.({
+    const added = guardedAdd(preview, {
       // One cart line per colour/size combination.
       id: [preview.id, pickedColor, pickedSize].filter(Boolean).join('::'),
       // Catalog items aren't shop_inventory rows — they hold no stock.
@@ -1867,17 +2032,222 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
       shop: preview.shop,
       commission_percentage: preview.owner?.partner_percentage ?? null,
       partner_percentage_type: preview.owner?.partner_percentage_type ?? null,
-    })
-    setPreview(null)
+    }, preview.shop)
+    if (added) setPreview(null)
   }
 
-  const groups = {}
-  for (const it of filtered) {
-    const key = it.owner_contact_id || 'other'
-    ;(groups[key] ||= { name: shopName(it.owner), items: [] }).items.push(it)
-  }
-  const groupList = Object.values(groups)
+  /* One shop's items. Declared before the memos below, which call it. */
+  const itemsOf = (key) => (key === 'house'
+    ? houseItems
+    : items.filter(it => (it.owner_contact_id || 'other') === key))
+
+  /* ── the shops ──────────────────────────────────────────────────────────
+     A shop is whoever owns the items: every supplier/partner with something on
+     display, plus 3asari3's own catalog as a shop in its own right. Built from
+     the unfiltered lists so the directory doesn't empty out while searching. */
+  const stores = useMemo(() => {
+    const map = new Map()
+    const put = (key, name, type, logo, address) => {
+      const e = map.get(key)
+      if (e) { e.count += 1; return e }
+      const made = { key, name, type, logo, address, cover: '', from: null, currency: 'USD', count: 1, isHouse: key === 'house', contact: null }
+      map.set(key, made)
+      return made
+    }
+    for (const it of items) {
+      const k = it.owner_contact_id || 'other'
+      const e = put(k, shopName(it.owner), it.owner?.shop_type || '', it.owner?.profile_photo_url || '', it.owner?.address || '')
+      if (!e.contact) e.contact = it.owner || null
+      // The first product photo doubles as the shop's cover — shops rarely
+      // upload one, and a real picture sells the card.
+      if (!e.cover) e.cover = itemImages(it)[0] || ''
+      const price = Number(it.price) || 0
+      if (price > 0) {
+        e.from = e.from == null ? price : Math.min(e.from, price)
+        e.currency = it.currency || 'USD'
+      }
+    }
+    for (const it of houseItems) {
+      const e = put('house', HOUSE_SHOP_LABEL, 'other', '', '')
+      if (!e.cover) e.cover = itemImages(it)[0] || ''
+      const price = Number(it.price) || 0
+      if (price > 0) {
+        e.from = e.from == null ? price : Math.min(e.from, price)
+        e.currency = it.currency || 'USD'
+      }
+    }
+    // 3asari3 leads the list; the rest read alphabetically.
+    return [...map.values()].sort((a, b) =>
+      (b.isHouse ? 1 : 0) - (a.isHouse ? 1 : 0) || a.name.localeCompare(b.name))
+  }, [items, houseItems])
+
+  /* The shop-type strip, counted from the shops that actually exist. */
+  const shopTypes = useMemo(() => {
+    const map = new Map()
+    for (const st of stores) {
+      const key = String(st.type || 'other').trim().toLowerCase() || 'other'
+      const e = map.get(key)
+      if (e) { e.count += 1; e.stores.push(st) }
+      else map.set(key, { key, count: 1, stores: [st], ...shopTypeMeta(key) })
+    }
+    // Each tile wears a real photo: a shop's own logo if it has one, otherwise
+    // the first product picture from that kind of shop. Far more appetising
+    // than an icon — and it needs no new artwork. The icon stays as the
+    // fallback for a type with nothing to show yet.
+    for (const ty of map.values()) {
+      const logo = ty.stores.find(st => st.logo)?.logo
+      const shot = logo || ty.stores
+        .flatMap(st => itemsOf(st.key))
+        .map(it => itemImages(it)[0])
+        .find(Boolean)
+      ty.image = shot || ''
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  }, [stores, items, houseItems])
+
+  const activeStore  = stores.find(st => st.key === storeKey) || null
+  // Inside a shop, the search box and category chips narrow that shop's items;
+  // in the directory they narrow the shops themselves.
+  const storeItems   = activeStore ? itemsOf(activeStore.key).filter(it =>
+    (!q || it.name?.toLowerCase().includes(q) || itemCats(it).some(c => c.toLowerCase().includes(q)))
+    && (catSet.size === 0 || itemCats(it).some(c => catSet.has(c.toLowerCase())))) : []
+
+  // The heart filter shows only hearted goods, across every shop.
+  const favouriteItems = [...items, ...houseItems].filter(it => favourites.has(it.id))
+
+  const visibleStores = stores.filter(st =>
+    (market === 'house' ? st.isHouse : !st.isHouse)
+    && (!typeFilter || String(st.type || 'other').trim().toLowerCase() === typeFilter)
+    && (!q || st.name.toLowerCase().includes(q)
+           || String(st.type || '').toLowerCase().includes(q)
+           || itemsOf(st.key).some(it => it.name?.toLowerCase().includes(q))))
+
+  // Searching from the directory also surfaces matching products across shops.
+  const productHits = q ? filtered.slice(0, 8) : []
+  // The rail at the top: the best-stocked shops, shown only when browsing
+  // everything — a filtered view should answer the filter, not distract.
+  const featured = (!q && !typeFilter)
+    ? [...visibleStores].sort((a, b) => b.count - a.count).slice(0, 6)
+    : []
+  // The hero picture: the most photogenic thing currently in the shops.
+  const heroShot = featured.find(st => st.cover)?.cover
+    || visibleStores.find(st => st.cover)?.cover || ''
   const fmt = (v, c) => `${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c}`
+
+  /* One product card. Used by the shop page and by the search results in the
+     directory, so both look and behave identically. */
+  const renderItemCard = (it, shopLabel) => (
+    <div key={it.id} className="relative overflow-hidden rounded-lg border border-shop-100 bg-white shadow-sm">
+      {/* Tapping the photo — or "View item" under it — opens the
+          full picture and description. */}
+      <button type="button" onClick={() => openPreview({ ...it, shop: shopLabel })} className="relative block w-full">
+        {itemImages(it)[0]
+          ? <img src={itemImages(it)[0]} alt={it.name} className="h-28 w-full object-cover" />
+          : <div className="flex h-28 w-full items-center justify-center bg-shop-50"><ShoppingBag className="h-7 w-7 text-shop-200" /></div>}
+        {itemImages(it).length > 1 && (
+          <span className="absolute bottom-1 right-1 rounded-full bg-slate-950/60 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            1/{itemImages(it).length}
+          </span>
+        )}
+      </button>
+      {/* Heart — kept off the photo button so tapping it never opens the item. */}
+      {favContactId && (
+        <button type="button" onClick={() => toggleFavourite(it)}
+          title={isFavourite(it) ? t('removeFavourite') : t('addFavourite')}
+          className={cx('absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full shadow-md backdrop-blur transition-transform active:animate-pop',
+            isFavourite(it) ? 'bg-shop-600 text-white' : 'bg-white/85 text-shop-600')}>
+          <Heart className={cx('h-4 w-4', isFavourite(it) && 'fill-current')} />
+        </button>
+      )}
+      <button type="button" onClick={() => openPreview({ ...it, shop: shopLabel })}
+        className="flex w-full items-center justify-center gap-1.5 border-y border-shop-100 bg-shop-50/60 py-1.5 text-[11px] font-bold text-shop-700">
+        <Eye className="h-3.5 w-3.5" /> {t('viewItem')}
+      </button>
+      <div className="p-3">
+        <p className="truncate text-sm font-bold text-slate-950">{it.name}</p>
+        {it.description && <p className="mt-0.5 truncate text-xs text-slate-500">{it.description}</p>}
+        {itemCats(it).filter(Boolean).length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {itemCats(it).filter(Boolean).map(c => (
+              <span key={c} className="rounded-full bg-shop-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-shop-700">{c}</span>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 text-sm font-bold text-shop-700">{fmt(it.price, it.currency)}</p>
+
+        {/* Demand for made-to-order items, availability for stocked ones */}
+        {madeToOrder(it) ? (
+          orderedCount(it) > 0 && (
+            <p className="mt-1 text-[11px] font-semibold text-shop-700">
+              {t('orderedCount', { count: orderedCount(it) })}
+            </p>
+          )
+        ) : avail(it)?.tracked && (
+          soldOut(it) ? (
+            <p className="mt-1 text-[11px] font-bold text-rose-600">{t('outOfStock')}</p>
+          ) : (
+            <p className={`mt-1 text-[11px] font-semibold ${
+              avail(it).available <= 3 ? 'text-amber-600' : 'text-fresh-600'}`}>
+              {avail(it).available <= 3
+                ? t('onlyLeft', { count: avail(it).available })
+                : t('available', { count: avail(it).available })}
+            </p>
+          )
+        )}
+        {madeToOrder(it) && (
+          <p className="mt-0.5 text-[10px] text-slate-400">{t('preparedOnRequest')}</p>
+        )}
+
+        {/* Variants available — say so on the card, and show the
+            colour swatches so it's obvious a choice is needed. */}
+        {(itemColors(it).length > 0 || itemSizes(it).length > 0) && (
+          <div className="mt-1.5 space-y-1">
+            {itemColors(it).length > 0 && (
+              <div className="flex items-center gap-1">
+                {itemColors(it).slice(0, 4).map(c => (
+                  c.image
+                    ? <img key={c.name} src={c.image} alt={c.name} title={c.name}
+                        className="h-5 w-5 rounded-full border border-shop-100 object-cover" />
+                    : <span key={c.name} title={c.name}
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-shop-100 bg-shop-50 text-[8px] font-bold uppercase text-shop-700">
+                        {c.name.slice(0, 1)}
+                      </span>
+                ))}
+                {itemColors(it).length > 4 && (
+                  <span className="text-[10px] font-semibold text-slate-400">+{itemColors(it).length - 4}</span>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] font-semibold text-slate-500">
+              {[
+                itemColors(it).length > 0 ? t('colorsCount', { count: itemColors(it).length }) : null,
+                itemSizes(it).length  > 0 ? t('sizesCount',  { count: itemSizes(it).length })  : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          </div>
+        )}
+
+        <button type="button" disabled={soldOut(it)}
+          onClick={() => {
+            // Items with colours/sizes must be configured first, so
+            // the card's button opens the popup instead.
+            if (itemColors(it).length > 0 || itemSizes(it).length > 0) {
+              openPreview({ ...it, shop: shopLabel })
+              return
+            }
+            guardedAdd(it, { id: it.id, shop_item_id: it._house ? null : it.id, product_id: it.product_id ?? null, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: shopLabel, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null }, shopLabel)
+          }}
+          className={cx('mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold',
+            soldOut(it) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-shop-600 text-white hover:bg-shop-700')}>
+          {soldOut(it)
+            ? t('outOfStock')
+            : (itemColors(it).length > 0 || itemSizes(it).length > 0)
+              ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
+              : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <>
@@ -1885,25 +2255,39 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
           Constrained to the app column, like the bottom nav. */}
       <div ref={topRef}
         className="fixed left-0 top-0 z-30 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2">
-        <Header title={t('shopProducts')} subtitle={t('shopSubtitle')}
+        <Header title={favOnly ? t('favourites') : t('shopProducts')} subtitle={t('shopSubtitle')}
           right={
-            <button onClick={onOpenCart} className="relative flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+            <>
+            {favContactId && (
+              <button onClick={() => { setFavOnly(v => !v); setStoreKey(null) }}
+                title={t('favourites')}
+                className={cx('relative mr-2 flex h-11 w-11 items-center justify-center rounded-lg transition-colors',
+                  favOnly ? 'bg-shop-600 text-white' : 'bg-shop-100 text-shop-700')}>
+                <Heart className={cx('h-5 w-5', favOnly && 'fill-current')} />
+                {favourites.size > 0 && (
+                  <span className={cx('absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold',
+                    favOnly ? 'bg-white text-shop-700' : 'bg-shop-600 text-white')}>{favourites.size}</span>
+                )}
+              </button>
+            )}
+            <button onClick={onOpenCart} className="relative flex h-11 w-11 items-center justify-center rounded-lg bg-shop-100 text-shop-700">
               <ShoppingCart className="h-5 w-5" />
-              {cartCount > 0 && <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-600 px-1 text-[10px] font-bold text-white">{cartCount}</span>}
+              {cartCount > 0 && <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-shop-600 px-1 text-[10px] font-bold text-white">{cartCount}</span>}
             </button>
+            </>
           } />
         {/* Search + category filter. The filter button lives inside the search
             pill and pulls down a category menu underneath it. */}
-        <div className="relative bg-[#f8fdff] px-5 pb-3 pt-4">
-          <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 pl-4 pr-1.5 text-sm text-slate-500">
-            <Search className="h-4 w-4 text-sky-600" />
+        <div className="relative bg-[#FFF8EF] px-5 pb-3 pt-4">
+          <label className="flex h-12 items-center gap-3 rounded-full border border-shop-100 bg-shop-50 pl-4 pr-1.5 text-sm text-slate-500">
+            <Search className="h-4 w-4 text-shop-600" />
             <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={search}
               onChange={e => setSearch(e.target.value)} placeholder={t('shopProducts')} />
             <button type="button" onClick={() => setFilterOpen(o => !o)}
               aria-label={t('filters')} title={t('filterByCategory')}
               className={cx(
                 'relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full transition-colors',
-                catFilter.length || filterOpen ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 shadow-sm'
+                catFilter.length || filterOpen ? 'bg-shop-600 text-white' : 'bg-white text-shop-700 shadow-sm'
               )}>
               <SlidersHorizontal className="h-4 w-4" />
               {catFilter.length > 0 && (
@@ -1916,12 +2300,15 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
 
           {/* Market switch — a water drop resting over the chosen word. The
               track clips its contents, so nothing can poke out at the corners;
-              the drop overshoots slightly as it lands, like liquid settling. */}
-          <div className="relative mx-auto mt-3 flex h-12 w-full max-w-xs items-center overflow-hidden rounded-full border border-sky-200/70 bg-gradient-to-b from-sky-100/70 to-sky-200/50 p-1 shadow-inner">
+              the drop overshoots slightly as it lands, like liquid settling.
+              It picks which shops the directory lists, so it is hidden once a
+              single shop is open. */}
+          <div className={cx('relative mx-auto mt-3 flex h-12 w-full max-w-xs items-center overflow-hidden rounded-full border border-shop-200/70 bg-gradient-to-b from-shop-100/70 to-shop-200/50 p-1 shadow-inner',
+            (storeKey !== null || favOnly) && 'hidden')}>
             <span aria-hidden
               className="pointer-events-none absolute inset-y-[3px] left-[3px] w-[calc(50%-3px)] rounded-full
-                         bg-sky-400/35 backdrop-blur-[2px] backdrop-saturate-150
-                         shadow-[0_8px_16px_-6px_rgba(2,132,199,0.55),inset_0_-6px_10px_-6px_rgba(2,132,199,0.55),inset_0_2px_3px_rgba(255,255,255,0.75)]
+                         bg-shop-400/35 backdrop-blur-[2px] backdrop-saturate-150
+                         shadow-[0_8px_16px_-6px_rgba(179,18,43,0.5),inset_0_-6px_10px_-6px_rgba(179,18,43,0.5),inset_0_2px_3px_rgba(255,255,255,0.75)]
                          ring-1 ring-inset ring-white/50
                          transition-transform duration-500 ease-[cubic-bezier(.34,1.4,.64,1)] motion-reduce:transition-none"
               style={{ transform: market === 'house' ? 'translateX(100%)' : 'translateX(0)' }}>
@@ -1930,7 +2317,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
               <span className="absolute left-[18%] top-[18%] h-2.5 w-4 -rotate-12 rounded-full bg-white/80 blur-[2px]" />
               <span className="absolute inset-x-3 top-1 h-2 rounded-full bg-white/35 blur-[3px]" />
               {/* …and a pale rim at the bottom, where light passes through. */}
-              <span className="absolute inset-x-4 bottom-[3px] h-1.5 rounded-full bg-sky-100/60 blur-[2px]" />
+              <span className="absolute inset-x-4 bottom-[3px] h-1.5 rounded-full bg-shop-100/60 blur-[2px]" />
             </span>
 
             {[
@@ -1944,9 +2331,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                     'relative z-10 flex-1 rounded-full px-2 text-center transition-all duration-300',
                     on
                       // Magnified through the drop.
-                      ? 'text-[15px] font-extrabold text-sky-950 [text-shadow:0_1px_1px_rgba(255,255,255,0.65)]'
+                      ? 'text-[15px] font-extrabold text-shop-950 [text-shadow:0_1px_1px_rgba(255,255,255,0.65)]'
                       // Beside it: smaller and just out of focus.
-                      : 'text-[11px] font-semibold text-sky-900/45 blur-[0.6px]')}>
+                      : 'text-[11px] font-semibold text-shop-900/45 blur-[0.6px]')}>
                   {tab.label}
                 </button>
               )
@@ -1955,7 +2342,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
 
           {filterOpen && (<>
             <div className="fixed inset-0 z-20" onClick={() => setFilterOpen(false)} />
-            <div className="absolute left-5 right-5 top-[4.25rem] z-30 max-h-72 overflow-y-auto rounded-2xl border border-sky-100 bg-white p-2 shadow-[0_12px_28px_-8px_rgba(14,165,233,0.35)]">
+            <div className="absolute left-5 right-5 top-[4.25rem] z-30 max-h-72 overflow-y-auto rounded-2xl border border-shop-100 bg-white p-2 shadow-[0_12px_28px_-8px_rgba(179,18,43,0.28)]">
               <div className="flex items-center justify-between px-2 py-1.5">
                 <span className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('filterByCategory')}</span>
                 <button type="button" onClick={() => setFilterOpen(false)} className="text-slate-400 hover:text-slate-600">
@@ -1963,9 +2350,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                 </button>
               </div>
               <button type="button" onClick={() => setCatFilter([])}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-sky-50">
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-shop-50">
                 {catFilter.length === 0
-                  ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-sky-600" />
+                  ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-shop-600" />
                   : <Circle className="h-4 w-4 flex-shrink-0 text-slate-300" />}
                 <span className="truncate font-semibold">{t('allCategories')}</span>
                 <span className="ml-auto text-xs text-slate-400">{items.length}</span>
@@ -1974,9 +2361,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                 const on = catFilter.includes(c.value)
                 return (
                   <button key={c.value || '__none__'} type="button" onClick={() => toggleCategory(c.value)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-sky-50">
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-shop-50">
                     {on
-                      ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-sky-600" />
+                      ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-shop-600" />
                       : <Circle className="h-4 w-4 flex-shrink-0 text-slate-300" />}
                     <span className="truncate text-left capitalize">{c.label}</span>
                     <span className="ml-auto text-xs text-slate-400">{c.count}</span>
@@ -1989,6 +2376,53 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
             </div>
           </>)}
         </div>
+
+        {/* Shop types — the quickest way into a kind of shop. Hidden while a
+            single shop is open, where the strip would mean nothing. */}
+        {storeKey === null && !favOnly && shopTypes.length > 0 && (
+          <div className="border-b border-shop-100 bg-[#FFF8EF] pb-3">
+            <div className="flex gap-3 overflow-x-auto px-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button type="button" onClick={() => setTypeFilter('')}
+                className="flex w-16 flex-shrink-0 flex-col items-center gap-1.5">
+                <span className={cx('flex h-14 w-14 items-center justify-center rounded-2xl border-2 transition-all',
+                  typeFilter === ''
+                    ? 'border-shop-600 bg-shop-600 text-white shadow-[0_8px_20px_-8px_rgba(179,18,43,0.7)]'
+                    : 'border-white bg-shop-50 text-shop-600 shadow-sm')}>
+                  <Store className="h-6 w-6" />
+                </span>
+                <span className={cx('text-[10px] font-bold leading-tight',
+                  typeFilter === '' ? 'text-shop-700' : 'text-slate-500')}>All</span>
+              </button>
+              {shopTypes.map(ty => {
+                const Icon = ty.icon
+                const on = typeFilter === ty.key
+                return (
+                  <button key={ty.key} type="button" onClick={() => setTypeFilter(on ? '' : ty.key)}
+                    className="flex w-16 flex-shrink-0 flex-col items-center gap-1.5">
+                    <span className={cx('relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border-2 transition-all',
+                      on
+                        ? 'border-shop-600 shadow-[0_8px_20px_-8px_rgba(179,18,43,0.7)]'
+                        : 'border-white shadow-sm')}>
+                      {ty.image
+                        ? <img src={ty.image} alt="" className={cx('h-full w-full object-cover transition-transform',
+                            on ? 'scale-105' : '')} />
+                        : <span className="flex h-full w-full items-center justify-center bg-shop-50 text-shop-600">
+                            <Icon className="h-6 w-6" />
+                          </span>}
+                      {/* A soft wash keeps the label readable over any photo. */}
+                      <span aria-hidden className={cx('absolute inset-0 transition-opacity',
+                        on ? 'bg-shop-600/25' : 'bg-slate-950/10')} />
+                      <span className={cx('absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold shadow',
+                        on ? 'bg-shop-600 text-white' : 'bg-white text-shop-700')}>{ty.count}</span>
+                    </span>
+                    <span className={cx('text-center text-[10px] font-bold capitalize leading-tight',
+                      on ? 'text-shop-700' : 'text-slate-500')}>{ty.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <main className="space-y-5 px-5 pb-28 pt-4" style={{ paddingTop: topH ? topH + 16 : undefined }}>
@@ -1997,7 +2431,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
           <div className="flex flex-wrap items-center gap-2">
             {catFilter.map(v => (
               <button key={v || '__none__'} type="button" onClick={() => toggleCategory(v)}
-                className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-3 py-1 text-xs font-bold capitalize text-sky-700">
+                className="inline-flex items-center gap-1 rounded-full bg-shop-100 px-3 py-1 text-xs font-bold capitalize text-shop-700">
                 {v || t('uncategorized')} <X className="h-3 w-3" />
               </button>
             ))}
@@ -2005,136 +2439,393 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
               className="text-xs font-semibold text-slate-500 underline">{t('clearFilters')}</button>
           </div>
         )}
+        {/* Skeletons hold the shape of what is coming, so the page doesn't
+            jump when it lands. */}
         {loading && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">…</div>
+          <div className="space-y-3">
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-3 rounded-2xl border border-shop-100 bg-white p-3">
+                <div className="h-16 w-16 flex-shrink-0 rounded-xl bg-[linear-gradient(90deg,#f4ece2_25%,#fdf5ec_37%,#f4ece2_63%)] bg-[length:400%_100%] animate-shimmer" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 w-2/5 rounded-full bg-[linear-gradient(90deg,#f4ece2_25%,#fdf5ec_37%,#f4ece2_63%)] bg-[length:400%_100%] animate-shimmer" />
+                  <div className="h-2.5 w-1/4 rounded-full bg-[linear-gradient(90deg,#f4ece2_25%,#fdf5ec_37%,#f4ece2_63%)] bg-[length:400%_100%] animate-shimmer" />
+                  <div className="h-2.5 w-3/5 rounded-full bg-[linear-gradient(90deg,#f4ece2_25%,#fdf5ec_37%,#f4ece2_63%)] bg-[length:400%_100%] animate-shimmer" />
+                </div>
+              </div>
+            ))}
+          </div>
         )}
         {!loading && error && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>
         )}
-        {!loading && !error && groupList.length === 0 && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-10 text-center">
-            <ShoppingBag className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="mt-2 text-sm text-slate-500">{t('noShopItems')}</p>
-          </div>
-        )}
-        {groupList.map((g, gi) => (
-          <section key={gi} className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Store className="h-4 w-4 text-emerald-600" />
-              <h3 className="text-sm font-bold text-slate-950">{g.name}</h3>
-              <span className="text-xs text-slate-400">· {g.items.length}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {g.items.map(it => (
-                <div key={it.id} className="overflow-hidden rounded-lg border border-sky-100 bg-white shadow-sm">
-                  {/* Tapping the photo — or "View item" under it — opens the
-                      full picture and description. */}
-                  <button type="button" onClick={() => openPreview({ ...it, shop: g.name })} className="relative block w-full">
-                    {itemImages(it)[0]
-                      ? <img src={itemImages(it)[0]} alt={it.name} className="h-28 w-full object-cover" />
-                      : <div className="flex h-28 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-7 w-7 text-sky-200" /></div>}
-                    {itemImages(it).length > 1 && (
-                      <span className="absolute bottom-1 right-1 rounded-full bg-slate-950/60 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                        1/{itemImages(it).length}
-                      </span>
-                    )}
-                  </button>
-                  <button type="button" onClick={() => openPreview({ ...it, shop: g.name })}
-                    className="flex w-full items-center justify-center gap-1.5 border-y border-sky-100 bg-sky-50/60 py-1.5 text-[11px] font-bold text-sky-700">
-                    <Eye className="h-3.5 w-3.5" /> {t('viewItem')}
-                  </button>
-                  <div className="p-3">
-                    <p className="truncate text-sm font-bold text-slate-950">{it.name}</p>
-                    {it.description && <p className="mt-0.5 truncate text-xs text-slate-500">{it.description}</p>}
-                    {itemCats(it).filter(Boolean).length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {itemCats(it).filter(Boolean).map(c => (
-                          <span key={c} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">{c}</span>
-                        ))}
-                      </div>
-                    )}
-                    <p className="mt-2 text-sm font-bold text-sky-700">{fmt(it.price, it.currency)}</p>
-
-                    {/* Demand for made-to-order items, availability for stocked ones */}
-                    {madeToOrder(it) ? (
-                      orderedCount(it) > 0 && (
-                        <p className="mt-1 text-[11px] font-semibold text-sky-700">
-                          {t('orderedCount', { count: orderedCount(it) })}
-                        </p>
-                      )
-                    ) : avail(it)?.tracked && (
-                      soldOut(it) ? (
-                        <p className="mt-1 text-[11px] font-bold text-rose-600">{t('outOfStock')}</p>
-                      ) : (
-                        <p className={`mt-1 text-[11px] font-semibold ${
-                          avail(it).available <= 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                          {avail(it).available <= 3
-                            ? t('onlyLeft', { count: avail(it).available })
-                            : t('available', { count: avail(it).available })}
-                        </p>
-                      )
-                    )}
-                    {madeToOrder(it) && (
-                      <p className="mt-0.5 text-[10px] text-slate-400">{t('preparedOnRequest')}</p>
-                    )}
-
-                    {/* Variants available — say so on the card, and show the
-                        colour swatches so it's obvious a choice is needed. */}
-                    {(itemColors(it).length > 0 || itemSizes(it).length > 0) && (
-                      <div className="mt-1.5 space-y-1">
-                        {itemColors(it).length > 0 && (
-                          <div className="flex items-center gap-1">
-                            {itemColors(it).slice(0, 4).map(c => (
-                              c.image
-                                ? <img key={c.name} src={c.image} alt={c.name} title={c.name}
-                                    className="h-5 w-5 rounded-full border border-sky-100 object-cover" />
-                                : <span key={c.name} title={c.name}
-                                    className="flex h-5 w-5 items-center justify-center rounded-full border border-sky-100 bg-sky-50 text-[8px] font-bold uppercase text-sky-700">
-                                    {c.name.slice(0, 1)}
-                                  </span>
-                            ))}
-                            {itemColors(it).length > 4 && (
-                              <span className="text-[10px] font-semibold text-slate-400">+{itemColors(it).length - 4}</span>
-                            )}
-                          </div>
-                        )}
-                        <p className="text-[10px] font-semibold text-slate-500">
-                          {[
-                            itemColors(it).length > 0 ? t('colorsCount', { count: itemColors(it).length }) : null,
-                            itemSizes(it).length  > 0 ? t('sizesCount',  { count: itemSizes(it).length })  : null,
-                          ].filter(Boolean).join(' · ')}
-                        </p>
-                      </div>
-                    )}
-
-                    <button type="button" disabled={soldOut(it)}
-                      onClick={() => {
-                        // Items with colours/sizes must be configured first, so
-                        // the card's button opens the popup instead.
-                        if (itemColors(it).length > 0 || itemSizes(it).length > 0) {
-                          openPreview({ ...it, shop: g.name })
-                          return
-                        }
-                        onAdd?.({ id: it.id, shop_item_id: it._house ? null : it.id, product_id: it.product_id ?? null, name: it.name, qty: 1, price: Number(it.price) || 0, currency: it.currency || 'USD', image_url: itemImages(it)[0] || it.image_url, owner_contact_id: it.owner_contact_id, shop: g.name, commission_percentage: it.owner?.partner_percentage ?? null, partner_percentage_type: it.owner?.partner_percentage_type ?? null })
-                      }}
-                      className={cx('mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold',
-                        soldOut(it) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-sky-600 text-white hover:bg-sky-700')}>
-                      {soldOut(it)
-                        ? t('outOfStock')
-                        : (itemColors(it).length > 0 || itemSizes(it).length > 0)
-                          ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
-                          : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
-                    </button>
+        {/* ── one shop ───────────────────────────────────────────────── */}
+        {!loading && !error && !favOnly && activeStore && (
+          <>
+            {/* Storefront: the shop's picture, its sign, and the facts —
+                then its own categories, then the goods. */}
+            <div className="-mx-5 -mt-4 mb-1 animate-rise-in">
+              <div className="relative h-40 w-full overflow-hidden">
+                {activeStore.cover
+                  ? <img src={activeStore.cover} alt="" className="h-full w-full object-cover animate-ken-burns" />
+                  : <div className="h-full w-full bg-gradient-to-br from-shop-700 via-shop-600 to-shop-500" />}
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-slate-950/20" />
+                <button type="button" onClick={() => { setStoreKey(null); setCatFilter([]); setSearch('') }}
+                  className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/95 text-shop-700 shadow-lg active:animate-pop">
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <div className="absolute inset-x-4 bottom-3 flex items-end gap-3">
+                  {activeStore.logo
+                    ? <img src={activeStore.logo} alt="" className="h-16 w-16 flex-shrink-0 rounded-2xl border-[3px] border-white object-cover shadow-lg" />
+                    : <span className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl border-[3px] border-white bg-shop-600 text-xl font-black text-white shadow-lg">
+                        {activeStore.name.slice(0, 1).toUpperCase()}
+                      </span>}
+                  <div className="min-w-0 flex-1 pb-1 text-white">
+                    <p className="truncate text-xl font-black leading-tight drop-shadow">{activeStore.name}</p>
+                    <p className="mt-0.5 truncate text-xs font-semibold capitalize text-white/85">
+                      {shopTypeMeta(activeStore.type).label}
+                      {activeStore.address ? ` · ${activeStore.address}` : ''}
+                    </p>
                   </div>
                 </div>
-              ))}
+              </div>
+
+              {/* Facts bar — the numbers a customer decides on. */}
+              <div className="flex items-center gap-2 border-b border-shop-100 bg-white px-4 py-2.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-fresh-100 px-2.5 py-1 text-[11px] font-black text-fresh-800">
+                  <Package className="h-3.5 w-3.5" /> {storeItems.length}
+                </span>
+                {activeStore.from != null && (
+                  <span className="text-[11px] font-bold text-slate-600">from {fmt(activeStore.from, activeStore.currency)}</span>
+                )}
+                {activeStore.isHouse && (
+                  <span className="rounded-full bg-accent-500 px-2 py-0.5 text-[9px] font-black uppercase text-shop-900">
+                    {HOUSE_SHOP_LABEL}
+                  </span>
+                )}
+                {(() => {
+                  const stt = shopOpenState(activeStore.contact)
+                  if (!stt.keepsHours) return null
+                  return (
+                    <span className={cx('ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold',
+                      stt.open ? 'text-fresh-700' : 'text-slate-500')}>
+                      <Clock className="h-3.5 w-3.5" />
+                      {stt.open
+                        ? <>{t('openNow')} · {todayText(activeStore.contact)}</>
+                        : <>{t('closedNow')}{stt.nextOpen ? ` · ${t('opensLabel')} ${stt.nextOpen.label}` : ''}</>}
+                    </span>
+                  )
+                })()}
+              </div>
+
+              {/* This shop's own aisles. */}
+              {(() => {
+                const own = new Map()
+                for (const it of itemsOf(activeStore.key)) {
+                  for (const c of itemCats(it).filter(Boolean)) {
+                    own.set(c.toLowerCase(), (own.get(c.toLowerCase()) || { value: c, count: 0 }))
+                    own.get(c.toLowerCase()).count += 1
+                  }
+                }
+                const list = [...own.values()].sort((a, b) => b.count - a.count)
+                if (list.length === 0) return null
+                return (
+                  <div className="flex gap-2 overflow-x-auto bg-white px-4 py-2.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <button type="button" onClick={() => setCatFilter([])}
+                      className={cx('flex-shrink-0 rounded-full px-3 py-1.5 text-[11px] font-black transition-colors',
+                        catFilter.length === 0 ? 'bg-shop-600 text-white' : 'bg-shop-100 text-shop-700')}>
+                      {t('allCategories')}
+                    </button>
+                    {list.map(c => {
+                      const on = catFilter.some(v => v.toLowerCase() === c.value.toLowerCase())
+                      return (
+                        <button key={c.value} type="button" onClick={() => toggleCategory(c.value)}
+                          className={cx('flex-shrink-0 rounded-full px-3 py-1.5 text-[11px] font-black capitalize transition-colors',
+                            on ? 'bg-shop-600 text-white' : 'bg-shop-100 text-shop-700')}>
+                          {c.value} <span className={on ? 'text-white/70' : 'text-shop-400'}>{c.count}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </div>
+
+            {storeItems.length === 0 ? (
+              <div className="rounded-lg border border-shop-100 bg-white px-4 py-10 text-center">
+                <ShoppingBag className="mx-auto h-8 w-8 text-slate-300" />
+                <p className="mt-2 text-sm text-slate-500">{t('noShopItems')}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {storeItems.map((it, i) => (
+                  <div key={it.id} style={{ animationDelay: `${Math.min(i, 10) * 35}ms` }} className="animate-rise-in">
+                    {renderItemCard(it, activeStore.name)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── favourites ─────────────────────────────────────────────── */}
+        {!loading && !error && favOnly && (
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Heart className="h-4 w-4 fill-current text-shop-600" />
+              <h3 className="text-sm font-black text-slate-950">{t('favourites')}</h3>
+              <span className="rounded-full bg-shop-100 px-2 py-0.5 text-[10px] font-black text-shop-700">
+                {favouriteItems.length}
+              </span>
+              <button type="button" onClick={() => setFavOnly(false)}
+                className="ml-auto text-[11px] font-bold text-shop-700 underline">{t('shopProducts')}</button>
+            </div>
+            {favouriteItems.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-shop-200 bg-white px-4 py-12 text-center">
+                <Heart className="mx-auto h-9 w-9 text-shop-200" />
+                <p className="mt-2 text-sm font-bold text-slate-700">{t('noFavourites')}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {favouriteItems.map((it, i) => (
+                  <div key={it.id} style={{ animationDelay: `${Math.min(i, 10) * 35}ms` }} className="animate-rise-in">
+                    {renderItemCard(it, shopName(it.owner))}
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
-        ))}
+        )}
+
+        {/* ── the directory ──────────────────────────────────────────── */}
+        {!loading && !error && !favOnly && !activeStore && (
+          <>
+            {/* Hero band. A real photo from the shops behind a pomegranate
+                wash, drifting slowly so the page feels alive. */}
+            {heroShot && !q && (
+              <div className="relative -mx-5 -mt-4 mb-1 h-36 overflow-hidden animate-rise-in">
+                <img src={heroShot} alt="" className="h-full w-full object-cover animate-ken-burns" />
+                <div className="absolute inset-0 bg-gradient-to-r from-shop-800/90 via-shop-700/70 to-shop-600/25" />
+                <div className="absolute inset-0 flex flex-col justify-center gap-1 px-5 text-white">
+                  <span className="w-fit rounded-full bg-accent-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-shop-900">
+                    {HOUSE_SHOP_LABEL}
+                  </span>
+                  <p className="text-xl font-black leading-tight drop-shadow-sm">{t('shopProducts')}</p>
+                  <p className="text-xs font-semibold text-white/85">
+                    {stores.length} {stores.length === 1 ? 'shop' : 'shops'} · {items.length + houseItems.length} items
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {productHits.length > 0 && (
+              <section className="space-y-3 animate-rise-in">
+                <h3 className="text-sm font-black text-slate-950">{t('shopProducts')}</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {productHits.map(it => renderItemCard(it, shopName(it.owner)))}
+                </div>
+              </section>
+            )}
+
+            {/* Featured rail — the best-stocked shops, swiped horizontally. */}
+            {featured.length > 1 && (
+              <section className="space-y-3 animate-rise-in">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-accent-600" />
+                  <h3 className="text-sm font-black text-slate-950">Popular shops</h3>
+                </div>
+                <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {featured.map((st, i) => {
+                    const Icon = shopTypeMeta(st.type).icon
+                    return (
+                      <button key={st.key} type="button"
+                        onClick={() => { setStoreKey(st.key); setCatFilter([]); setSearch('') }}
+                        style={{ animationDelay: `${i * 45}ms` }}
+                        className="w-44 flex-shrink-0 overflow-hidden rounded-2xl border border-shop-100 bg-white text-left shadow-[0_10px_24px_-16px_rgba(74,7,17,0.55)] animate-rise-in active:animate-pop">
+                        <span className="relative block h-24 w-full">
+                          {st.cover
+                            ? <img src={st.cover} alt="" className="h-full w-full object-cover" />
+                            : <span className="flex h-full w-full items-center justify-center bg-shop-100 text-shop-600"><Icon className="h-8 w-8" /></span>}
+                          <span className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950/65 to-transparent" />
+                          {st.logo && (
+                            <img src={st.logo} alt="" className="absolute bottom-2 left-2 h-9 w-9 rounded-xl border-2 border-white object-cover shadow" />
+                          )}
+                          {st.isHouse && (
+                            <span className="absolute right-2 top-2 rounded-full bg-accent-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-shop-900">
+                              {HOUSE_SHOP_LABEL}
+                            </span>
+                          )}
+                        </span>
+                        <span className="block p-2.5">
+                          <span className="block truncate text-[13px] font-black text-slate-950">{st.name}</span>
+                          <span className="mt-0.5 block truncate text-[11px] font-semibold capitalize text-shop-700">
+                            {shopTypeMeta(st.type).label}
+                          </span>
+                          <span className="mt-1 flex items-center gap-1 text-[10px] font-bold text-fresh-700">
+                            <Package className="h-3 w-3" /> {st.count}
+                            {st.from != null && (
+                              <span className="ml-auto text-slate-400">from {fmt(st.from, st.currency)}</span>
+                            )}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Store className="h-4 w-4 text-shop-600" />
+                <h3 className="text-sm font-black text-slate-950">
+                  {typeFilter ? shopTypes.find(x => x.key === typeFilter)?.label : 'All shops'}
+                </h3>
+                <span className="rounded-full bg-shop-100 px-2 py-0.5 text-[10px] font-black text-shop-700">
+                  {visibleStores.length}
+                </span>
+                {(typeFilter || q) && (
+                  <button type="button" onClick={() => { setTypeFilter(''); setSearch('') }}
+                    className="ml-auto text-[11px] font-bold text-shop-700 underline">{t('clearFilters')}</button>
+                )}
+              </div>
+
+              {visibleStores.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-shop-200 bg-white px-4 py-12 text-center">
+                  <Store className="mx-auto h-9 w-9 text-shop-200" />
+                  <p className="mt-2 text-sm font-bold text-slate-700">{t('noShopItems')}</p>
+                  <p className="mt-1 text-xs text-slate-400">Try another category or clear the search.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleStores.map((st, i) => {
+                    const Icon = shopTypeMeta(st.type).icon
+                    return (
+                      <button key={st.key} type="button"
+                        onClick={() => { setStoreKey(st.key); setCatFilter([]); setSearch('') }}
+                        style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+                        className="w-full overflow-hidden rounded-2xl border border-shop-100 bg-white text-left shadow-[0_10px_26px_-18px_rgba(74,7,17,0.6)] animate-rise-in transition-shadow active:animate-pop hover:shadow-[0_14px_30px_-16px_rgba(179,18,43,0.45)]">
+                        {/* Cover strip: the shop's own picture, its logo riding
+                            the bottom edge like a storefront sign. */}
+                        <span className={cx('relative block h-24 w-full', !shopOpenState(st.contact).open && 'grayscale-[55%]')}>
+                          {st.cover
+                            ? <img src={st.cover} alt="" className="h-full w-full object-cover" />
+                            : <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-shop-100 to-shop-200 text-shop-600"><Icon className="h-9 w-9" /></span>}
+                          <span className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 via-slate-950/25 to-transparent" />
+                          <span className="absolute inset-x-3 bottom-2 flex items-end gap-2.5">
+                            {st.logo
+                              ? <img src={st.logo} alt="" className="h-11 w-11 flex-shrink-0 rounded-xl border-2 border-white object-cover shadow-md" />
+                              : <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border-2 border-white bg-shop-600 text-sm font-black text-white shadow-md">
+                                  {st.name.slice(0, 1).toUpperCase()}
+                                </span>}
+                            <span className="min-w-0 flex-1 pb-0.5">
+                              <span className="block truncate text-[15px] font-black leading-tight text-white drop-shadow">{st.name}</span>
+                              <span className="block truncate text-[11px] font-semibold capitalize text-white/85">
+                                {shopTypeMeta(st.type).label}
+                              </span>
+                            </span>
+                            {st.isHouse && (
+                              <span className="mb-1 flex-shrink-0 rounded-full bg-accent-500 px-2 py-0.5 text-[9px] font-black uppercase text-shop-900 shadow">
+                                {HOUSE_SHOP_LABEL}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                        {/* The facts line: what they stock, from how much, where. */}
+                        <span className="flex items-center gap-2 px-3 py-2.5">
+                          {(() => {
+                            const stt = shopOpenState(st.contact)
+                            if (!stt.keepsHours) return null
+                            return (
+                              <span className={cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black',
+                                stt.open ? 'bg-fresh-100 text-fresh-800' : 'bg-slate-200 text-slate-600')}>
+                                <span className={cx('h-1.5 w-1.5 rounded-full', stt.open ? 'bg-fresh-600' : 'bg-slate-400')} />
+                                {stt.open ? t('openNow') : t('closedNow')}
+                              </span>
+                            )
+                          })()}
+                          <span className="inline-flex items-center gap-1 rounded-full bg-fresh-100 px-2 py-0.5 text-[10px] font-black text-fresh-800">
+                            <Package className="h-3 w-3" /> {st.count}
+                          </span>
+                          {st.from != null && (
+                            <span className="text-[11px] font-bold text-slate-600">from {fmt(st.from, st.currency)}</span>
+                          )}
+                          {st.address && (
+                            <span className="ml-1 min-w-0 flex-1 truncate text-[11px] text-slate-400">{st.address}</span>
+                          )}
+                          <ChevronRight className="ml-auto h-4 w-4 flex-shrink-0 text-shop-300" />
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </main>
+      {/* The shop is shut. Rather than a dead end, offer the next opening —
+          the customer picks a delivery time and the order is scheduled. */}
+      {closedShop && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm md:items-center md:p-4"
+          onClick={() => setClosedShop(null)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 shadow-2xl animate-rise-in md:rounded-3xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200 md:hidden" />
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-shop-100 text-shop-700">
+                <Clock className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-base font-black text-slate-950">
+                  {closedShop.shopLabel || t('theShop')} {t('isClosedNow')}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {closedShop.state?.nextOpen
+                    ? `${t('opensLabel')} ${closedShop.state.nextOpen.label}.`
+                    : t('closedToday')}
+                  {' '}{t('scheduleQuestion')}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {closedShop.state?.nextOpen && (
+                <button type="button"
+                  onClick={() => {
+                    // Keep the goods AND the time: the line goes in the cart and
+                    // checkout is told when the shop can actually serve it.
+                    onAdd?.({ ...closedShop.line, scheduled_for: closedShop.state.nextOpen })
+                    onScheduleLater?.(closedShop.state.nextOpen)
+                    setClosedShop(null); setPreview(null)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-2xl bg-shop-600 px-4 py-3 text-left text-white shadow-lg active:animate-pop">
+                  <CalendarClock className="h-5 w-5 flex-shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-black">{t('scheduleFor')} {closedShop.state.nextOpen.label}</span>
+                    <span className="block text-[11px] text-white/80">{closedShop.state.nextOpen.date}</span>
+                  </span>
+                </button>
+              )}
+              <button type="button"
+                onClick={() => {
+                  // Ordering anyway is allowed — the shop may still accept it —
+                  // but the customer has been told.
+                  onAdd?.(closedShop.line)
+                  setClosedShop(null); setPreview(null)
+                }}
+                className="w-full rounded-2xl border-2 border-shop-100 px-4 py-3 text-sm font-black text-shop-700 active:animate-pop">
+                {t('addAnyway')}
+              </button>
+              <button type="button" onClick={() => setClosedShop(null)}
+                className="w-full py-2 text-xs font-bold text-slate-400">{t('cancel')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cartCount > 0 && (
         <button onClick={onOpenCart}
-          className="fixed bottom-24 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-sky-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-sky-600/30">
+          className="fixed bottom-24 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-shop-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-shop-600/30">
           <ShoppingCart className="h-4 w-4" /> {t('viewCart')} · {cartCount}
         </button>
       )}
@@ -2145,10 +2836,10 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
           onClick={() => setPreview(null)}>
           <div className="flex h-[80vh] w-[80vw] max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between gap-3 border-b border-sky-100 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 border-b border-shop-100 px-4 py-3">
               <p className="truncate text-sm font-bold text-slate-950">{preview.name}</p>
               <button type="button" onClick={() => setPreview(null)} aria-label={t('close')}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-shop-100 text-shop-700">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -2158,22 +2849,22 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
               {itemImages(preview).length > 0 ? (
                 <ItemGallery images={itemImages(preview)} alt={preview.name} />
               ) : (
-                <div className="flex h-40 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-10 w-10 text-sky-200" /></div>
+                <div className="flex h-40 w-full items-center justify-center bg-shop-50"><ShoppingBag className="h-10 w-10 text-shop-200" /></div>
               )}
               <div className="space-y-3 p-4">
                 {preview.shop && (
-                  <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-fresh-700">
                     <Store className="h-3.5 w-3.5" /> {preview.shop}
                   </p>
                 )}
                 {itemCats(preview).filter(Boolean).length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {itemCats(preview).filter(Boolean).map(c => (
-                      <span key={c} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">{c}</span>
+                      <span key={c} className="rounded-full bg-shop-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-shop-700">{c}</span>
                     ))}
                   </div>
                 )}
-                <p className="text-lg font-bold text-sky-700">{fmt(preview.price, preview.currency)}</p>
+                <p className="text-lg font-bold text-shop-700">{fmt(preview.price, preview.currency)}</p>
                 {preview.description && (
                   <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{preview.description}</p>
                 )}
@@ -2189,10 +2880,10 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                           <button key={c.name} type="button"
                             onClick={() => { setPickedColor(c.name); setVariantErr('') }}
                             className={cx('w-24 overflow-hidden rounded-lg border bg-white text-left transition-colors',
-                              on ? 'border-sky-600 ring-2 ring-sky-200' : 'border-sky-100')}>
+                              on ? 'border-shop-600 ring-2 ring-shop-200' : 'border-shop-100')}>
                             {c.image
                               ? <img src={c.image} alt={c.name} className="h-16 w-full object-cover" />
-                              : <div className="flex h-16 w-full items-center justify-center bg-sky-50"><ShoppingBag className="h-5 w-5 text-sky-200" /></div>}
+                              : <div className="flex h-16 w-full items-center justify-center bg-shop-50"><ShoppingBag className="h-5 w-5 text-shop-200" /></div>}
                             <span className="block px-1.5 py-1 text-[11px] font-semibold leading-tight text-slate-700">{c.name}</span>
                           </button>
                         )
@@ -2212,7 +2903,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                           <button key={s} type="button"
                             onClick={() => { setPickedSize(s); setVariantErr('') }}
                             className={cx('min-w-[3rem] rounded-full border px-3 py-1.5 text-xs font-bold transition-colors',
-                              on ? 'border-sky-600 bg-sky-600 text-white' : 'border-sky-200 bg-white text-slate-700')}>
+                              on ? 'border-shop-600 bg-shop-600 text-white' : 'border-shop-200 bg-white text-slate-700')}>
                             {s}
                           </button>
                         )
@@ -2226,7 +2917,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                   <p className="text-xs font-bold text-slate-950">{t('quantity')}</p>
                   <div className="flex items-center gap-1.5">
                     <button type="button" onClick={() => setPickedQty(q => Math.max(1, q - 1))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700">
                       <Minus className="h-4 w-4" />
                     </button>
                     <span className="w-8 text-center text-sm font-bold">{pickedQty}</span>
@@ -2234,14 +2925,14 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
                     <button type="button"
                       onClick={() => setPickedQty(q => Math.min(!madeToOrder(preview) && avail(preview)?.tracked ? avail(preview).available : 99, q + 1))}
                       disabled={!madeToOrder(preview) && avail(preview)?.tracked && pickedQty >= avail(preview).available}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700 disabled:opacity-40">
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700 disabled:opacity-40">
                       <Plus className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
 
                 {madeToOrder(preview) && (
-                  <p className="text-xs font-semibold text-sky-700">
+                  <p className="text-xs font-semibold text-shop-700">
                     {t('preparedOnRequest')}
                     {orderedCount(preview) > 0 ? ` · ${t('orderedCount', { count: orderedCount(preview) })}` : ''}
                   </p>
@@ -2263,14 +2954,14 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0 }) {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border-t border-sky-100 p-3">
+            <div className="flex items-center gap-2 border-t border-shop-100 p-3">
               <button type="button" onClick={() => setPreview(null)}
-                className="flex h-11 flex-1 items-center justify-center rounded-lg border border-sky-200 bg-white text-sm font-bold text-sky-700">
+                className="flex h-11 flex-1 items-center justify-center rounded-lg border border-shop-200 bg-white text-sm font-bold text-shop-700">
                 {t('close')}
               </button>
               <button type="button" onClick={addPreviewToCart} disabled={soldOut(preview)}
                 className={cx('flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg text-sm font-bold',
-                  soldOut(preview) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-sky-600 text-white hover:bg-sky-700')}>
+                  soldOut(preview) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-shop-600 text-white hover:bg-shop-700')}>
                 {soldOut(preview) ? t('outOfStock') : <><Plus className="h-4 w-4" /> {t('addToCart')}</>}
               </button>
             </div>
@@ -2297,30 +2988,30 @@ function CartScreen({ cart, setCartQty, removeFromCart, onCheckout, onContinue }
       <FixedHeader title={t('yourCart')} />
       <main className="space-y-4 px-5 py-6 pb-44">
         {cart.length === 0 ? (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-10 text-center">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-10 text-center">
             <ShoppingCart className="mx-auto h-8 w-8 text-slate-300" />
             <p className="mt-2 text-sm text-slate-500">{t('emptyCart')}</p>
-            <button onClick={onContinue} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">{t('continueShopping')}</button>
+            <button onClick={onContinue} className="mt-4 rounded-lg bg-shop-600 px-4 py-2 text-sm font-bold text-white">{t('continueShopping')}</button>
           </div>
         ) : (
           <div className="space-y-3">
             {cart.map(it => (
-              <div key={it.id} className="flex items-center gap-3 rounded-lg border border-sky-100 bg-white p-3">
+              <div key={it.id} className="flex items-center gap-3 rounded-lg border border-shop-100 bg-white p-3">
                 {it.image_url
                   ? <img src={it.image_url} alt="" className="h-14 w-14 flex-shrink-0 rounded-md object-cover" />
-                  : <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-md bg-sky-50"><ShoppingBag className="h-5 w-5 text-sky-200" /></div>}
+                  : <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-md bg-shop-50"><ShoppingBag className="h-5 w-5 text-shop-200" /></div>}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold text-slate-950">{it.name}</p>
                   {it.variant_label && (
-                    <p className="truncate text-[11px] font-semibold text-sky-700">{it.variant_label}</p>
+                    <p className="truncate text-[11px] font-semibold text-shop-700">{it.variant_label}</p>
                   )}
                   {it.shop && <p className="truncate text-xs text-slate-500">{it.shop}</p>}
-                  <p className="mt-0.5 text-sm font-bold text-sky-700">{cartFmt(it.price, it.currency)}</p>
+                  <p className="mt-0.5 text-sm font-bold text-shop-700">{cartFmt(it.price, it.currency)}</p>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-1.5">
-                  <button onClick={() => setCartQty(it.id, it.qty - 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700"><Minus className="h-4 w-4" /></button>
+                  <button onClick={() => setCartQty(it.id, it.qty - 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700"><Minus className="h-4 w-4" /></button>
                   <span className="w-5 text-center text-sm font-bold">{it.qty}</span>
-                  <button onClick={() => setCartQty(it.id, it.qty + 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700"><Plus className="h-4 w-4" /></button>
+                  <button onClick={() => setCartQty(it.id, it.qty + 1)} className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700"><Plus className="h-4 w-4" /></button>
                   <button onClick={() => removeFromCart(it.id)} className="ml-1 text-slate-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </div>
@@ -2331,18 +3022,18 @@ function CartScreen({ cart, setCartQty, removeFromCart, onCheckout, onContinue }
       {/* Constrained to the app column (like the bottom nav) so it doesn't
           stretch to the screen edges on wide displays. */}
       {cart.length > 0 && (
-        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-sky-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(14,165,233,0.28)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
+        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-shop-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(179,18,43,0.22)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-semibold text-slate-500">{t('total')}</span>
             <span className="text-sm font-bold text-slate-950">{Object.entries(totals).map(([c, v]) => cartFmt(v, c)).join(' + ')}</span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={onContinue}
-              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg border border-sky-200 bg-white text-sm font-bold text-sky-700">
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg border border-shop-200 bg-white text-sm font-bold text-shop-700">
               <ShoppingBag className="h-4 w-4" /> {t('continueShopping')}
             </button>
             <button onClick={onCheckout}
-              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white">
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-lg bg-shop-600 text-sm font-bold text-white">
               <ShoppingCart className="h-4 w-4" /> {t('checkout')}
             </button>
           </div>
@@ -2483,12 +3174,12 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       <>
         <FixedHeader title={t('checkout')} />
         <main className="space-y-4 px-5 py-10">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-8 text-center">
-            <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
+          <div className="rounded-lg border border-fresh-200 bg-fresh-50 px-5 py-8 text-center">
+            <CheckCircle2 className="mx-auto h-10 w-10 text-fresh-600" />
             <p className="mt-3 text-base font-bold text-slate-950">{t('orderPlacedTitle')}</p>
             <p className="mt-1 text-sm text-slate-600">{t('orderPlacedMsg')}</p>
-            {done.order_number && <p className="mt-2 font-mono text-sm text-emerald-700">{done.order_number}</p>}
-            <button onClick={onGoOrders} className="mt-5 h-11 w-full rounded-lg bg-sky-600 text-sm font-bold text-white">{t('viewMyOrders')}</button>
+            {done.order_number && <p className="mt-2 font-mono text-sm text-fresh-700">{done.order_number}</p>}
+            <button onClick={onGoOrders} className="mt-5 h-11 w-full rounded-lg bg-shop-600 text-sm font-bold text-white">{t('viewMyOrders')}</button>
           </div>
         </main>
       </>
@@ -2497,15 +3188,15 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
 
   return (
     <>
-      <FixedHeader title={t('checkout')} right={<button onClick={onBack} className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><ArrowLeft className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('checkout')} right={<button onClick={onBack} className="flex h-11 w-11 items-center justify-center rounded-lg bg-shop-100 text-shop-700"><ArrowLeft className="h-5 w-5" /></button>} />
       <main className="space-y-4 px-5 py-6 pb-40">
-        <section className="rounded-lg border border-sky-100 bg-white p-4">
+        <section className="rounded-lg border border-shop-100 bg-white p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('deliverTo')}</p>
-          <textarea className="mt-2 w-full resize-none rounded-lg border border-sky-100 bg-sky-50 p-3 text-sm outline-none" rows={2}
+          <textarea className="mt-2 w-full resize-none rounded-lg border border-shop-100 bg-shop-50 p-3 text-sm outline-none" rows={2}
             value={address} onChange={e => setAddress(e.target.value)} placeholder={t('noAddressOnFile')} />
         </section>
 
-        <section className="rounded-lg border border-sky-100 bg-white p-4">
+        <section className="rounded-lg border border-shop-100 bg-white p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('orderSummary')}</p>
           <div className="mt-2 space-y-2">
             {cart.map(it => (
@@ -2515,27 +3206,27 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
               </div>
             ))}
           </div>
-          <div className="mt-3 flex items-center justify-between border-t border-sky-100 pt-3">
+          <div className="mt-3 flex items-center justify-between border-t border-shop-100 pt-3">
             <span className="text-sm font-bold text-slate-500">{t('total')}</span>
             <span className="text-sm font-bold text-slate-950">{Object.entries(totals).map(([c, v]) => cartFmt(v, c)).join(' + ')}</span>
           </div>
         </section>
 
-        <section className="rounded-lg border border-sky-100 bg-white p-4">
+        <section className="rounded-lg border border-shop-100 bg-white p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t('paymentMethod')}</p>
-          <div className="mt-2 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm font-semibold text-emerald-700">
+          <div className="mt-2 flex items-center gap-2 rounded-lg bg-fresh-50 px-3 py-2.5 text-sm font-semibold text-fresh-700">
             <CheckCircle2 className="h-4 w-4" /> {t('cashOnDelivery')}
           </div>
-          <textarea className="mt-3 w-full resize-none rounded-lg border border-sky-100 bg-sky-50 p-3 text-sm outline-none" rows={2}
+          <textarea className="mt-3 w-full resize-none rounded-lg border border-shop-100 bg-shop-50 p-3 text-sm outline-none" rows={2}
             value={notes} onChange={e => setNotes(e.target.value)} placeholder={t('notes')} />
         </section>
 
         {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
       </main>
       {cart.length > 0 && (
-        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-sky-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(14,165,233,0.28)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
+        <div className="fixed bottom-16 left-0 z-20 w-full max-w-full rounded-t-2xl border-t border-shop-100 bg-white px-5 py-3 shadow-[0_-8px_24px_-6px_rgba(179,18,43,0.22)] md:left-1/2 md:max-w-md md:-translate-x-1/2">
           <button onClick={placeOrder} disabled={placing || addressLoading || !address.trim()}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-shop-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
             {placing ? t('placingOrder') : addressLoading ? t('loadingAddress') : t('placeOrder')}
           </button>
         </div>
@@ -2650,11 +3341,11 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
       <FixedHeader
         title={`Hi, ${displayName.split(' ')[0]}`}
         subtitle={t('homeWelcome')}
-        right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Bell className="h-5 w-5" /></button>}
+        right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-shop-100 text-shop-700"><Bell className="h-5 w-5" /></button>}
       />
       <main className="space-y-5 px-5 pb-6 pt-4">
         {loading && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-6 text-center text-sm font-semibold text-slate-500">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-6 text-center text-sm font-semibold text-slate-500">
             {t('loadingAccount')}
           </div>
         )}
@@ -2666,8 +3357,8 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
         {!loading && profile && (
           <Section title={displayName} subtitle={formatMobile(profile.mobile || customerSession?.mobile) || t('customerAccount')}>
             <button type="button" onClick={onProfile}
-              className="flex w-full items-start gap-2.5 rounded-lg border border-sky-100 bg-slate-50 p-3 text-left">
-              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+              className="flex w-full items-start gap-2.5 rounded-lg border border-shop-100 bg-slate-50 p-3 text-left">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-shop-600" />
               <span className="min-w-0">
                 <span className="block text-xs text-slate-500">{t('primaryAddress')}</span>
                 <span className="mt-0.5 block text-sm font-semibold text-slate-950">
@@ -2683,22 +3374,22 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
 
         <section className="grid grid-cols-2 gap-3">
           {/* Shop Products leads the grid, so it carries the app's blue. */}
-          <button type="button" className="rounded-lg border border-sky-700 bg-sky-600 p-4 text-left shadow-sm shadow-sky-200" onClick={onShop}>
+          <button type="button" className="rounded-lg border border-shop-700 bg-shop-600 p-4 text-left shadow-sm shadow-shop-200" onClick={onShop}>
             <ShoppingBag className="h-6 w-6 text-white" />
             <p className="mt-4 text-sm font-bold text-white">{t('shopProducts')}</p>
-            <p className="mt-1 text-xs text-sky-100">{t('futureModule')}</p>
+            <p className="mt-1 text-xs text-shop-100">{t('futureModule')}</p>
           </button>
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onBook}>
-            <Bike className="h-6 w-6 text-sky-600" />
+          <button type="button" className="rounded-lg border border-shop-100 bg-white p-4 text-left shadow-sm shadow-shop-100" onClick={onBook}>
+            <Bike className="h-6 w-6 text-shop-600" />
             <p className="mt-4 text-sm font-bold">{t('bookRide')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('externalRequest')}</p>
           </button>
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onOrders}>
+          <button type="button" className="rounded-lg border border-shop-100 bg-white p-4 text-left shadow-sm shadow-shop-100" onClick={onOrders}>
             <ClipboardList className="h-6 w-6 text-blue-600" />
             <p className="mt-4 text-sm font-bold">{t('myOrders')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('trackStatus')}</p>
           </button>
-          <button type="button" className="rounded-lg border border-sky-100 bg-white p-4 text-left shadow-sm shadow-sky-100" onClick={onProfile}>
+          <button type="button" className="rounded-lg border border-shop-100 bg-white p-4 text-left shadow-sm shadow-shop-100" onClick={onProfile}>
             <User className="h-6 w-6 text-cyan-600" />
             <p className="mt-4 text-sm font-bold">{t('profile')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('savedAddresses')}</p>
@@ -2709,9 +3400,9 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
           {latestOrder ? (
             <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' && !latestOrder.confirmed ? () => onEditOrder(latestOrder) : undefined} />
           ) : (
-            <div className="rounded-lg border border-sky-100 bg-slate-50 px-4 py-6 text-center">
+            <div className="rounded-lg border border-shop-100 bg-slate-50 px-4 py-6 text-center">
               <p className="text-sm font-bold text-slate-950">{t('noOrdersYet')}</p>
-              <button type="button" onClick={onBook} className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white">
+              <button type="button" onClick={onBook} className="mt-4 rounded-lg bg-shop-600 px-4 py-2 text-sm font-bold text-white">
                 {t('bookRide')}
               </button>
             </div>
@@ -2775,8 +3466,8 @@ function deliveryTimelineState(order, step) {
 }
 
 function timelineTone(state) {
-  if (state === 'Done') return 'text-emerald-600 bg-emerald-500'
-  if (state === 'Now') return 'text-sky-600 bg-sky-500'
+  if (state === 'Done') return 'text-fresh-600 bg-fresh-500'
+  if (state === 'Now') return 'text-shop-600 bg-shop-500'
   if (state === 'Stopped') return 'text-rose-600 bg-rose-500'
   return 'text-slate-400 bg-slate-400'
 }
@@ -3047,20 +3738,20 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
         subtitle={t('tellUsNeed')}
       />
       <main className="space-y-4 px-5 pb-40 pt-5">
-        <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
+        <section className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/70">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-slate-950">{t('tellUsNeed')}</h2>
               <p className="mt-0.5 text-xs text-slate-500">{t('addRequestLines')}</p>
             </div>
-            <button type="button" onClick={addRequirement} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">
+            <button type="button" onClick={addRequirement} className="rounded-lg bg-shop-600 px-3 py-2 text-xs font-bold text-white">
               {t('add')}
             </button>
           </div>
           <div className="space-y-3">
             {requirements.map((item, index) => (
-              <div key={index} className="flex min-h-[3.4rem] items-center gap-2 rounded-lg border border-sky-100 bg-slate-50 px-3 py-2">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-bold text-sky-700">{index + 1}</span>
+              <div key={index} className="flex min-h-[3.4rem] items-center gap-2 rounded-lg border border-shop-100 bg-slate-50 px-3 py-2">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-xs font-bold text-shop-700">{index + 1}</span>
                 <input
                   className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-400"
                   value={item}
@@ -3075,13 +3766,13 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
           </div>
         </section>
 
-        <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
+        <section className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/70">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-950">{t('pickup')}</h2>
               <p className="mt-0.5 text-xs text-slate-500">{t('pickupSubtitle')}</p>
             </div>
-            <MapPin className="h-5 w-5 text-sky-600" />
+            <MapPin className="h-5 w-5 text-shop-600" />
           </div>
           <AddressQuickPick
             addresses={addresses}
@@ -3095,13 +3786,13 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
           </div>
         </section>
 
-        <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
+        <section className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/70">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-950">{t('deliveryDrop')}</h2>
               <p className="mt-0.5 text-xs text-slate-500">{t('finalDeliveryLocation')}</p>
             </div>
-            <Package className="h-5 w-5 text-emerald-600" />
+            <Package className="h-5 w-5 text-fresh-600" />
           </div>
           <AddressQuickPick
             addresses={addresses}
@@ -3115,11 +3806,11 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
           </div>
         </section>
 
-        <section className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/70">
+        <section className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/70">
           <label className="block">
             <span className="text-xs font-semibold text-slate-500">{t('notesIfNeeded')}</span>
             <textarea
-              className="mt-2 min-h-20 w-full resize-none rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+              className="mt-2 min-h-20 w-full resize-none rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-shop-300"
               value={notes}
               onChange={event => setNotes(event.target.value)}
             />
@@ -3133,14 +3824,14 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
         )}
 
         {savedOrder && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          <div className="rounded-lg border border-fresh-200 bg-fresh-50 px-4 py-3 text-sm font-semibold text-fresh-700">
             Created real order {savedOrder.order_number || savedOrder.id}.
           </div>
         )}
 
-        <div className="fixed bottom-[76px] left-0 z-20 w-full max-w-full px-5 py-3 shadow-lg shadow-sky-100 backdrop-blur md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-sky-100 bg-white/95">
+        <div className="fixed bottom-[76px] left-0 z-20 w-full max-w-full px-5 py-3 shadow-lg shadow-shop-100 backdrop-blur md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-shop-100 bg-white/95">
           <button type="button" onClick={submitRequest} disabled={saving || loading || addrLoading}
-            className="flex h-12 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+            className="flex h-12 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
             {saving ? t('submitting') : (loading || addrLoading) ? t('loadingAddress') : t('submitRequest')}
           </button>
         </div>
@@ -3163,7 +3854,7 @@ function AddressQuickPick({ addresses = [], fallback = '', onSelect }) {
   return (
     <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
       {options.map(option => (
-        <button key={option.id} type="button" onClick={() => onSelect?.(option.value)} className="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700">
+        <button key={option.id} type="button" onClick={() => onSelect?.(option.value)} className="shrink-0 rounded-full border border-shop-100 bg-shop-50 px-3 py-2 text-xs font-bold text-shop-700">
           {option.label}
         </button>
       ))}
@@ -3180,7 +3871,7 @@ function ControlledField({ label, value, onChange, type = 'text' }) {
       <span className="text-xs font-semibold text-slate-500">{label}</span>
       <input
         type={type}
-        className="mt-2 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-3 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+        className="mt-2 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-3 text-sm outline-none focus:ring-2 focus:ring-shop-300"
         value={value}
         onChange={event => onChange(event.target.value)}
       />
@@ -3192,7 +3883,7 @@ function Field({ label, value, type = 'text' }) {
   return (
     <label className="block">
       <span className="text-xs font-semibold text-slate-500">{label}</span>
-      <input type={type} className="mt-2 h-11 w-full rounded-lg border border-sky-100 bg-slate-50 px-3 text-sm outline-none focus:ring-2 focus:ring-sky-300" defaultValue={value} />
+      <input type={type} className="mt-2 h-11 w-full rounded-lg border border-shop-100 bg-slate-50 px-3 text-sm outline-none focus:ring-2 focus:ring-shop-300" defaultValue={value} />
     </label>
   )
 }
@@ -3339,10 +4030,10 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
 
   return (
     <>
-      <FixedHeader title={t('myOrders')} subtitle={t('trackBookings')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><Search className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('myOrders')} subtitle={t('trackBookings')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-shop-100 text-shop-700"><Search className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
-        <label className="flex h-12 items-center gap-3 rounded-full border border-sky-100 bg-sky-50 px-4 text-sm text-slate-500">
-          <Search className="h-4 w-4 text-sky-600" />
+        <label className="flex h-12 items-center gap-3 rounded-full border border-shop-100 bg-shop-50 px-4 text-sm text-slate-500">
+          <Search className="h-4 w-4 text-shop-600" />
           <input
             className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             value={search}
@@ -3356,14 +4047,14 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
               key={item}
               type="button"
               onClick={() => setFilter(item)}
-              className={cx('shrink-0 rounded-full px-4 py-2 text-xs font-bold capitalize', filter === item ? 'bg-sky-600 text-white' : 'border border-sky-100 bg-white text-slate-500')}
+              className={cx('shrink-0 rounded-full px-4 py-2 text-xs font-bold capitalize', filter === item ? 'bg-shop-600 text-white' : 'border border-shop-100 bg-white text-slate-500')}
             >
               {item === 'all' ? t('all') : translatedStatus(t, item)}
             </button>
           ))}
         </div>
         {loading && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('loadingOrders')}
           </div>
         )}
@@ -3373,7 +4064,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
           </div>
         )}
         {!loading && !error && filtered.length === 0 && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center">
             <p className="text-sm font-bold text-slate-950">{t('noOrdersFound')}</p>
             <p className="mt-1 text-sm text-slate-500">{t('yourSubmittedRequests')}</p>
           </div>
@@ -3390,10 +4081,10 @@ function OrderCard({ order, onView, onEdit }) {
   const { t } = useI18n()
   const editable = order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery'
   return (
-    <article className="rounded-lg border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/80">
+    <article className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/80">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sm font-bold text-sky-700">{order.type === 'Book Delivery' ? 'B' : 'S'}</div>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-sm font-bold text-shop-700">{order.type === 'Book Delivery' ? 'B' : 'S'}</div>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-slate-950">{order.orderNumber}</p>
             <p className="text-sm text-slate-500">{order.type === 'Book Delivery' ? t('bookDelivery') : t('deliveryOrder')}</p>
@@ -3406,8 +4097,8 @@ function OrderCard({ order, onView, onEdit }) {
       </p>
       <p className="mt-1 text-sm text-slate-500">{order.schedule}</p>
       <div className="mt-4 flex gap-3">
-        <button type="button" onClick={onView} className="rounded-lg bg-sky-100 px-5 py-2 text-sm font-bold text-sky-700">{t('view')}</button>
-        {editable && <button type="button" onClick={onEdit} className="rounded-lg bg-emerald-100 px-5 py-2 text-sm font-bold text-emerald-700">{t('edit')}</button>}
+        <button type="button" onClick={onView} className="rounded-lg bg-shop-100 px-5 py-2 text-sm font-bold text-shop-700">{t('view')}</button>
+        {editable && <button type="button" onClick={onEdit} className="rounded-lg bg-fresh-100 px-5 py-2 text-sm font-bold text-fresh-700">{t('edit')}</button>}
       </div>
     </article>
   )
@@ -3420,7 +4111,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
       <>
         <FixedHeader title={t('orderDetails')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('selectOrderFromOrders')}
           </div>
         </main>
@@ -3446,7 +4137,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
       <FixedHeader title={t('orderDetails')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
         <Section title={order.type === 'Book Delivery' ? t('bookDelivery') : t('deliveryOrder')} subtitle={raw.order_source === 'external' ? t('customerCreatedRequest') : t('deliveryOrder')}>
-          <div className="grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-slate-50 p-3">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-shop-100 bg-slate-50 p-3">
             <div>
               <p className="text-xs text-slate-500">{t('pickup')}</p>
               <p className="mt-1 text-sm font-semibold">{order.pickup || t('notProvided')}</p>
@@ -3456,7 +4147,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
               <p className="mt-1 text-sm font-semibold">{order.drop || t('notProvided')}</p>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-sky-100 bg-white p-3">
+          <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-shop-100 bg-white p-3">
             <div>
               <p className="text-xs text-slate-500">{t('paymentStatus')}</p>
               <p className="mt-1 text-sm font-semibold capitalize">{translatedStatus(t, order.paymentStatus || 'unpaid')}</p>
@@ -3466,7 +4157,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
               <p className="mt-1 text-sm font-semibold">{translatedStatus(t, order.deliveryStatus || 'Awaiting Pickup')}</p>
             </div>
           </div>
-          <div className="mt-3 rounded-lg border border-sky-100 bg-white p-3">
+          <div className="mt-3 rounded-lg border border-shop-100 bg-white p-3">
             <p className="text-xs text-slate-500">{t('totalAmount')}</p>
             <p className="mt-1 text-sm font-semibold">{formatMoney(raw.total_amount, raw.currency)}</p>
           </div>
@@ -3477,7 +4168,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
         </Section>
         <Section title={t('schedule')}>
           <div className="flex items-center gap-3 text-sm font-semibold">
-            <CalendarClock className="h-5 w-5 text-sky-600" />
+            <CalendarClock className="h-5 w-5 text-shop-600" />
             {order.schedule}
           </div>
         </Section>
@@ -3485,8 +4176,8 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
           <div className="space-y-2">
             {(raw.order_items || []).filter(item => !item.is_deleted).length > 0 ? (
               (raw.order_items || []).filter(item => !item.is_deleted).map((item, index) => (
-                <div key={item.id || index} className="flex items-start gap-3 rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-bold text-sky-700">{index + 1}</span>
+                <div key={item.id || index} className="flex items-start gap-3 rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-xs font-bold text-shop-700">{index + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-slate-950">{item.parcel_description || item.item_type || 'Item'}</p>
                     <p className="mt-1 text-xs text-slate-500">{t('qty')} {Number(item.quantity || 0).toFixed(0)} / {formatMoney(item.line_total, raw.currency)}</p>
@@ -3494,20 +4185,20 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
                 </div>
               ))
             ) : (
-              <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm text-slate-500">{t('noItemRows')}</div>
+              <div className="rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm text-slate-500">{t('noItemRows')}</div>
             )}
           </div>
         </Section>
         <Section title={t('retailGoodsInvoices')} subtitle="retail_goods_invoices">
           <div className="space-y-3">
             {invoices.length > 0 ? invoices.map(invoice => (
-              <div key={invoice.id} className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-3">
+              <div key={invoice.id} className="rounded-lg border border-shop-100 bg-slate-50 px-3 py-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-bold text-slate-950">{invoice.shop_name || t('invoice')}</p>
                     <p className="mt-1 text-xs text-slate-500">{invoice.invoice_reference || t('noReference')} / {invoice.invoice_date || t('noDate')}</p>
                   </div>
-                  <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.exclude_calculation ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')}>
+                  <span className={cx('shrink-0 rounded-full px-2 py-1 text-[11px] font-bold', invoice.exclude_calculation ? 'bg-fresh-100 text-fresh-700' : 'bg-orange-100 text-orange-700')}>
                     {invoice.exclude_calculation ? 'Paid' : t('unpaid')}
                   </span>
                 </div>
@@ -3545,7 +4236,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
           </div>
         </Section>
         {order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery' && (
-          <button type="button" onClick={() => onEdit(order)} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-100 text-sm font-bold text-emerald-700">
+          <button type="button" onClick={() => onEdit(order)} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-fresh-100 text-sm font-bold text-fresh-700">
             <Pencil className="h-4 w-4" />
             {t('editOrder')}
           </button>
@@ -3562,7 +4253,7 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
 
 function InfoLine({ label, value, tone }) {
   return (
-    <div className={cx('rounded-lg border px-3 py-3', tone === 'amber' ? 'border-orange-200 bg-orange-50' : 'border-sky-100 bg-slate-50')}>
+    <div className={cx('rounded-lg border px-3 py-3', tone === 'amber' ? 'border-orange-200 bg-orange-50' : 'border-shop-100 bg-slate-50')}>
       <p className="text-xs text-slate-500">{label}</p>
       <p className={cx('mt-1 text-sm font-semibold', tone === 'amber' ? 'text-orange-700' : 'text-slate-950')}>{value}</p>
     </div>
@@ -3780,7 +4471,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
       <>
         <FixedHeader title={t('editOrder')} subtitle={t('noOrderSelected')} back onBack={onBack} />
         <main className="px-5 py-6">
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('selectOrderFromOrders')}
           </div>
         </main>
@@ -3792,7 +4483,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
     <>
       <FixedHeader title={t('editOrder')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
       <main className="space-y-5 px-5 py-6">
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+        <div className="rounded-lg border border-fresh-200 bg-fresh-50 px-4 py-3 text-sm font-medium text-fresh-700">
           Changes update the same order. No new order number.
         </div>
         {error && (
@@ -3805,8 +4496,8 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
           <Section title={t('shopProducts')} subtitle={t('shopItemLocked')}>
             <div className="space-y-3">
               {shopLines.map((line, index) => (line._removed ? null : (
-                <div key={line.id} className="flex items-center gap-2 rounded-lg border border-sky-100 bg-slate-50 px-3 py-2">
-                  <ShoppingBag className="h-4 w-4 shrink-0 text-sky-600" />
+                <div key={line.id} className="flex items-center gap-2 rounded-lg border border-shop-100 bg-slate-50 px-3 py-2">
+                  <ShoppingBag className="h-4 w-4 shrink-0 text-shop-600" />
                   <div className="min-w-0 flex-1">
                     {/* Product name is fixed — it identifies what the shop sells. */}
                     <p className="truncate text-sm font-semibold text-slate-950">{line.parcel_description}</p>
@@ -3817,13 +4508,13 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button type="button" aria-label="-"
                       onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.max(1, l.quantity - 1) } : l))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700">
                       <Minus className="h-4 w-4" />
                     </button>
                     <span className="w-5 text-center text-sm font-bold">{line.quantity}</span>
                     <button type="button" aria-label="+"
                       onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.min(99, l.quantity + 1) } : l))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 text-sky-700">
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700">
                       <Plus className="h-4 w-4" />
                     </button>
                     <button type="button" onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, _removed: true } : l))}
@@ -3840,12 +4531,12 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
         <Section
           title={t('requirementRows')}
           subtitle={t('savedBackToOrderItems')}
-          action={<button type="button" onClick={addRequirement} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}
+          action={<button type="button" onClick={addRequirement} className="rounded-lg bg-shop-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}
         >
           <div className="space-y-3">
             {requirements.map((item, index) => (
-              <div key={index} className="flex items-center gap-2 rounded-lg border border-sky-100 bg-slate-50 px-3 py-2">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-bold text-sky-700">{index + 1}</span>
+              <div key={index} className="flex items-center gap-2 rounded-lg border border-shop-100 bg-slate-50 px-3 py-2">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-xs font-bold text-shop-700">{index + 1}</span>
                 <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={item} onChange={event => updateRequirement(index, event.target.value)} placeholder={t('enterRequirement')} />
                 <button type="button" onClick={() => removeRequirement(index)} className="text-rose-500">
                   <Trash2 className="h-4 w-4" />
@@ -3862,7 +4553,7 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
             <label className="block">
               <span className="text-xs font-semibold text-slate-500">{t('notes')}</span>
               <textarea
-                className="mt-2 min-h-24 w-full rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-300"
+                className="mt-2 min-h-24 w-full rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-shop-300"
                 value={notes}
                 onChange={event => setNotes(event.target.value)}
               />
@@ -3879,10 +4570,10 @@ function EditOrderScreen({ order, requirements, setRequirements, customerSession
         </Section>
 
         <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending' || order.confirmed} className="flex h-12 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
+          <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending' || order.confirmed} className="flex h-12 items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:bg-slate-300">
             {saving ? t('saving') : t('saveChanges')}
           </button>
-          <button type="button" onClick={onBack} disabled={saving} className="flex h-12 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
+          <button type="button" onClick={onBack} disabled={saving} className="flex h-12 items-center justify-center rounded-lg border border-shop-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
             {t('cancel')}
           </button>
         </div>
@@ -4162,10 +4853,10 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
 
   return (
     <>
-      <FixedHeader title={t('profile')} subtitle={t('profileSubtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700"><User className="h-5 w-5" /></button>} />
+      <FixedHeader title={t('profile')} subtitle={t('profileSubtitle')} right={<button className="flex h-11 w-11 items-center justify-center rounded-lg bg-shop-100 text-shop-700"><User className="h-5 w-5" /></button>} />
       <main className="space-y-5 px-5 py-6">
         {loading && (
-          <div className="rounded-lg border border-sky-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
             {t('loadingProfile')}
           </div>
         )}
@@ -4178,26 +4869,26 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
         {!loading && (
           <Section title={profileName} subtitle={profile?.code || profile?.account_number || t('customerAccount')}>
           <div className="mb-4 flex items-center gap-4">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sky-100 text-2xl font-bold text-sky-700">
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full bg-shop-100 text-2xl font-bold text-shop-700">
               {profile?.profile_photo_url ? (
                 <img src={profile.profile_photo_url} alt={profileName} className="h-full w-full object-cover" />
               ) : (
                 profileName.slice(0, 1).toUpperCase()
               )}
             </div>
-            <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 text-sm font-bold text-white">
+            <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-shop-600 px-4 text-sm font-bold text-white">
               <Upload className="h-4 w-4" />
               {t('photo')}
               <input type="file" accept="image/*" className="hidden" onChange={uploadProfilePhoto} disabled={saving} />
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
-            <span className={cx('inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold', profile?.credit_debit_allowed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            <span className={cx('inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold', profile?.credit_debit_allowed ? 'bg-fresh-100 text-fresh-700' : 'bg-slate-100 text-slate-500')}>
               <ShieldCheck className="h-3.5 w-3.5" />
               {profile?.credit_debit_allowed ? t('creditDebitAllowed') : t('cashOnly')}
             </span>
           </div>
-          <div className="mt-4 rounded-lg border border-sky-100 bg-slate-50 p-3">
+          <div className="mt-4 rounded-lg border border-shop-100 bg-slate-50 p-3">
             <p className="text-sm font-semibold">{t('mobile')} {formatMobile(profile?.mobile || customerSession?.mobile) || t('notSet')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('whatsapp')} {formatMobile(profile?.whatsapp_number || profile?.mobile) || t('notSet')}</p>
             <p className="mt-1 text-xs text-slate-500">{t('email')} {profile?.email || t('notSet')}</p>
@@ -4209,7 +4900,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
           <Section title={t('mobileNumber')} subtitle={t('mobileSubtitle')}>
             <div className="space-y-3">
               <ControlledField label={t('mobileNumber')} value={mobileInput} onChange={setMobileInput} />
-              <button type="button" onClick={saveMobileChange} disabled={saving || mobileInput.trim() === (profile?.mobile || '').trim()} className="flex h-11 w-full items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
+              <button type="button" onClick={saveMobileChange} disabled={saving || mobileInput.trim() === (profile?.mobile || '').trim()} className="flex h-11 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:bg-slate-300">
                 {saving ? t('saving') : t('updateMobileNumber')}
               </button>
             </div>
@@ -4226,7 +4917,7 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
                   onClick={() => changeLanguage(option.code)}
                   className={cx(
                     'min-h-11 rounded-md px-2 text-sm font-bold transition',
-                    language === option.code ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'
+                    language === option.code ? 'bg-white text-shop-700 shadow-sm' : 'text-slate-500'
                   )}
                 >
                   {option.nativeLabel}
@@ -4247,15 +4938,15 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
                 <ControlledField label={t('city')} value={addressForm.city} onChange={value => addressField('city', value)} />
                 <ControlledField label={t('phone')} value={addressForm.phone} onChange={value => addressField('phone', value)} />
               </div>
-              <label className="flex items-center gap-3 rounded-lg border border-sky-100 bg-slate-50 px-3 py-3 text-sm font-semibold">
+              <label className="flex items-center gap-3 rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm font-semibold">
                 <input type="checkbox" checked={addressForm.is_primary} onChange={event => addressField('is_primary', event.target.checked)} />
                 {t('primaryAddress')}
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={saveAddress} disabled={saving} className="flex h-11 items-center justify-center rounded-lg bg-sky-600 text-sm font-bold text-white disabled:bg-slate-300">
+                <button type="button" onClick={saveAddress} disabled={saving} className="flex h-11 items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:bg-slate-300">
                   {saving ? t('saving') : t('save')}
                 </button>
-                <button type="button" onClick={() => setEditingAddress(null)} disabled={saving} className="flex h-11 items-center justify-center rounded-lg border border-sky-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
+                <button type="button" onClick={() => setEditingAddress(null)} disabled={saving} className="flex h-11 items-center justify-center rounded-lg border border-shop-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
                   {t('cancel')}
                 </button>
               </div>
@@ -4263,18 +4954,18 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
           </Section>
         )}
 
-        <Section title={t('savedAddresses')} subtitle={t('savedAddressesSubtitle')} action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}>
+        <Section title={t('savedAddresses')} subtitle={t('savedAddressesSubtitle')} action={<button type="button" onClick={startAddAddress} className="rounded-lg bg-shop-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}>
           <div className="space-y-3">
             {addresses.length === 0 && (
-              <div className="rounded-lg border border-sky-100 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
+              <div className="rounded-lg border border-shop-100 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
                 {t('noSavedAddresses')}
               </div>
             )}
             {addresses.map(address => (
-              <div key={address.id} className="rounded-lg border border-sky-100 bg-slate-50 p-3">
+              <div key={address.id} className="rounded-lg border border-shop-100 bg-slate-50 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-shop-700">
                       <MapPin className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
@@ -4283,11 +4974,11 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
                       {address.reference && <p className="mt-1 text-xs text-slate-400">{address.reference}</p>}
                     </div>
                   </div>
-                  {address.is_primary && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">{t('primary')}</span>}
+                  {address.is_primary && <span className="rounded-full bg-fresh-100 px-2 py-1 text-xs font-bold text-fresh-700">{t('primary')}</span>}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">{t('setPrimary')}</button>}
-                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">{t('edit')}</button>
+                  {!address.is_primary && <button type="button" onClick={() => setPrimaryAddress(address)} disabled={saving} className="rounded-lg bg-fresh-100 px-3 py-1 text-xs font-semibold text-fresh-700">{t('setPrimary')}</button>}
+                  <button type="button" onClick={() => startEditAddress(address)} disabled={saving} className="rounded-lg border border-shop-100 bg-white px-3 py-1 text-xs font-semibold text-slate-500">{t('edit')}</button>
                   <button type="button" onClick={() => deleteAddress(address)} disabled={saving} className="rounded-lg bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">{t('delete')}</button>
                 </div>
               </div>
@@ -4626,7 +5317,8 @@ export default function CustomerMobileApp() {
   if (screen === 'book') {
     content = <BookDeliveryScreen requirements={requirements} setRequirements={setRequirements} customerSession={customerSession} />
   } else if (screen === 'shop') {
-    content = <ShopScreen onAdd={addToCart} onOpenCart={() => setScreen('cart')} cartCount={cartCount} />
+    content = <ShopScreen onAdd={addToCart} onOpenCart={() => setScreen('cart')} cartCount={cartCount}
+                customerSession={customerSession} />
   } else if (screen === 'cart') {
     content = <CartScreen cart={cart} setCartQty={setCartQty} removeFromCart={removeFromCart}
       onCheckout={() => setScreen('checkout')} onContinue={() => setScreen('shop')} />

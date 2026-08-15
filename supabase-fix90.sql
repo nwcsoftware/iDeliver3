@@ -66,3 +66,8 @@ GRANT SELECT ON v_supplier_settlements TO authenticated;
 
 -- 3) Reload the PostgREST schema cache so the API immediately sees the new column.
 NOTIFY pgrst, 'reload schema';
+
+-- A view runs with its CREATOR's rights unless told otherwise, which would
+-- bypass row-level security for every anon query (Supabase flags that as
+-- critical). security_invoker makes it run as the CALLER. See fix122.
+ALTER VIEW public.v_supplier_settlements SET (security_invoker = on);

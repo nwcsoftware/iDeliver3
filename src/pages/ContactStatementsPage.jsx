@@ -23,7 +23,10 @@ function orderDate(o) {
 }
 
 export default function ContactStatementsPage() {
-  const { COMPANY_ID } = useApp()
+  const { COMPANY_ID, loadFullOrderHistory } = useApp()
+  // The startup fetch only covers the last few days; this page reads
+  // further back, so it asks for the full history once.
+  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
   const [contacts, setContacts] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loadingContacts, setLoadingContacts] = useState(true)

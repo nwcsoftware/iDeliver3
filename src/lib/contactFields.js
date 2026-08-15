@@ -2,7 +2,20 @@
    Contacts page and the quick "add contact" popup inside the order form render
    the exact same fields for customers / suppliers / partners. */
 
-export const DEFAULT_BUSINESS_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
+/* What kind of shop a supplier/partner runs. Drives the shop-type strip in the
+   customer app, so every value here needs an icon in SHOP_TYPE_META there.
+   Users may still add their own (persisted in business_types); anything unknown
+   simply falls back to a generic shop icon. */
+export const DEFAULT_BUSINESS_TYPES = [
+  'restaurant', 'fast food', 'cafe', 'sweets', 'bakery', 'butcher',
+  'supermarket', 'grocery', 'fruits & vegetables',
+  'pharmacy', 'beauty & cosmetics', 'flowers & gifts',
+  'tools & hardware', 'power tools', 'electronics', 'mobile & accessories',
+  'sportswear', 'gym equipment', 'bicycles',
+  'home & furniture', 'toys & kids', 'pet supplies',
+  'stationery & books', 'auto parts', 'watches & jewellery',
+  'other',
+]
 
 /* How a supplier/partner's commission % is applied to an order line:
    addition  → added on top of the line price (the shop earns above the price)

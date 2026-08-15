@@ -88,7 +88,10 @@ function orderMismatch(o) {
 }
 
 export default function DailyCollectionPage() {
-  const { COMPANY_ID } = useApp()
+  const { COMPANY_ID, loadFullOrderHistory } = useApp()
+  // The startup fetch only covers the last few days; this page reads
+  // further back, so it asks for the full history once.
+  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
   const { hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
 
