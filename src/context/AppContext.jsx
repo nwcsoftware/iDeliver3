@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { supabase, fetchAllRows, HEAVY_PAGE_SIZE } from '../lib/supabase'
+import { supabase, fetchAllRows, fetchAllRowsKeyset, HEAVY_PAGE_SIZE } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { fetchHeaderBackgrounds, pickCurrent } from '../lib/headerBackground'
 
@@ -409,7 +409,7 @@ export function AppProvider({ children }) {
     const windowDays = effectiveFull
       ? 0
       : (requested === 0 ? MAX_STARTUP_WINDOW_DAYS : Math.min(requested, MAX_STARTUP_WINDOW_DAYS))
-    const { data, error } = await fetchAllRows(() => {
+    const { data, error } = await fetchAllRowsKeyset((cursor) => {
       let q = supabase
         .from('delivery_orders')
         .select(ORDER_SELECT)
@@ -420,8 +420,11 @@ export function AppProvider({ children }) {
         const cutoff = new Date(Date.now() - windowDays * 86400000)
         q = q.or(`created_at.gte.${cutoff.toISOString()},scheduled_date.gte.${cutoff.toISOString().slice(0, 10)}`)
       }
+      // `lte` rather than `lt` so orders sharing a timestamp are never skipped;
+      // the helper drops the duplicate rows that overlap causes.
+      if (cursor) q = q.lte('created_at', cursor)
       return q
-    }, HEAVY_PAGE_SIZE)
+    }, { pageSize: HEAVY_PAGE_SIZE })
     if (data) {
       // `data` is present even when the fetch ended early, so a slow page never
       // leaves the app with an empty list it will happily render.

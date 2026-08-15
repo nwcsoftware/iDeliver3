@@ -30,12 +30,13 @@ export const supabase = createClient(
 export const PAGE_SIZE = 1000
 
 /* Heavy embedded selects need a smaller page. The `anon` role runs under a
-   short Postgres statement timeout, and one page of 1,000 orders WITH their
-   items, packages, invoices, payments and ads sits right at that limit — under
-   any load it is cancelled ("canceling statement due to statement timeout")
-   and the whole load fails. A few hundred rows per page finishes comfortably
-   and costs only a couple of extra round trips. */
-export const HEAVY_PAGE_SIZE = 300
+   short Postgres statement timeout, and a page of orders WITH their items,
+   packages, invoices, payments and ads is expensive per row. Measured against
+   this database: 100 rows 1.5s, 150 rows 1.6s, 300 rows 2.6s, 1,000 rows 2.3s
+   at the head but far worse in the tail — and anything near the timeout is
+   cancelled outright ("canceling statement due to statement timeout"), losing
+   the load. 150 leaves comfortable headroom for a few more round trips. */
+export const HEAVY_PAGE_SIZE = 150
 
 export async function fetchAllRows(build, pageSize = PAGE_SIZE) {
   const all = []
@@ -66,6 +67,39 @@ export async function fetchAllRows(build, pageSize = PAGE_SIZE) {
     }
     all.push(...(data ?? []))
     if ((data?.length ?? 0) < pageSize) break
+  }
+  return { data: all, error: null, partial: false }
+}
+
+/* Page a large, heavy query WITHOUT offsets.
+
+   `.range(9000, 9299)` forces Postgres to sort and discard 9,000 rows before
+   returning anything, so each page is slower than the last and the deep ones
+   are killed by the statement timeout (measured here: page 1 1.4s, page 10
+   3.9s, page 30 a 500). Keyset paging instead asks for "the next N rows older
+   than the last one I saw", which costs the same at any depth.
+
+   `build(cursor)` receives the newest-first cursor (or null for the first
+   page) and must apply it. Rows are de-duplicated by id, so a cursor that
+   overlaps by a row or two — which is what keeps rows sharing a timestamp from
+   being skipped — is harmless. */
+export async function fetchAllRowsKeyset(build, { pageSize = HEAVY_PAGE_SIZE, cursorColumn = 'created_at' } = {}) {
+  const all = []
+  const seen = new Set()
+  let cursor = null
+  for (let guard = 0; guard < 500; guard++) {
+    const { data, error } = await build(cursor).limit(pageSize)
+    if (error) return { data: all.length ? all : null, error, partial: all.length > 0 }
+    const rows = data ?? []
+    let added = 0
+    for (const r of rows) {
+      if (seen.has(r.id)) continue
+      seen.add(r.id); all.push(r); added += 1
+    }
+    // Fewer rows than asked for = the end. Nothing new = the cursor cannot
+    // advance (every row shares a timestamp), so stop rather than loop.
+    if (rows.length < pageSize || added === 0) break
+    cursor = rows[rows.length - 1][cursorColumn]
   }
   return { data: all, error: null, partial: false }
 }
