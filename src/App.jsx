@@ -33,6 +33,7 @@ import UserAccountsPage       from './pages/UserAccountsPage'
 import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
+import PartyStatementPage     from './pages/PartyStatementPage'
 import SoftwareSubscriptionsPage from './pages/SoftwareSubscriptionsPage'
 import ChangeRequestsPage     from './pages/ChangeRequestsPage'
 import PackageLabelsPage      from './pages/PackageLabelsPage'
@@ -123,6 +124,7 @@ function AppShell() {
                 <Route path="/driver-dues"          element={<DriverDuesPage />} />
                 <Route path="/credit-customers"     element={<CreditCustomersPage />} />
                 <Route path="/supplier-settlements" element={<SupplierSettlementsPage />} />
+                <Route path="/party-statements"     element={<PartyStatementPage />} />
                 <Route path="/partner-dues"         element={<PartnerDuesPage />} />
                 <Route path="/cashier-box"          element={<CashierBoxPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />

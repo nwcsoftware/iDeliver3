@@ -38,6 +38,7 @@ const pageTitles = {
   '/sold-orders':      'Sold Orders',
   '/completed-orders': 'Completed Orders',
   '/supplier-settlements': 'Supplier Settlements',
+  '/party-statements': 'Shop Statements',
 }
 
 const roleLabel = {

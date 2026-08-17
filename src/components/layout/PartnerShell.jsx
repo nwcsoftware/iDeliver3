@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Package, PackageCheck, Store, CreditCard, Wallet, Boxes, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Package, PackageCheck, Store, CreditCard, Wallet, HandCoins, Boxes, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AppProvider } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import Header from './Header'
@@ -11,6 +11,7 @@ import DeliveriesPage from '../../pages/DeliveriesPage'
 import ShopInventoryPage from '../../pages/ShopInventoryPage'
 import MySubscriptionPage from '../../pages/MySubscriptionPage'
 import PartnerStatementPage from '../../pages/PartnerStatementPage'
+import PartyStatementPage from '../../pages/PartyStatementPage'
 import ShopStockPage from '../../pages/ShopStockPage'
 import logo from '../../assets/Logo.png'
 
@@ -25,6 +26,7 @@ const navItems = [
   { to: '/my-shop',          icon: Store,        label: 'My Shop', supplierOnly: true },
   { to: '/my-inventory',     icon: Boxes,        label: 'Inventory', supplierOnly: true },
   { to: '/my-statement',     icon: Wallet,       label: 'My Statement' },
+  { to: '/package-balance',  icon: HandCoins,    label: 'Package Balance' },
   { to: '/my-subscription',  icon: CreditCard,   label: 'My Subscription' },
 ]
 
@@ -190,7 +192,11 @@ export default function PartnerShell() {
                 {isSupplier && (
                   <Route path="/my-inventory"   element={<ShopStockPage partyContactId={partyContactId} />} />
                 )}
-                <Route path="/my-statement"     element={<PartnerStatementPage partyContactId={partyContactId} />} />
+                {/* The full statement: orders by where they came from, money in
+                    and out, and what is still pending. The older package-only
+                    balance stays reachable as "Package balance". */}
+                <Route path="/my-statement"     element={<PartyStatementPage partyContactId={partyContactId} />} />
+                <Route path="/package-balance"  element={<PartnerStatementPage partyContactId={partyContactId} />} />
                 <Route path="/my-subscription"  element={<MySubscriptionPage partyContactId={partyContactId} />} />
                 {/* Any other path falls back to the default screen. */}
                 <Route path="*" element={<Navigate to="/sold-orders" replace />} />

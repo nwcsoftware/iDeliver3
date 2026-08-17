@@ -38,6 +38,8 @@ const secondaryNav = [
   { to: '/account-statements',   icon: BookText,        label: 'Account Statements' },
   { to: '/account-transactions', icon: BookText,        label: 'Account Transactions' },
   { to: '/supplier-settlements', icon: Store,           label: 'Supplier Settlements' },
+  // One shop's whole account: orders by origin, money in and out, pending.
+  { to: '/party-statements',     icon: Wallet,          label: 'Shop Statements' },
   { to: '/vehicles',             icon: Car,             label: 'Vehicles'  },
   { to: '/company',              icon: Building2,       label: 'Company'   },
 ]
