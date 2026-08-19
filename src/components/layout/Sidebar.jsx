@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
@@ -11,68 +11,105 @@ import logo from '../../assets/Logo.png'
 import AboutPopup from '../about/AboutPopup'
 import MessagesIndicator from '../messages/MessagesIndicator'
 
-// Main sidebar: the everyday driver-dispatch screens only.
-const mainNav = [
-  { to: '/',                   icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/deliveries',         icon: Package,         label: 'Orders'        },
-  { to: '/closed-orders',      icon: PackageCheck,    label: 'Closed Orders' },
-  { to: '/driver-dues',        icon: HandCoins,       label: 'Driver Settlements' },
-  { to: '/daily-collection',   icon: Banknote,        label: 'Daily Collection', superOnly: true },
-  { to: '/credit-customers',   icon: CreditCard,      label: 'Credit Customers' },
-  { to: '/partner-dues',       icon: Handshake,       label: 'Partner Dues' },
-  { to: '/cashier-box',        icon: Wallet,          label: 'Cashier Box' },
-  { to: '/tracking',           icon: MapPin,          label: 'Tracking'  },
+/* The menu, as three pinned screens plus collapsible groups.
+
+   Pinned: opened dozens of times a day, so never behind a click.
+   Groups: everything else, gathered by the job being done rather than by which
+   table it reads. Each group carries `adminOnly` / `superOnly` where the whole
+   group is restricted; individual items may restrict themselves the same way.
+
+   Open groups are remembered per user on this device, and the group holding the
+   current page opens itself. */
+
+const pinnedNav = [
+  { to: '/',           icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/deliveries', icon: Package,         label: 'Orders'    },
+  { to: '/tracking',   icon: MapPin,          label: 'Tracking'  },
 ]
 
-// Everything else lives in the hamburger fly-out menu.
-const secondaryNav = [
-  { to: '/drivers',              icon: Users,           label: 'Drivers' },
-  { to: '/reports',              icon: BarChart3,       label: 'Reports' },
-  { to: '/products',             icon: Tag,             label: 'Products'  },
-  { to: '/price-list',           icon: ClipboardList,   label: 'Price List' },
-  { to: '/returnable-items',     icon: RotateCcw,       label: 'Returnable Items' },
-  { to: '/packages',             icon: Boxes,           label: 'Packages' },
-  { to: '/package-labels',       icon: Tags,            label: 'Package Labels' },
-  { to: '/purchase-invoices',    icon: FileText,        label: 'Purchases' },
-  { to: '/retail-invoices',      icon: Receipt,         label: 'Retail Invoices' },
-  { to: '/account-statements',   icon: BookText,        label: 'Account Statements' },
-  { to: '/account-transactions', icon: BookText,        label: 'Account Transactions' },
-  { to: '/supplier-settlements', icon: Store,           label: 'Supplier Settlements' },
-  // One shop's whole account: orders by origin, money in and out, pending.
-  { to: '/party-statements',     icon: Wallet,          label: 'Shop Statements' },
-  { to: '/vehicles',             icon: Car,             label: 'Vehicles'  },
-  { to: '/company',              icon: Building2,       label: 'Company'   },
+const navGroups = [
+  {
+    key: 'orders', label: 'Orders & Delivery', icon: PackageCheck,
+    items: [
+      { to: '/closed-orders',    icon: PackageCheck,  label: 'Closed Orders' },
+      { to: '/packages',         icon: Boxes,         label: 'Packages' },
+      { to: '/package-labels',   icon: Tags,          label: 'Package Labels' },
+      { to: '/returnable-items', icon: RotateCcw,     label: 'Returnable Items' },
+      { to: '/driver-dues',      icon: HandCoins,     label: 'Driver Settlements' },
+    ],
+  },
+  {
+    key: 'cash', label: 'Cash & Collections', icon: Banknote,
+    items: [
+      { to: '/daily-collection', icon: Banknote,   label: 'Daily Collection', superOnly: true },
+      { to: '/cashier-box',      icon: Wallet,     label: 'Cashier Box' },
+      { to: '/credit-customers', icon: CreditCard, label: 'Credit Customers' },
+      { to: '/retail-invoices',  icon: Receipt,    label: 'Retail Invoices' },
+    ],
+  },
+  {
+    key: 'shops', label: 'Shops & Partners', icon: Store,
+    items: [
+      { to: '/partner-dues',         icon: Handshake, label: 'Partner Dues' },
+      { to: '/supplier-settlements', icon: Store,     label: 'Supplier Settlements' },
+      { to: '/party-statements',     icon: Wallet,    label: 'Shop Statements' },
+      { to: '/products',             icon: Tag,       label: 'Products' },
+    ],
+  },
+  {
+    key: 'accounting', label: 'Accounting', icon: BookText,
+    items: [
+      { to: '/purchase-invoices',    icon: FileText,      label: 'Purchases' },
+      { to: '/price-list',           icon: ClipboardList, label: 'Price List' },
+      { to: '/account-statements',   icon: BookText,      label: 'Account Statements' },
+      { to: '/account-transactions', icon: BookText,      label: 'Account Transactions' },
+    ],
+  },
+  {
+    key: 'people', label: 'People & Fleet', icon: BookUser,
+    items: [
+      { to: '/contacts/suppliers', icon: Building,   label: 'Suppliers' },
+      { to: '/contacts/customers', icon: UserCheck,  label: 'Customers' },
+      { to: '/contacts/partners',  icon: Handshake,  label: 'Partners' },
+      { to: '/drivers',            icon: Users,      label: 'Drivers' },
+      { to: '/vehicles',           icon: Car,        label: 'Vehicles' },
+      { to: '/company',            icon: Building2,  label: 'Company' },
+    ],
+  },
+  {
+    key: 'reports', label: 'Reports', icon: BarChart3,
+    items: [
+      { to: '/reports', icon: BarChart3, label: 'Reports' },
+    ],
+  },
+  {
+    key: 'admin', label: 'Administration', icon: Settings, adminOnly: true,
+    items: [
+      { to: '/settings/app',                    icon: Settings,     label: 'App Settings' },
+      { to: '/settings/users',                  icon: UserCog,      label: 'User Accounts' },
+      { to: '/settings/subscriptions',          icon: CreditCard,   label: 'Subscriptions' },
+      { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions' },
+      { to: '/settings/change-requests',        icon: ClipboardPen, label: 'Change Requests' },
+    ],
+  },
+  {
+    // Destructive and developer-only work, deliberately last and on its own.
+    key: 'super', label: 'Super Admin', icon: ShieldCheck, superOnly: true, tone: 'danger',
+    items: [
+      { to: '/settings/account',             icon: ShieldCheck,   label: 'Developer Account' },
+      { to: '/settings/driver-collections',  icon: Truck,         label: 'Driver App (Collect)' },
+      { to: '/settings/shop-categories',     icon: Tags,          label: 'Shop Categories' },
+      { to: '/settings/header-background',   icon: ImageIcon,     label: 'Header Background' },
+      { to: '/settings/messages',            icon: Megaphone,     label: 'Broadcast Messages' },
+      { to: '/settings/delete-order',        icon: PackageX,      label: 'Delete Order' },
+      { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
+      { to: '/settings/reset-cashier-box',   icon: Wallet,        label: 'Reset Cashier Box' },
+      { to: '/settings/reset',               icon: Trash2,        label: 'Reset Data' },
+    ],
+  },
 ]
 
-const contactsSubItems = [
-  { to: '/contacts/suppliers', icon: Building,   label: 'Suppliers' },
-  { to: '/contacts/customers', icon: UserCheck,  label: 'Customers' },
-  { to: '/contacts/partners',  icon: Handshake,  label: 'Partners'  },
-]
-
-// Settings entries available to any admin (super_admin + admin).
-const settingsSubItems = [
-  { to: '/settings/app',          icon: Settings,  label: 'App Settings' },
-  { to: '/settings/users',        icon: UserCog,   label: 'User Accounts' },
-  // Admins may view/search the list; only the super admin can change it.
-  { to: '/settings/subscriptions', icon: CreditCard, label: 'Subscriptions' },
-  // The company's own software subscriptions — admins read, super admin edits.
-  { to: '/settings/software-subscriptions', icon: AppWindow, label: 'Software Subscriptions' },
-  // Admins raise change requests here; the super admin prices and approves them.
-  { to: '/settings/change-requests', icon: ClipboardPen, label: 'Change Requests' },
-]
-// Settings entries restricted to super_admin only (the developer).
-const superAdminSettingsItems = [
-  { to: '/settings/account',      icon: ShieldCheck, label: 'Developer Account' },
-  { to: '/settings/driver-collections', icon: Truck, label: 'Driver App (Collect)' },
-  { to: '/settings/shop-categories', icon: Tags,     label: 'Shop Categories' },
-  { to: '/settings/header-background', icon: ImageIcon, label: 'Header Background' },
-  { to: '/settings/messages',     icon: Megaphone,   label: 'Broadcast Messages' },
-  { to: '/settings/delete-order', icon: PackageX,    label: 'Delete Order' },
-  { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
-  { to: '/settings/reset-cashier-box', icon: Wallet,  label: 'Reset Cashier Box' },
-  { to: '/settings/reset',        icon: Trash2,      label: 'Reset Data' },
-]
+const GROUPS_KEY = (userId) => `ideliver:navGroups:${userId || 'anon'}`
 
 function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave }) {
   return (
@@ -98,13 +135,48 @@ function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave 
 
 export default function Sidebar() {
   const { stats } = useApp()
-  const { hasRole } = useAuth()
+  const { hasRole, currentUser } = useAuth()
 
   const isAdmin      = hasRole('super_admin', 'admin')
   const isSuperAdmin = hasRole('super_admin')
 
   const [collapsed,     setCollapsed]     = useState(true)
-  const [secondaryOpen, setSecondaryOpen] = useState(false)   // hamburger fly-out menu
+  const [secondaryOpen, setSecondaryOpen] = useState(false)   // the all-in-one fly-out
+
+  /* Which groups are open. Several may be at once, and the choice is kept per
+     user on this device so the menu opens tomorrow the way it was left. */
+  const location = useLocation()
+  const userKey  = GROUPS_KEY(currentUser?.user_id)
+  const [openGroups, setOpenGroups] = useState(() => {
+    try {
+      const raw = localStorage.getItem(GROUPS_KEY(currentUser?.user_id))
+      if (raw) return new Set(JSON.parse(raw))
+    } catch { /* first run */ }
+    return new Set(['orders'])          // a sensible first impression
+  })
+  useEffect(() => {
+    try { localStorage.setItem(userKey, JSON.stringify([...openGroups])) } catch { /* ignore */ }
+  }, [openGroups, userKey])
+
+  /* The group holding the current page opens itself — landing on a page whose
+     group is shut, with no way to see where you are, is disorienting. */
+  useEffect(() => {
+    const path = location.pathname
+    const hit = navGroups.find(g => g.items.some(i => i.to === path))
+    if (hit) setOpenGroups(prev => (prev.has(hit.key) ? prev : new Set([...prev, hit.key])))
+  }, [location.pathname])
+
+  const toggleGroup = (key) => setOpenGroups(prev => {
+    const next = new Set(prev)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
+
+  // Only the groups this user may see, with their permitted items.
+  const visibleGroups = navGroups
+    .filter(g => (!g.adminOnly || isAdmin) && (!g.superOnly || isSuperAdmin))
+    .map(g => ({ ...g, items: g.items.filter(i => (!i.superOnly || isSuperAdmin) && (!i.adminOnly || isAdmin)) }))
+    .filter(g => g.items.length > 0)
   const [aboutOpen,     setAboutOpen]     = useState(false)   // "About _NXCORE" popup
   const [tip,           setTip]           = useState({ label: '', y: 0, visible: false })
 
@@ -163,8 +235,9 @@ export default function Sidebar() {
             {!collapsed && <span>Menu</span>}
           </button>
 
-          {/* Main nav items — super-admin-only entries are hidden for others. */}
-          {mainNav.filter(item => !item.superOnly || isSuperAdmin).map(({ to, icon, label }) => (
+          {/* The rail is deliberately short: the three screens opened all day.
+              Everything else lives in the Menu fly-out beside it. */}
+          {pinnedNav.map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed}
               onMouseEnter={collapsed ? (e) => showTip(e, label) : undefined}
               onMouseLeave={collapsed ? hideTip : undefined}
@@ -225,7 +298,7 @@ export default function Sidebar() {
       {/* ── Secondary fly-out menu — sits right next to the sidebar and moves
             with it (collapse/expand) since it's the next flex sibling. ──────── */}
       {secondaryOpen && (
-        <aside className="w-56 flex-shrink-0 bg-surface-card border-r border-surface-border flex flex-col transition-all duration-200">
+        <aside className="w-64 flex-shrink-0 bg-surface-card border-r border-surface-border flex flex-col transition-all duration-200">
           <div className="h-[64px] flex items-center justify-between px-4 border-b border-surface-border">
             <span className="text-sm font-semibold text-slate-200">Menu</span>
             <button onClick={() => setSecondaryOpen(false)}
@@ -235,46 +308,58 @@ export default function Sidebar() {
             </button>
           </div>
           <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-            {[
-              ...secondaryNav,
-              { _section: 'Contacts' },
-              ...contactsSubItems,
-              ...(isAdmin ? [{ _section: 'Settings' }, ...settingsSubItems,
-                              ...(isSuperAdmin ? superAdminSettingsItems : [])] : []),
-              { _section: 'About' },
-              { _action: 'about', icon: Building2, label: 'About _NXCORE' },
-            ].map((item, idx) => {
-              if (item._section) {
-                return (
-                  <p key={`sec-${idx}`} className="px-3 pt-3 pb-1 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
-                    {item._section}
-                  </p>
-                )
-              }
-              const Icon = item.icon
-              if (item._action === 'about') {
-                return (
-                  <button key="about" onClick={() => { setSecondaryOpen(false); setAboutOpen(true) }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 border border-transparent text-slate-400 hover:text-slate-100 hover:bg-surface-hover">
-                    <Icon className="w-[18px] h-[18px] flex-shrink-0" />
-                    <span>{item.label}</span>
-                  </button>
-                )
-              }
+            {/* Grouped by the job being done. Several groups may be open at
+                once and the choice is remembered per user; the group holding
+                the current page opens itself. */}
+            {visibleGroups.map(g => {
+              const open = openGroups.has(g.key)
+              const GroupIcon = g.icon
+              const danger = g.tone === 'danger'
               return (
-                <NavLink key={item.to} to={item.to} end={item.to === '/'}
-                  onClick={() => setSecondaryOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 border
-                     ${isActive
-                       ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
-                       : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'}`
-                  }>
-                  <Icon className="w-[18px] h-[18px] flex-shrink-0" />
-                  <span>{item.label}</span>
-                </NavLink>
+                <div key={g.key}>
+                  <button type="button" onClick={() => toggleGroup(g.key)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-semibold
+                                uppercase tracking-wider transition-colors
+                                ${danger
+                                  ? 'text-red-400/80 hover:text-red-300 hover:bg-red-500/10'
+                                  : 'text-slate-500 hover:text-slate-300 hover:bg-surface-hover'}`}>
+                    <GroupIcon className="w-[15px] h-[15px] flex-shrink-0" />
+                    <span className="truncate">{g.label}</span>
+                    <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full ${
+                      danger ? 'bg-red-500/10 text-red-300/80' : 'bg-surface-hover text-slate-500'}`}>
+                      {g.items.length}
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+                  </button>
+                  {open && (
+                    <div className="mt-0.5 mb-1.5 ml-3 pl-2 border-l border-surface-border space-y-0.5">
+                      {g.items.map(({ to, icon: Icon, label }) => (
+                        <NavLink key={to} to={to} end={to === '/'}
+                          onClick={() => setSecondaryOpen(false)}
+                          className={({ isActive }) =>
+                            `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150 border
+                             ${isActive
+                               ? 'bg-brand-600/20 text-brand-400 border-brand-600/30'
+                               : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'}`
+                          }>
+                          <Icon className="w-[18px] h-[18px] flex-shrink-0" />
+                          <span className="truncate">{label}</span>
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )
             })}
+
+            {/* About keeps its place at the foot of the menu. */}
+            <div className="pt-2 mt-1 border-t border-surface-border">
+              <button onClick={() => { setSecondaryOpen(false); setAboutOpen(true) }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 border border-transparent text-slate-400 hover:text-slate-100 hover:bg-surface-hover">
+                <Building2 className="w-[18px] h-[18px] flex-shrink-0" />
+                <span>About _NXCORE</span>
+              </button>
+            </div>
           </nav>
         </aside>
       )}

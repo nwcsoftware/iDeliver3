@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
@@ -5711,12 +5712,20 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
       {/* ── Read-only order detail drawer (slides in from the right) ──
           Pinned: stays open. Unpinned: a click anywhere outside closes it. */}
-      {detail && (
+      {/* Rendered into <body>: inside the page the drawer inherited the
+          layout's stacking context, so the 50px app header painted over its
+          top edge and left a gap. A portal puts it above everything, flush. */}
+      {detail && createPortal(
         <>
           {!detailPinned && <div className="fixed inset-0 z-[65]" onClick={closeDetail} />}
+          {/* Flush to the window: top to bottom with no gap, and square edges.
+              `card` would round the corners and let the background show through
+              at the drawer's top and bottom. */}
           <div
             onClick={e => e.stopPropagation()}
-            className={`fixed top-0 right-0 h-full w-full max-w-md z-[66] card border-l border-surface-border shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+            className={`fixed inset-y-0 right-0 h-screen w-full max-w-md z-[66] bg-surface-card
+                        border-l border-surface-border rounded-none shadow-2xl flex flex-col
+                        transition-transform duration-300 ease-out ${
               detailShown ? 'translate-x-0' : 'translate-x-full'}`}>
             {/* Header */}
             <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-border">
@@ -5859,8 +5868,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               )}
             </div>
           </div>
-        </>
-      )}
+        </>,
+        document.body)}
     </div>
   )
 }

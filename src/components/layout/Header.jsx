@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
 import LicenseNotice from '../LicenseNotice'
+import { isVideoBanner } from '../../lib/headerBackground'
 import PartnerSubscriptionNotice from '../PartnerSubscriptionNotice'
 
 // Orders still waiting for someone to confirm them — what the "Unconfirmed"
@@ -222,12 +223,26 @@ export default function Header() {
           gradient over it keeps the title and buttons readable. */}
       {headerBackground?.image_url && (
         <>
-          <div aria-hidden
-            className="absolute inset-0 bg-cover bg-center pointer-events-none"
-            style={{
-              backgroundImage: `url("${headerBackground.image_url}")`,
-              opacity: Number(headerBackground.opacity) || 0.35,
-            }} />
+          {isVideoBanner(headerBackground) ? (
+            /* A movie made for the strip: muted and looping for ever, with no
+               controls. `playsInline` keeps iOS from taking it fullscreen, and
+               `muted` is what lets it autoplay at all — browsers block sound
+               that nobody asked for. */
+            <video aria-hidden key={headerBackground.id || headerBackground.image_url}
+              className="absolute inset-0 h-full w-full object-cover pointer-events-none"
+              style={{ opacity: Number(headerBackground.opacity) || 0.35 }}
+              src={headerBackground.image_url}
+              poster={headerBackground.poster_url || undefined}
+              autoPlay loop muted playsInline preload="auto"
+              disablePictureInPicture controlsList="nodownload noplaybackrate" />
+          ) : (
+            <div aria-hidden
+              className="absolute inset-0 bg-cover bg-center pointer-events-none"
+              style={{
+                backgroundImage: `url("${headerBackground.image_url}")`,
+                opacity: Number(headerBackground.opacity) || 0.35,
+              }} />
+          )}
           <div aria-hidden
             className="absolute inset-0 pointer-events-none bg-gradient-to-r from-surface-card/85 via-surface-card/40 to-surface-card/85" />
         </>

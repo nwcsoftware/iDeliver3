@@ -7,10 +7,11 @@ import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import {
   fetchHeaderBackgrounds, saveHeaderBackground, deleteHeaderBackground,
-  isCurrent, DEFAULT_OPACITY,
+  isCurrent, isVideoBanner, DEFAULT_OPACITY, HEADER_MEDIA_SIZE,
+  MAX_IMAGE_KB, MAX_VIDEO_KB, uploadHeaderMedia, removeHeaderMedia,
 } from '../lib/headerBackground'
 
-const MAX_KB = 900
+const SIZE_HINT = `${HEADER_MEDIA_SIZE.width} × ${HEADER_MEDIA_SIZE.height} px`
 
 // <input type="datetime-local"> wants "YYYY-MM-DDTHH:mm" in local time.
 function toLocalInput(ts) {
@@ -28,7 +29,8 @@ function fmtWhen(ts) {
   return isNaN(d.getTime()) ? null : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-const EMPTY = { name: '', image_url: '', start_at: '', end_at: '', opacity: DEFAULT_OPACITY, is_active: true }
+const EMPTY = { name: '', image_url: '', media_type: 'image', poster_url: '',
+                start_at: '', end_at: '', opacity: DEFAULT_OPACITY, is_active: true }
 
 /* Settings → Header Background (super admin).
 
@@ -46,6 +48,7 @@ export default function HeaderBackgroundPage() {
   const [modal,   setModal]   = useState(null)   // 'add' | row
   const [form,    setForm]    = useState(EMPTY)
   const [saving,  setSaving]  = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [formErr, setFormErr] = useState('')
   const [busyId,  setBusyId]  = useState(null)
 
@@ -71,6 +74,7 @@ export default function HeaderBackgroundPage() {
   function openEdit(r) {
     setForm({
       name: r.name ?? '', image_url: r.image_url ?? '',
+      media_type: r.media_type || 'image', poster_url: r.poster_url ?? '',
       start_at: toLocalInput(r.start_at), end_at: toLocalInput(r.end_at),
       opacity: Number(r.opacity) || DEFAULT_OPACITY, is_active: r.is_active !== false,
     })
@@ -78,19 +82,50 @@ export default function HeaderBackgroundPage() {
   }
   function closeModal() { setModal(null); setForm(EMPTY); setFormErr('') }
 
-  function onPickImage(e) {
+  /* One picker for both: the file's own type decides whether this banner is a
+     picture or a movie, so there is no mode to get wrong.
+
+     The file goes to storage and the form keeps only its URL. Embedding it in
+     the row as base64 is what made a 20 MB clip cost every user 27 MB on every
+     sign-in; a link costs them a few hundred bytes and streams from cache. */
+  async function onPickMedia(e) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    if (!file.type.startsWith('image/')) { setFormErr('Please choose an image file.'); return }
-    if (file.size > MAX_KB * 1024)       { setFormErr(`Image must be under ${MAX_KB} KB.`); return }
-    const reader = new FileReader()
-    reader.onload = () => { setForm(f => ({ ...f, image_url: String(reader.result || '') })); setFormErr('') }
-    reader.readAsDataURL(file)
+    const video = file.type.startsWith('video/')
+    if (!video && !file.type.startsWith('image/')) {
+      setFormErr('Choose an image (PNG, JPG) or a movie (MP4, WebM).'); return
+    }
+    const capKb = video ? MAX_VIDEO_KB : MAX_IMAGE_KB
+    if (file.size > capKb * 1024) {
+      setFormErr(`${video ? 'Movie' : 'Image'} must be under ${Math.round(capKb / 1000)} MB — `
+        + `this one is ${(file.size / 1048576).toFixed(1)} MB.`)
+      return
+    }
+
+    setFormErr(''); setUploading(true)
+    // Show it immediately from the local file while the upload runs.
+    const localPreview = URL.createObjectURL(file)
+    setForm(f => ({ ...f, _preview: localPreview, media_type: video ? 'video' : 'image', _sizeKb: Math.round(file.size / 1024) }))
+
+    const { url, error } = await uploadHeaderMedia(file, { userId: currentUser?.user_id ?? null })
+    setUploading(false)
+    if (error) { setFormErr(error); setForm(f => ({ ...f, _preview: '' })); return }
+    setForm(f => ({ ...f, image_url: url, _preview: '' }))
+    URL.revokeObjectURL(localPreview)
+  }
+
+  /* A hosted file avoids carrying a few megabytes to every user on every
+     sign-in — the sensible route for anything but the shortest clip. */
+  function onPasteUrl(url) {
+    const clean = url.trim()
+    const video = /\.(mp4|webm|ogv|mov)(\?|#|$)/i.test(clean)
+    setForm(f => ({ ...f, image_url: clean, media_type: clean ? (video ? 'video' : 'image') : f.media_type }))
+    setFormErr('')
   }
 
   async function save() {
-    if (!form.image_url) { setFormErr('Choose an image first.'); return }
+    if (!form.image_url) { setFormErr('Choose an image or a movie first.'); return }
     if (form.start_at && form.end_at && new Date(form.end_at) <= new Date(form.start_at)) {
       setFormErr('The end date must be after the start date.'); return
     }
@@ -99,6 +134,8 @@ export default function HeaderBackgroundPage() {
       id: modal === 'add' ? null : modal.id,
       name: form.name,
       image_url: form.image_url,
+      media_type: form.media_type,
+      poster_url: form.poster_url,
       start_at: fromLocalInput(form.start_at),
       end_at:   fromLocalInput(form.end_at),
       opacity:  form.opacity,
@@ -128,6 +165,9 @@ export default function HeaderBackgroundPage() {
     const err = await deleteHeaderBackground(r.id)
     setBusyId(null)
     if (err) { setError(err); return }
+    // The row is gone; take its uploaded file with it. Best effort — a leftover
+    // file is untidy, a banner that won't delete is a bug.
+    removeHeaderMedia(r.image_url)
     load(); refreshHeaderBackground?.()
   }
 
@@ -175,7 +215,15 @@ export default function HeaderBackgroundPage() {
               return (
                 <tr key={r.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 ${r.is_active === false ? 'opacity-60' : ''}`}>
                   <td className="px-4 py-3">
-                    <img src={r.image_url} alt="" className="w-28 h-9 rounded object-cover border border-surface-border" />
+                    {/* The list previews clips too, so what is scheduled is
+                        recognisable at a glance rather than a black rectangle. */}
+                    {isVideoBanner(r) ? (
+                      <video src={r.image_url} poster={r.poster_url || undefined}
+                        className="w-28 h-9 rounded object-cover border border-surface-border"
+                        autoPlay loop muted playsInline />
+                    ) : (
+                      <img src={r.image_url} alt="" className="w-28 h-9 rounded object-cover border border-surface-border" />
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-100">{r.name || <span className="text-slate-600">—</span>}</td>
                   <td className="px-4 py-3 text-slate-400 text-xs">{fmtWhen(r.start_at) || 'Immediately'}</td>
@@ -236,21 +284,64 @@ export default function HeaderBackgroundPage() {
               </div>
 
               <div>
-                <label className="label">Image *</label>
+                <label className="label">Picture or movie *</label>
                 <div className="flex items-center gap-3">
-                  {form.image_url
-                    ? <img src={form.image_url} alt="" className="w-40 h-12 rounded object-cover border border-surface-border flex-shrink-0" />
-                    : <div className="w-40 h-12 rounded bg-surface-hover border border-surface-border flex items-center justify-center flex-shrink-0">
-                        <ImageIcon className="w-5 h-5 text-slate-600" />
-                      </div>}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="btn-ghost px-3 py-1.5 text-xs border border-surface-border rounded-lg cursor-pointer inline-flex items-center gap-1.5 w-max hover:text-slate-100">
-                      <Upload className="w-3.5 h-3.5" /> {form.image_url ? 'Change image' : 'Upload image'}
-                      <input type="file" accept="image/*" className="hidden" onChange={onPickImage} />
-                    </label>
-                    <p className="text-[10px] text-slate-500">Wide images work best (the header is a thin bar). Max {MAX_KB} KB.</p>
+                  {/* The preview is the real thing at the real shape: a 40×12
+                      box is the header strip in miniature, and a clip loops
+                      here exactly as it will up there. */}
+                  {(form._preview || form.image_url) ? (
+                    form.media_type === 'video' ? (
+                      <video src={form._preview || form.image_url} className="w-40 h-12 rounded object-cover border border-surface-border flex-shrink-0"
+                        autoPlay loop muted playsInline />
+                    ) : (
+                      <img src={form._preview || form.image_url} alt="" className="w-40 h-12 rounded object-cover border border-surface-border flex-shrink-0" />
+                    )
+                  ) : (
+                    <div className="w-40 h-12 rounded bg-surface-hover border border-surface-border flex items-center justify-center flex-shrink-0">
+                      <ImageIcon className="w-5 h-5 text-slate-600" />
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-1.5 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <label className={`btn-ghost px-3 py-1.5 text-xs border border-surface-border rounded-lg inline-flex items-center gap-1.5 w-max hover:text-slate-100 ${
+                        uploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+                        {uploading
+                          ? <><Loader className="w-3.5 h-3.5 animate-spin" /> Uploading…</>
+                          : <><Upload className="w-3.5 h-3.5" /> {form.image_url ? 'Change file' : 'Upload file'}</>}
+                        <input type="file" accept="image/*,video/mp4,video/webm,video/ogg" className="hidden"
+                          disabled={uploading} onChange={onPickMedia} />
+                      </label>
+                      {form.image_url && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                          form.media_type === 'video'
+                            ? 'bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30'
+                            : 'bg-brand-500/10 text-brand-300 border-brand-500/30'}`}>
+                          {form.media_type === 'video' ? 'Movie · loops' : 'Picture'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-500">
+                      Made for the header strip: <b className="text-slate-400">{SIZE_HINT}</b>.
+                      Anything else is cropped to fill it. Up to {(MAX_VIDEO_KB / 1000).toFixed(0)} MB
+                      for a movie (MP4 or WebM), {(MAX_IMAGE_KB / 1000).toFixed(0)} MB for a picture —
+                      the file is stored once and streamed from there, so size costs nobody a slow sign-in.
+                    </p>
                   </div>
                 </div>
+
+                {/* Already hosted somewhere? Point at it instead of uploading. */}
+                <div className="mt-2">
+                  <input className="input py-1.5 text-xs" placeholder="…or paste a link to a hosted image / movie"
+                    value={/^https?:\/\//i.test(form.image_url) ? form.image_url : ''}
+                    onChange={e => onPasteUrl(e.target.value)} />
+                </div>
+
+                {form.media_type === 'video' && (
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    The movie plays muted and loops for ever — browsers refuse to autoplay sound,
+                    and a header is no place for it. Keep it short; a few seconds reads best.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

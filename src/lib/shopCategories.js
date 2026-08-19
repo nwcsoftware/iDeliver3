@@ -56,11 +56,23 @@ export const DEFAULT_SHOP_CATEGORIES = [
    in the DB yet). Never throws; a missing table just yields the defaults. */
 export async function fetchShopCategories(companyId = null) {
   try {
-    let q = supabase.from('shop_categories').select('id,name,sort_order').eq('is_active', true)
-    if (companyId) q = q.eq('company_id', companyId)
+    let q = supabase.from('shop_categories').select('id,name,sort_order,company_id').eq('is_active', true)
+    // The seeded defaults (fix104) carry company_id NULL, meaning "shared by
+    // every company" — and NULL never equals anything in SQL, so filtering on
+    // the company alone hid all 35 of them and the page fell back to the
+    // built-in list. Shared rows plus this company's own is what we want.
+    if (companyId) q = q.or(`company_id.eq.${companyId},company_id.is.null`)
     const { data, error } = await q
     if (error || !data || data.length === 0) return { rows: fallbackRows(), usedFallback: true }
-    const rows = [...data].sort((a, b) =>
+    // A company may add a category that duplicates a shared one by name; its own
+    // row wins so renaming or removing it behaves as expected.
+    const byName = new Map()
+    for (const r of data) {
+      const key = String(r.name || '').trim().toLowerCase()
+      const kept = byName.get(key)
+      if (!kept || (!kept.company_id && r.company_id)) byName.set(key, r)
+    }
+    const rows = [...byName.values()].sort((a, b) =>
       (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name).localeCompare(String(b.name)))
     return { rows: rows.map(r => ({ id: r.id, name: r.name })), usedFallback: false }
   } catch {
