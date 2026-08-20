@@ -938,7 +938,7 @@ export default function ChangeRequestsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Target delivery / release</label>
-                  <input className="input" value={assess.target_delivery} placeholder="e.g. v3.00.017"
+                  <input className="input" value={assess.target_delivery} placeholder="e.g. v3.00.018"
                     onChange={e => setAssess(a => ({ ...a, target_delivery: e.target.value }))} />
                 </div>
                 <div>

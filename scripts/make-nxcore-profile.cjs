@@ -14,7 +14,7 @@ const ROOT = path.join(__dirname, '..')
 const OUT  = path.join(ROOT, 'NXCORE_Profile.pdf')
 
 const APP_NAME    = 'iDeliver III'
-const APP_VERSION = '3.00.017'
+const APP_VERSION = '3.00.018'
 const PHONE       = '+961 70 334 868'
 const YEAR        = new Date().getFullYear()
 

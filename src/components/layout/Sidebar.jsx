@@ -54,6 +54,8 @@ const navGroups = [
       { to: '/supplier-settlements', icon: Store,     label: 'Supplier Settlements' },
       { to: '/party-statements',     icon: Wallet,    label: 'Shop Statements' },
       { to: '/products',             icon: Tag,       label: 'Products' },
+      // What is actually on hand, as opposed to what we sell (fix126).
+      { to: '/inventory',            icon: Boxes,     label: 'Inventory' },
     ],
   },
   {

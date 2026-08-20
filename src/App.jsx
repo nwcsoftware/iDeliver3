@@ -14,6 +14,7 @@ import TrackingPage     from './pages/TrackingPage'
 import ReportsPage      from './pages/ReportsPage'
 import CompanyPage      from './pages/CompanyPage'
 import ProductsPage          from './pages/ProductsPage'
+import ProductInventoryPage  from './pages/ProductInventoryPage'
 import PurchaseInvoicesPage  from './pages/PurchaseInvoicesPage'
 import RetailInvoicesPage     from './pages/RetailInvoicesPage'
 import PriceListPage          from './pages/PriceListPage'
@@ -112,6 +113,7 @@ function AppShell() {
                 <Route path="/reports"    element={<ReportsPage    />} />
                 <Route path="/company"   element={<CompanyPage    />} />
                 <Route path="/products"       element={<ProductsPage          />} />
+                <Route path="/inventory"      element={<ProductInventoryPage  />} />
                 <Route path="/purchase-invoices"    element={<PurchaseInvoicesPage />} />
                 <Route path="/retail-invoices"      element={<RetailInvoicesPage />} />
                 <Route path="/price-list"           element={<PriceListPage />} />

@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Minus, Square, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, Search, MapPin, CheckSquare, MinusSquare, Check, Loader2 } from 'lucide-react'
+import { Minus, Square, Copy, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, Search, MapPin, CheckSquare, MinusSquare, Check, Loader2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
@@ -40,6 +40,7 @@ const pageTitles = {
   '/completed-orders': 'Completed Orders',
   '/supplier-settlements': 'Supplier Settlements',
   '/party-statements': 'Shop Statements',
+  '/inventory': 'Inventory',
 }
 
 const roleLabel = {
@@ -60,6 +61,16 @@ export default function Header() {
   const { orders, refreshOrders, showSummary, toggleShowSummary, headerBackground } = useApp()
   const electron             = window.electron
   const [userMenu, setUserMenu] = useState(false)
+
+  /* Maximized or not, so the middle control is a maximize button or a restore
+     button — never a maximize button on an already-maximized window. Web has no
+     such thing, so this stays false there and the controls never render. */
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    if (!electron?.window) return undefined
+    electron.window.isMaximized?.().then(v => setMaximized(!!v)).catch(() => {})
+    return electron.window.onStateChange?.(st => setMaximized(!!st?.maximized))
+  }, [electron])
 
   // The bell is an office tool: it counts every order awaiting confirmation, so
   // 2nd-party logins (supplier/partner) don't get it at all.
@@ -217,6 +228,7 @@ export default function Header() {
     <header
       className="relative z-40 h-[50px] bg-surface-card border-b border-surface-border flex items-center px-4 gap-4 flex-shrink-0"
       style={{ WebkitAppRegion: 'drag' }}
+      onDoubleClick={electron ? () => electron.window.maximize() : undefined}
     >
       {/* Scheduled decorative background (super admin, fix109). Purely visual:
           it sits behind everything and never takes pointer events. A dark
@@ -501,29 +513,37 @@ export default function Header() {
           )}
         </div>
 
-        {/* Window controls */}
+        {/* Window controls — the desktop build draws its own title bar
+            (frame: false), so these ARE the window buttons. In the browser
+            `window.electron` is undefined and nothing renders: a web page has
+            no window of its own to minimize. */}
         {electron && (
-          <div className="flex items-center gap-1 ml-1">
+          <div className="flex items-center ml-2 -mr-2" style={{ WebkitAppRegion: 'no-drag' }}>
             <button
               onClick={() => electron.window.minimize()}
-              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400
+              title="Minimize"
+              className="w-11 h-[34px] flex items-center justify-center text-slate-400
                          hover:bg-surface-hover hover:text-slate-100 transition-colors"
             >
-              <Minus className="w-3 h-3" />
+              <Minus className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => electron.window.maximize()}
-              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400
+              title={maximized ? 'Restore down' : 'Maximize'}
+              className="w-11 h-[34px] flex items-center justify-center text-slate-400
                          hover:bg-surface-hover hover:text-slate-100 transition-colors"
             >
-              <Square className="w-3 h-3" />
+              {/* Two offset squares is the restore glyph every Windows user
+                  already knows; a single square means maximize. */}
+              {maximized ? <Copy className="w-3 h-3 -scale-x-100" /> : <Square className="w-3 h-3" />}
             </button>
             <button
               onClick={() => electron.window.close()}
-              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400
-                         hover:bg-red-500/20 hover:text-red-400 transition-colors"
+              title="Close"
+              className="w-11 h-[34px] flex items-center justify-center text-slate-400
+                         hover:bg-red-600 hover:text-white transition-colors"
             >
-              <X className="w-3 h-3" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
