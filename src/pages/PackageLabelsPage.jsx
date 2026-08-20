@@ -9,12 +9,13 @@ import { useApp } from '../context/AppContext'
 import { orderTotalsByCurrency } from '../lib/orderAmounts'
 import logoUrl from '../assets/ideliver-logo-login.png'
 
-/* Package labels — pick a delivery date, tick the packages, print 6 × 6.2 cm
+/* Package labels — pick a delivery date, tick the packages, print 5.8 × 6 cm
    labels carrying the order number, recipient, delivery location, the customer
    sending the parcel, and the package reference both as text and as a barcode. */
 
-const LABEL_W_MM = 60
-const LABEL_H_MM = 62
+// Xprinter XP-365B stock: 5.8 × 6 cm.
+const LABEL_W_MM = 58
+const LABEL_H_MM = 60
 // Printed on every label so the recipient can reach us.
 const COMPANY_PHONE = '+961 81 585 255'
 
@@ -51,23 +52,7 @@ const totalsText = (totals) => Object.entries(totals || {})
 const customerName = (c) =>
   (c?.company_name?.trim() || `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim() || '—')
 
-/* One barcode, drawn into an <svg> from the package reference. Code 128 handles
-   the digits and dashes our references use. */
-function Barcode({ value, height = 34 }) {
-  const ref = useRef(null)
-  useEffect(() => {
-    if (!ref.current || !value) return
-    try {
-      JsBarcode(ref.current, String(value), {
-        format: 'CODE128', displayValue: false, height,
-        margin: 0, width: 1.4, background: '#ffffff', lineColor: '#000000',
-      })
-    } catch { /* an unencodable reference simply shows no barcode */ }
-  }, [value, height])
-  return <svg ref={ref} className="w-full" />
-}
-
-/* The same label as a PDF: one 60 × 62 mm page per package, so it can be saved,
+/* The same label as a PDF: one 58 × 60 mm page per package, so it can be saved,
    e-mailed or sent to a label printer without going through the browser's
    print dialog. Barcodes are rendered to a canvas and placed as images. */
 function barcodePng(value) {
@@ -84,7 +69,9 @@ function barcodePng(value) {
 }
 
 function buildLabelsPdf(labels, logoData) {
-  const W = LABEL_W_MM, H = LABEL_H_MM, M = 4
+  // 2.5mm all round — the printed label's margin, kept in step so the PDF
+  // and the browser print land in the same place on the sticker.
+  const W = LABEL_W_MM, H = LABEL_H_MM, M = 2.5
   const doc = new jsPDF({ unit: 'mm', format: [W, H], orientation: 'portrait' })
 
   // Logo size, kept to the file's own aspect ratio.
@@ -279,6 +266,41 @@ export default function PackageLabelsPage() {
     buildLabelsPdf(labels, logoData).save(`package-labels-${date}.pdf`)
   }
 
+  /* Print the PDF, not an HTML copy of it.
+
+     Keeping a second layout in CSS meant two things had to be kept identical by
+     hand, and they drifted — the browser rendered its own version while the PDF
+     was right. Printing the generated document instead makes them the same
+     thing by construction, and the printer receives exact 58 × 60 mm pages
+     rather than whatever the browser decides to scale to. */
+  const [printing, setPrinting] = useState(false)
+  async function printLabels() {
+    if (labels.length === 0 || printing) return
+    setPrinting(true)
+    try {
+      const logoData = await loadLogoData()
+      const url = buildLabelsPdf(labels, logoData).output('bloburl')
+      const frame = document.createElement('iframe')
+      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+      frame.src = url
+      frame.onload = () => {
+        try {
+          frame.contentWindow.focus()
+          frame.contentWindow.print()
+        } catch {
+          // Some browsers refuse to print an embedded PDF — open it instead, so
+          // the operator is never left with a button that does nothing.
+          window.open(url, '_blank', 'noopener')
+        }
+        // Long enough for the print dialog to have taken what it needs.
+        setTimeout(() => { frame.remove(); URL.revokeObjectURL(url) }, 60000)
+      }
+      document.body.appendChild(frame)
+    } finally {
+      setPrinting(false)
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
       {/* ── Toolbar (not printed) ───────────────────────────── */}
@@ -306,7 +328,8 @@ export default function PackageLabelsPage() {
               className="btn-ghost h-9 px-3 text-sm border border-surface-border text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed">
               <FileDown className="w-4 h-4" /> PDF
             </button>
-            <button onClick={() => window.print()} disabled={labels.length === 0}
+            <button onClick={printLabels} disabled={labels.length === 0 || printing}
+              title="Print the labels — the same document as the PDF, at 58 × 60 mm"
               className="btn-primary h-9 py-0 px-3 disabled:opacity-40 disabled:cursor-not-allowed">
               <Printer className="w-4 h-4" /> Print {labels.length || ''} label{labels.length === 1 ? '' : 's'}
             </button>
@@ -369,57 +392,9 @@ export default function PackageLabelsPage() {
         </p>
       </div>
 
-      {/* ── The labels themselves — hidden on screen, one per printed page ── */}
-      <div className="hidden print:block">
-        {labels.map(r => (
-          <div key={r.id} className="label-sheet">
-            <div className="label-order">
-              <img className="label-logo" src={logoUrl} alt="" />
-              <div className="label-idbox">
-                <span className="label-orderno">{r.orderNumber}</span>
-                <span className="label-cotel">{COMPANY_PHONE}</span>
-              </div>
-            </div>
-
-            <div className="label-line">
-              <span>To</span>
-              <b>{r.recipient || '—'}</b>
-              {r.recipientMobile && <i className="label-tel">{r.recipientMobile}</i>}
-            </div>
-            <div className="label-address">{r.address || '—'}</div>
-            <div className="label-line label-from">
-              <span>From</span>
-              <b>{r.customer}</b>
-              {r.customerMobile && <i className="label-tel">{r.customerMobile}</i>}
-            </div>
-
-            {/* Money: this package, the delivery fee, and the order total */}
-            <div className="label-money">
-              <div><span>Package</span><b>{money(r.packageAmount, r.packageCurrency)}</b></div>
-              <div><span>Delivery</span><b>{money(r.deliveryFee, r.feeCurrency)}</b></div>
-            </div>
-
-            {/* The total sits on its own, centred in the gap between the money
-                rule and the barcode. */}
-            <div className="label-total-band">
-              <div className="label-total"><span>Total</span><b>{totalsText(r.totals) || money(0, r.feeCurrency)}</b></div>
-            </div>
-
-            <div className="label-code">
-              {r.tracking_number ? (
-                /* The reference is laid over the foot of the barcode on a white
-                   patch, so it reads clearly without stealing label height. */
-                <div className="label-barcode">
-                  <Barcode value={r.tracking_number} />
-                  <span className="label-ref">{r.tracking_number}</span>
-                </div>
-              ) : (
-                <div className="label-ref-plain">—</div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* The labels are no longer rendered as HTML: printing goes through the
+          generated PDF (see printLabels), so there is only one layout to keep
+          right, and the printer gets exact 58 × 60 mm pages. */}
     </div>
   )
 }
