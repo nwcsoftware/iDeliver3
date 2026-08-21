@@ -35,6 +35,7 @@ import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
 import PartyStatementPage     from './pages/PartyStatementPage'
+import CurrencyCheckPage      from './pages/CurrencyCheckPage'
 import { OrderQuickViewProvider } from './components/orders/OrderQuickView'
 import SoftwareSubscriptionsPage from './pages/SoftwareSubscriptionsPage'
 import ChangeRequestsPage     from './pages/ChangeRequestsPage'
@@ -131,6 +132,7 @@ function AppShell() {
                 <Route path="/credit-customers"     element={<CreditCustomersPage />} />
                 <Route path="/supplier-settlements" element={<SupplierSettlementsPage />} />
                 <Route path="/party-statements"     element={<PartyStatementPage />} />
+                <Route path="/currency-check"       element={<CurrencyCheckPage  />} />
                 <Route path="/partner-dues"         element={<PartnerDuesPage />} />
                 <Route path="/cashier-box"          element={<CashierBoxPage />} />
                 <Route path="/vehicles"             element={<VehiclesPage />} />

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CreditCard, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
   CheckCircle2, Circle, Power, PowerOff, Building, Handshake, CalendarRange,
+  AlertTriangle, AlertOctagon, XCircle, RefreshCw, Users, Wallet, CalendarClock, FileSignature,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -9,7 +10,11 @@ import { useApp } from '../context/AppContext'
 import {
   fetchSubscriptions, saveSubscription, deleteSubscription,
   subscriptionStatus, STATUS_STYLES, contactLabel, todayStr,
+  subscriptionsSummary, coveredContactIds, renewalStage, RENEWAL_STAGES,
+  daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
+  isTrialSubscription, TRIAL_DAYS,
 } from '../lib/subscriptions'
+import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const STATUS_FILTERS = [
@@ -38,9 +43,31 @@ const emptyForm = () => ({
   amount: '', currency: 'USD', is_paid: false, paid_by_note: '', is_active: false,
 })
 
+/* The four renewal steps, as icons. Shape carries the meaning as much as
+   colour does, so the list is still readable in a screenshot or on a projector. */
+const RENEWAL_ICONS = {
+  ok:      CheckCircle2,
+  due:     AlertTriangle,
+  urgent:  AlertOctagon,
+  expired: XCircle,
+  renewed: RefreshCw,
+  idle:    Circle,
+  unknown: Circle,
+}
+
 const fmtMoney = (v, c) =>
   `${Number(v || 0).toLocaleString(undefined, {
     minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c || 'USD'}`
+
+/* Money totals held per currency, printed as "1,200.00 USD · 3,000,000 LBP".
+   Currencies are never added together — the sum would mean nothing. */
+const moneyLine = (bucket) => {
+  const parts = Object.entries(bucket || {})
+    .filter(([, v]) => Number(v) !== 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, v]) => fmtMoney(v, c))
+  return parts.length ? parts.join('  ·  ') : '—'
+}
 
 /* Settings → Subscriptions.
 
@@ -53,14 +80,18 @@ export default function SubscriptionsPage() {
   const isSuperAdmin = hasRole('super_admin')
   const canView      = hasRole('super_admin', 'admin')
 
-  const [rows,    setRows]    = useState([])
-  const [parties, setParties] = useState([])     // supplier/partner contacts
+  const [rows,       setRows]       = useState([])
+  const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
+  const [agreementsOff, setAgreementsOff] = useState(false) // fix128 not run yet
+  const [parties,    setParties]    = useState([])          // supplier/partner contacts
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
 
-  const [search,       setSearch]       = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [partyFilter,  setPartyFilter]  = useState('all')
+  const [search,        setSearch]        = useState('')
+  const [statusFilter,  setStatusFilter]  = useState('all')
+  const [partyFilter,   setPartyFilter]   = useState('all')
+  const [renewalFilter, setRenewalFilter] = useState('')     // '' | 'due' | 'urgent' | 'expired'
+  const [agreeFilter,   setAgreeFilter]   = useState('')     // '' | 'pending' | 'agreed' | 'rejected'
 
   const [modal,   setModal]   = useState(null)   // 'add' | row
   const [form,    setForm]    = useState(emptyForm())
@@ -71,8 +102,13 @@ export default function SubscriptionsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { rows: r, error: e } = await fetchSubscriptions(COMPANY_ID)
+    const [{ rows: r, error: e }, ag] = await Promise.all([
+      fetchSubscriptions(COMPANY_ID),
+      fetchAgreementMap(),          // empty map when fix128 hasn't been run
+    ])
     setRows(r)
+    setAgreements(ag.map)
+    setAgreementsOff(!!ag.missing)
     setError(e && /subscriptions/i.test(e) && /not exist|schema cache/i.test(e)
       ? 'Subscriptions aren’t installed yet — run supabase-fix110.sql.'
       : (e || ''))
@@ -95,27 +131,54 @@ export default function SubscriptionsPage() {
 
   const today = todayStr()
 
+  // Which contacts already hold cover reaching today or later — so an old period
+  // reads as "renewed" rather than lapsed.
+  const covered = useMemo(() => coveredContactIds(rows, today), [rows, today])
+
+  const stageOf = useCallback(
+    (r) => renewalStage(r, today, covered.has(r.contact_id)),
+    [today, covered])
+
+  // No row on file means they haven't been asked yet — which is 'pending', not
+  // an absence: the office should see who still owes an answer.
+  const agreementOf = useCallback(
+    (r) => agreements.get(r.contact_id) || null,
+    [agreements])
+  const agreementStatusOf = useCallback(
+    (r) => agreementOf(r)?.status || 'pending',
+    [agreementOf])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
       const st = subscriptionStatus(r, today)
       if (statusFilter !== 'all' && st !== statusFilter) return false
       if (partyFilter !== 'all' && !(r.contact?.contact_types ?? []).includes(partyFilter)) return false
+      if (renewalFilter && renewalStage(r, today, covered.has(r.contact_id)).stage !== renewalFilter) return false
+      if (agreeFilter && (agreements.get(r.contact_id)?.status || 'pending') !== agreeFilter) return false
       if (!q) return true
       return [contactLabel(r.contact), r.description, r.contact?.mobile]
         .some(v => String(v ?? '').toLowerCase().includes(q))
     })
-  }, [rows, search, statusFilter, partyFilter, today])
+  }, [rows, search, statusFilter, partyFilter, renewalFilter, agreeFilter, today, covered, agreements])
 
-  // Headline counters over the whole list (not the filtered view).
-  const counts = useMemo(() => {
-    const c = { active: 0, unpaid: 0, expired: 0 }
+  // Headline figures over the whole list (not the filtered view) — counts, money
+  // per currency, and how many renewals are coming up.
+  const summary = useMemo(() => subscriptionsSummary(rows, today), [rows, today])
+
+  /* Agreements are counted per CONTACT, not per subscription row: one party
+     with three periods has answered once, and counting the rows would say
+     three. */
+  const agreeCounts = useMemo(() => {
+    const seen = new Map()
     for (const r of rows) {
-      const st = subscriptionStatus(r, today)
-      if (c[st] != null) c[st] += 1
+      if (!r.contact_id || seen.has(r.contact_id)) continue
+      seen.set(r.contact_id, agreements.get(r.contact_id)?.status || 'pending')
     }
+    const c = { agreed: 0, pending: 0, rejected: 0 }
+    for (const st of seen.values()) if (c[st] != null) c[st] += 1
     return c
-  }, [rows, today])
+  }, [rows, agreements])
 
   if (!canView) {
     return (
@@ -178,6 +241,7 @@ export default function SubscriptionsPage() {
   }
 
   const partyIcon = (c) => ((c?.contact_types ?? []).includes('supplier') ? Building : Handshake)
+  const COL_COUNT = isSuperAdmin ? 10 : 9     // header cells, for the empty/loading rows
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -199,21 +263,114 @@ export default function SubscriptionsPage() {
         )}
       </div>
 
-      {/* Counters */}
-      <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="px-2.5 py-1 rounded-lg border bg-green-500/10 text-green-300 border-green-500/30">
-          {counts.active} active
-        </span>
-        <span className="px-2.5 py-1 rounded-lg border bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30">
-          {counts.unpaid} unpaid
-        </span>
-        <span className="px-2.5 py-1 rounded-lg border bg-red-500/10 text-red-300 border-red-500/30">
-          {counts.expired} expired
-        </span>
-        {!isSuperAdmin && (
+      {/* ── Summary (super admin) ────────────────────────────────────────
+          How many subscriptions there are, what they are worth, and what needs
+          renewing — over the whole list, not the filtered view, so the figures
+          don't move when a filter is clicked. Each card is a filter. */}
+      {isSuperAdmin ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <button onClick={() => { setStatusFilter('all'); setRenewalFilter('') }}
+            className={`card p-3 text-left transition-colors ${
+              statusFilter === 'all' && !renewalFilter ? 'border-brand-500/40 bg-brand-500/5' : 'hover:bg-surface-hover/40'}`}>
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-brand-400" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Subscriptions</span>
+            </div>
+            <p className="mt-1.5 text-xl font-bold text-slate-100 tabular-nums">{summary.total}</p>
+            <p className="text-[11px] text-slate-500">
+              {summary.partyCount} supplier{summary.partyCount === 1 ? '' : 's'} / partner{summary.partyCount === 1 ? '' : 's'}
+            </p>
+          </button>
+
+          <div className="card p-3">
+            <div className="flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-slate-300" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Value</span>
+            </div>
+            <p className="mt-1.5 text-sm font-bold text-slate-100 tabular-nums leading-snug">{moneyLine(summary.value)}</p>
+            <p className="text-[11px] text-slate-500">active: {moneyLine(summary.activeValue)}</p>
+          </div>
+
+          <button onClick={() => { setStatusFilter(statusFilter === 'active' ? 'all' : 'active'); setRenewalFilter('') }}
+            className={`card p-3 text-left transition-colors ${
+              statusFilter === 'active' ? 'border-green-500/50 bg-green-500/5' : 'hover:bg-surface-hover/40'}`}>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-green-400" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Active</span>
+            </div>
+            <p className="mt-1.5 text-xl font-bold text-green-300 tabular-nums">{summary.active}</p>
+            <p className="text-[11px] text-slate-500">
+              {summary.unpaid} unpaid · {summary.scheduled} scheduled · {summary.deactivated} off
+            </p>
+          </button>
+
+          <button onClick={() => { setRenewalFilter(renewalFilter === 'due' ? '' : 'due'); setStatusFilter('all') }}
+            className={`card p-3 text-left transition-colors ${
+              renewalFilter === 'due' ? 'border-amber-500/50 bg-amber-500/5' : 'hover:bg-surface-hover/40'}`}>
+            <div className="flex items-center gap-2">
+              <CalendarClock className="w-4 h-4 text-amber-400" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Renewals due</span>
+            </div>
+            <p className="mt-1.5 text-xl font-bold text-amber-300 tabular-nums">{summary.due + summary.urgent}</p>
+            <p className="text-[11px] text-slate-500">
+              within {RENEWAL_WARN_DAYS} days
+              {summary.urgent > 0 && (
+                <span className="text-red-300"> · {summary.urgent} within {RENEWAL_URGENT_DAYS}</span>
+              )}
+            </p>
+          </button>
+
+          <button onClick={() => { setRenewalFilter(renewalFilter === 'expired' ? '' : 'expired'); setStatusFilter('all') }}
+            className={`card p-3 text-left transition-colors ${
+              renewalFilter === 'expired' ? 'border-red-500/50 bg-red-500/5' : 'hover:bg-surface-hover/40'}`}>
+            <div className="flex items-center gap-2">
+              <XCircle className="w-4 h-4 text-red-400" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Expired</span>
+            </div>
+            <p className="mt-1.5 text-xl font-bold text-red-300 tabular-nums">{summary.expired}</p>
+            <p className="text-[11px] text-slate-500">
+              {moneyLine(summary.expiredValue)}
+              {summary.renewed > 0 && <span className="text-slate-600"> · {summary.renewed} renewed</span>}
+            </p>
+          </button>
+
+          {/* Where each party stands on the subscription agreement they are
+              shown at sign-in. Counted per contact — one party, one answer. */}
+          <div className="card p-3">
+            <div className="flex items-center gap-2">
+              <FileSignature className="w-4 h-4 text-slate-300" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500">Agreement</span>
+            </div>
+            <div className="mt-1.5 flex flex-col gap-1">
+              {agreementsOff && <p className="text-[11px] text-amber-300/80">not installed</p>}
+              {!agreementsOff && ['agreed', 'pending', 'rejected'].map(st => (
+                <button key={st} onClick={() => setAgreeFilter(agreeFilter === st ? '' : st)}
+                  className={`flex items-center justify-between gap-2 rounded px-1.5 py-0.5 text-[11px] border transition-colors ${
+                    agreeFilter === st ? AGREEMENT_STATUS[st].cls : 'border-transparent text-slate-500 hover:bg-surface-hover'}`}>
+                  <span>{AGREEMENT_STATUS[st].label}</span>
+                  <span className="tabular-nums font-semibold">{agreeCounts[st]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="px-2.5 py-1 rounded-lg border bg-green-500/10 text-green-300 border-green-500/30">
+            {summary.active} active
+          </span>
+          <span className="px-2.5 py-1 rounded-lg border bg-amber-500/10 text-amber-300 border-amber-500/30">
+            {summary.due + summary.urgent} due for renewal
+          </span>
+          <span className="px-2.5 py-1 rounded-lg border bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30">
+            {summary.unpaid} unpaid
+          </span>
+          <span className="px-2.5 py-1 rounded-lg border bg-red-500/10 text-red-300 border-red-500/30">
+            {summary.expired} expired
+          </span>
           <span className="ml-auto text-[11px] text-slate-500">View only — subscriptions are managed by the super admin.</span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -239,13 +396,35 @@ export default function SubscriptionsPage() {
             </button>
           ))}
         </div>
-        {(search || statusFilter !== 'all' || partyFilter !== 'all') && (
-          <button onClick={() => { setSearch(''); setStatusFilter('all'); setPartyFilter('all') }}
+        {renewalFilter && (
+          <span className={`px-2.5 py-1 rounded-lg text-xs font-medium border ${RENEWAL_STAGES[renewalFilter].cls}`}>
+            {renewalFilter === 'due'    ? `Renewing within ${RENEWAL_WARN_DAYS} days`
+              : renewalFilter === 'urgent' ? `Renewing within ${RENEWAL_URGENT_DAYS} days`
+              : 'Expired, not renewed'}
+          </span>
+        )}
+        {agreeFilter && (
+          <span className={`px-2.5 py-1 rounded-lg text-xs font-medium border ${AGREEMENT_STATUS[agreeFilter].cls}`}>
+            Agreement {AGREEMENT_STATUS[agreeFilter].label.toLowerCase()}
+          </span>
+        )}
+        {(search || statusFilter !== 'all' || partyFilter !== 'all' || renewalFilter || agreeFilter) && (
+          <button onClick={() => { setSearch(''); setStatusFilter('all'); setPartyFilter('all'); setRenewalFilter(''); setAgreeFilter('') }}
             className="btn-ghost py-1.5 px-2.5 text-xs text-slate-400 border border-surface-border">
             <X className="w-3.5 h-3.5" /> Clear
           </button>
         )}
       </div>
+
+      {agreementsOff && isSuperAdmin && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <p className="text-amber-200 text-xs leading-relaxed">
+            The subscription agreement isn’t installed yet — run <span className="font-mono">supabase-fix128.sql</span>.
+            Until then suppliers and partners are not asked to accept it, and no agreement status is recorded.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
@@ -259,32 +438,69 @@ export default function SubscriptionsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Supplier / Partner', 'Description', 'Start', 'End', 'Amount', 'Payment', 'Status', ...(isSuperAdmin ? [''] : [])].map(h => (
+              {['Supplier / Partner', 'Description', 'Start', 'End', 'Renewal', 'Amount', 'Payment', 'Status', 'Agreement', ...(isSuperAdmin ? [''] : [])].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={COL_COUNT} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No subscriptions found</td></tr>
+              <tr><td colSpan={COL_COUNT} className="px-4 py-10 text-center text-slate-500">No subscriptions found</td></tr>
             ) : filtered.map(r => {
               const st  = subscriptionStatus(r, today)
               const cfg = STATUS_STYLES[st] ?? STATUS_STYLES.deactivated
               const Icon = partyIcon(r.contact)
+              const { stage, days } = stageOf(r)
+              // A subscription that isn't in force today — unpaid, not yet started,
+              // switched off — is not "renewing well"; the countdown is shown plainly
+              // rather than in green, and the Status column carries the real answer.
+              const key = (st !== 'active' && ['ok', 'due', 'urgent'].includes(stage)) ? 'idle' : stage
+              const rn = RENEWAL_STAGES[key]
+              const RnIcon = RENEWAL_ICONS[key]
+              // A period that ran out with nothing to replace it is struck through:
+              // it reads at a glance as history rather than something still owed.
+              const lapsed = stage === 'expired'
+              const strike = lapsed ? 'line-through decoration-red-400/60 text-slate-500' : ''
               return (
-                <tr key={r.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors">
+                <tr key={r.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${
+                  lapsed ? 'bg-red-500/[0.03]' : ''}`}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Icon className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                      <span className="text-slate-100 font-medium">{contactLabel(r.contact)}</span>
+                      <span className={`font-medium ${lapsed ? strike : 'text-slate-100'}`}>{contactLabel(r.contact)}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs max-w-[16rem] truncate">{r.description || '—'}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{r.start_date}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{r.end_date}</td>
-                  <td className="px-4 py-3 text-slate-200 tabular-nums whitespace-nowrap">{fmtMoney(r.amount, r.currency)}</td>
+                  <td className="px-4 py-3 max-w-[16rem]">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-slate-400 text-xs truncate ${strike}`}>{r.description || '—'}</span>
+                      {isTrialSubscription(r) && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-brand-500/30 bg-brand-500/10 text-brand-300 whitespace-nowrap flex-shrink-0"
+                          title={`Issued automatically when the contact was created — ${TRIAL_DAYS} free days`}>
+                          free
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className={`px-4 py-3 text-slate-400 text-xs whitespace-nowrap ${strike}`}>{r.start_date}</td>
+                  <td className={`px-4 py-3 text-xs whitespace-nowrap ${lapsed ? strike : 'text-slate-400'}`}>{r.end_date}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-lg px-2 py-1 ${rn.cls}`}
+                      title={key === 'expired' ? `Expired — ended ${r.end_date}, not renewed`
+                        : key === 'renewed' ? 'This period ended, but a newer subscription covers them'
+                        : key === 'urgent'  ? `Renew now — ${daysLeftLabel(days)} left`
+                        : key === 'due'     ? `Renewal coming up — ${daysLeftLabel(days)} left`
+                        : key === 'idle'    ? `${daysLeftLabel(days)} left, but this subscription isn’t in force`
+                        : key === 'ok'      ? `${daysLeftLabel(days)} left`
+                        : 'No end date set'}>
+                      <RnIcon className={`w-3.5 h-3.5 flex-shrink-0 ${key === 'urgent' ? 'animate-pulse' : ''}`} />
+                      {['expired', 'renewed', 'unknown'].includes(key)
+                        ? rn.label
+                        : <span className="tabular-nums">{daysLeftLabel(days)}</span>}
+                    </span>
+                  </td>
+                  <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
                   <td className="px-4 py-3">
                     {isSuperAdmin ? (
                       <button onClick={() => patch(r, { is_paid: !r.is_paid, is_active: r.is_paid ? false : r.is_active })}
@@ -308,6 +524,25 @@ export default function SubscriptionsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${cfg.cls}`}>{cfg.label}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      if (agreementsOff) return <span className="text-slate-600 text-[11px]">—</span>
+                      const ag = agreementOf(r)
+                      const ast = agreementStatusOf(r)
+                      const cls = AGREEMENT_STATUS[ast]?.cls ?? AGREEMENT_STATUS.pending.cls
+                      const when = ag?.responded_at ? String(ag.responded_at).slice(0, 10) : ''
+                      return (
+                        <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${cls}`}
+                          title={ag
+                            ? [`${AGREEMENT_STATUS[ast].label} on ${when}`,
+                               ag.responded_name ? `by ${ag.responded_name}` : '',
+                               ag.note ? `“${ag.note}”` : ''].filter(Boolean).join(' · ')
+                            : 'Not answered yet — they see the agreement next time they sign in'}>
+                          {AGREEMENT_STATUS[ast].label}
+                        </span>
+                      )
+                    })()}
                   </td>
                   {isSuperAdmin && (
                     <td className="px-4 py-3">
@@ -333,6 +568,16 @@ export default function SubscriptionsPage() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* What the four renewal icons mean — stated once, under the list. */}
+      <div className="flex items-center gap-4 flex-wrap text-[11px] text-slate-500">
+        <span className="text-slate-600">Renewal:</span>
+        <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> in date</span>
+        <span className="inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 text-amber-400" /> renew within {RENEWAL_WARN_DAYS} days</span>
+        <span className="inline-flex items-center gap-1.5"><AlertOctagon className="w-3.5 h-3.5 text-red-400" /> renew within {RENEWAL_URGENT_DAYS} days</span>
+        <span className="inline-flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5 text-red-400" /> <span className="line-through decoration-red-400/60">expired, not renewed</span></span>
+        <span className="inline-flex items-center gap-1.5"><RefreshCw className="w-3.5 h-3.5 text-slate-400" /> ended, already renewed</span>
       </div>
 
       {/* ── Add / edit ─────────────────────────────────────────── */}

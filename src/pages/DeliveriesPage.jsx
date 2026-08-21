@@ -12,6 +12,7 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
+import { ensureTrialSubscription } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
 import { buildOrderGroups, defaultOpenGroup } from '../lib/orderGroups'
 import {
@@ -19,6 +20,7 @@ import {
   isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
 } from '../lib/subAccounts'
 import { orderTouchesInactive, visibleContacts } from '../lib/contactVisibility'
+import { currencyWarnings, DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import SearchMultiSelect from '../components/SearchMultiSelect'
@@ -153,7 +155,7 @@ const EMPTY_CUSTOMER_ITEM = { parcel_description: '', quantity: 1, unit_price: 0
 
 // Data-integrity checks for the daily-orders "Check orders" audit popup. Returns a
 // list of human-readable warnings for one order (empty = no issues).
-function orderWarnings(o) {
+function orderWarnings(o, currencyLimits) {
   const w = []
   if (isDeactivated(o)) return w                         // cancelled/failed: not audited
   const story     = isStoryOrder(o)                      // no delivery concept
@@ -208,6 +210,10 @@ function orderWarnings(o) {
     if (!delivered) parts.push(`delivery status is “${o?.delivery_status || '—'}” (not Delivered)`)
     w.push(`Money fully collected but ${parts.join(' and ')}`)
   }
+  // An amount typed against the wrong currency — the daily audit should catch
+  // it while the order is still fresh, not months later on the report.
+  w.push(...currencyWarnings(o, currencyLimits))
+
   return w
 }
 
@@ -1250,13 +1256,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Orders in the current (filtered) list that have data-integrity issues, for the
   // "Check orders" audit popup.
   const auditRows = useMemo(() => {
+    // What counts as a suspect amount is the company's own rule, set in App Settings.
+    const currencyLimits = { ...DEFAULT_CURRENCY_LIMITS, ...(appSettings?.currencyLimits || {}) }
     const rows = []
     for (const o of filtered) {
-      const warnings = orderWarnings(o)
+      const warnings = orderWarnings(o, currencyLimits)
       if (warnings.length) rows.push({ o, warnings })
     }
     return rows
-  }, [filtered])
+  }, [filtered, appSettings?.currencyLimits])
 
   // Ads whose start time has arrived but aren't activated yet — the app reminds the
   // user to start them. Excludes already-confirmed, expired, and session-ignored ads.
@@ -1731,6 +1739,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       'id,first_name,last_name,mobile,whatsapp_number,email,city,address,account_number,contact_type,contact_types,entity_type,company_name,credit_debit_allowed',
     )
     if (e) { setCustomerError(e.message); setSavingCustomer(false); return }
+
+    // A partner or supplier added from here gets the same free introductory
+    // subscription as one added from the Contacts page — otherwise where the
+    // contact was created would decide whether they can sign in.
+    const trial = await ensureTrialSubscription(data.id, [newContactType], {
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+    })
+    if (trial.error) console.warn('Could not issue the free subscription:', trial.error)
 
     const addrErr = await saveContactAddresses({
       contactId: data.id, addresses: custAddresses, origIds: [],

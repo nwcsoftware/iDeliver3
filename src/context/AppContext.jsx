@@ -73,6 +73,18 @@ const DEFAULT_APP_SETTINGS = {
   // touch a driver's (or another user's) collected payment. When false, anyone
   // can edit/delete any payment.
   protectOthersPayments: false,
+  /* Currency sanity limits, per currency (fix: Currency Check).
+
+     An amount below `min` or above `max` for its currency is flagged as
+     probably typed against the wrong one — USD and LBP being three orders of
+     magnitude apart. 0 (or blank) switches that side off, so a currency can be
+     bounded on one side only, which is the usual case: LBP has a floor, USD a
+     ceiling. Global, because it is an operational rule rather than a taste. */
+  currencyLimits: {
+    USD: { min: 0,     max: 2000 },
+    LBP: { min: 50000, max: 0 },
+    EUR: { min: 0,     max: 2000 },
+  },
 }
 function readAppSettings() {
   try {
@@ -87,7 +99,7 @@ function readAppSettings() {
 // server-side (app_global_settings) and mirrored down to every client in
 // realtime, overriding the local copy. All other keys stay per-device.
 const GLOBAL_SETTINGS_ID  = 'global'
-const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments']
+const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments', 'currencyLimits']
 
 // Normalize a contact row into a driver-shaped object for UI consumption
 function normalizeDriver(c) {

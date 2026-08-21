@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, ClipboardList, Trash2,
+  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, ClipboardList, Trash2, CalendarCheck,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
+import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES, normalizeOptions } from '../components/contacts/ContactFormFields'
 import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
@@ -427,6 +428,19 @@ export default function ContactsPage({ type }) {
       })
     }
 
+    /* A supplier or partner can't sign in without a subscription, so a new one
+       gets the free introductory period automatically. It is a no-op for every
+       other contact type, and for anyone who already has a subscription — so a
+       customer later tagged as a partner picks one up, but nobody gets two. */
+    const trial = await ensureTrialSubscription(contactId, selectedTypes, {
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+    })
+    if (trial.error) {
+      // The contact is saved; the missing subscription is not worth undoing it
+      // over. The super admin can enter one on the Subscriptions page.
+      console.warn('Could not issue the free subscription:', trial.error)
+    }
+
     // Saved successfully → close immediately, then refresh the list in the background.
     setSaving(false); closeModal()
     fetchContacts()
@@ -789,6 +803,21 @@ export default function ContactsPage({ type }) {
                     <UserPlus className="w-4 h-4" /> Create User Profile
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* The free introductory period, announced before it is issued — a 2nd
+                party cannot sign in without a subscription, so this is part of
+                creating them, not a surprise found later. */}
+            {activeTab === 'details' && modal === 'add' && loginRole && (
+              <div className="border border-green-500/30 bg-green-500/5 rounded-lg p-3 flex items-start gap-2.5">
+                <CalendarCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <span className="text-green-300 font-medium">Free {TRIAL_DAYS}-day subscription.</span>{' '}
+                  Saving this {loginRole} issues one automatically, starting today, so they can sign in
+                  right away. Renewals after that are entered by the super admin under
+                  <span className="text-slate-300"> Settings → Subscriptions</span>.
+                </p>
               </div>
             )}
 

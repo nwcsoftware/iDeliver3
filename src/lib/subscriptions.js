@@ -232,3 +232,176 @@ export function subscriptionNotice(rows, today = todayStr(), withinDays = SUBSCR
   if (days == null || days > withinDays) return null
   return { row: current, days, expired: days < 0, pendingRenewal, none: false }
 }
+
+/* ── renewal stage (the four steps shown in the Subscriptions list) ────────
+
+   The status column answers "does this let them in today?"; this answers "when
+   does it need renewing?", which is a different question and the one the super
+   admin plans around. Four steps, by days left on the end date:
+
+     ok       more than 30 days  — nothing to do
+     due      30 days or less    — needs attention
+     urgent   15 days or less    — needs attention now
+     expired  the date has passed and nothing has replaced it
+
+   A row whose date has passed but which a later paid-and-active period covers
+   is 'renewed', not expired: the money came in, this one simply had its turn.
+   That distinction is why the list can strike out only what really lapsed. */
+
+export const RENEWAL_WARN_DAYS   = 30
+export const RENEWAL_URGENT_DAYS = 15
+
+export const RENEWAL_STAGES = {
+  ok:      { label: 'Active',   cls: 'text-green-300  bg-green-500/10  border-green-500/30' },
+  due:     { label: 'Due soon', cls: 'text-amber-300  bg-amber-500/10  border-amber-500/30' },
+  urgent:  { label: 'Urgent',   cls: 'text-red-300    bg-red-500/10    border-red-500/30' },
+  expired: { label: 'Expired',  cls: 'text-red-400    bg-red-500/15    border-red-500/40' },
+  renewed: { label: 'Renewed',  cls: 'text-slate-400  bg-slate-500/10  border-slate-500/30' },
+  idle:    { label: 'Not in force', cls: 'text-slate-400 bg-slate-500/10 border-slate-500/30' },
+  unknown: { label: 'No end date', cls: 'text-slate-500 bg-slate-500/10 border-slate-500/20' },
+}
+
+/* Contacts that hold cover reaching today or beyond — i.e. someone whose older
+   periods have been renewed rather than left to lapse. Paid AND active only,
+   because that is what actually lets them sign in. */
+export function coveredContactIds(rows = [], today = todayStr()) {
+  const ids = new Set()
+  for (const r of rows) {
+    if (r?.is_paid && r?.is_active && r?.end_date && r.end_date >= today) ids.add(r.contact_id)
+  }
+  return ids
+}
+
+/* One row's renewal stage. `covered` = this contact has later cover in place. */
+export function renewalStage(row, today = todayStr(), covered = false) {
+  const days = daysUntilDate(row?.end_date, today)
+  if (days == null) return { stage: 'unknown', days: null }
+  if (days < 0)                      return { stage: covered ? 'renewed' : 'expired', days }
+  if (days <= RENEWAL_URGENT_DAYS)   return { stage: 'urgent',  days }
+  if (days <= RENEWAL_WARN_DAYS)     return { stage: 'due',     days }
+  return { stage: 'ok', days }
+}
+
+/* "12 days", "today", "3 days ago" — the days column reads as a sentence. */
+export function daysLeftLabel(days) {
+  if (days == null) return '—'
+  if (days === 0)   return 'ends today'
+  if (days < 0)     return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago`
+  return `${days} day${days === 1 ? '' : 's'}`
+}
+
+/* Everything the super admin's summary strip shows, in one pass over the list.
+
+   Money is kept per currency and never added across them: a total that mixed
+   USD and LBP would be a number with no meaning. */
+export function subscriptionsSummary(rows = [], today = todayStr()) {
+  const covered = coveredContactIds(rows, today)
+  const out = {
+    total: rows.length,
+    active: 0, unpaid: 0, scheduled: 0, expired: 0, deactivated: 0,
+    renewed: 0,                              // ran out, but a newer period covers them
+    due: 0, urgent: 0,                       // renewals coming up (still in date)
+    value: {}, activeValue: {}, expiredValue: {},   // { USD: n, LBP: n, … }
+    parties: new Set(),
+  }
+  const add = (bucket, cur, amt) => {
+    const c = String(cur || 'USD').toUpperCase()
+    bucket[c] = (bucket[c] || 0) + (Number(amt) || 0)
+  }
+  for (const r of rows) {
+    const st = subscriptionStatus(r, today)
+    const { stage } = renewalStage(r, today, covered.has(r.contact_id))
+    if (r.contact_id) out.parties.add(r.contact_id)
+
+    // 'expired' counts what actually lapsed. A period that ended and was then
+    // renewed is history, not a hole — counting it as expired would keep the
+    // figure climbing for customers who never missed a day.
+    if (st === 'expired') { if (stage === 'renewed') out.renewed += 1; else out.expired += 1 }
+    else if (out[st] != null) out[st] += 1
+
+    add(out.value, r.currency, r.amount)
+    if (st === 'active')                            add(out.activeValue,  r.currency, r.amount)
+    if (st === 'expired' && stage === 'expired')    add(out.expiredValue, r.currency, r.amount)
+
+    // Only a live subscription can be "coming up for renewal".
+    if (st === 'active') {
+      if (stage === 'due')    out.due    += 1
+      if (stage === 'urgent') out.urgent += 1
+    }
+  }
+  out.partyCount = out.parties.size
+  return out
+}
+
+/* ── the free introductory subscription ────────────────────────────────────
+
+   A supplier or partner cannot sign in without a subscription, so a brand-new
+   one would be created and immediately locked out until the super admin got
+   round to entering a period by hand. Instead the system issues a free 90-day
+   subscription the moment the contact is created: paid (there is nothing to
+   pay), activated, starting today.
+
+   After that it is manual — only the super admin renews it, on the
+   Subscriptions page, which is where the countdown and the renewal warnings
+   already live.
+
+   Deliberately narrow: it fires only for supplier/partner contacts, and only
+   when that contact has NO subscription row at all, so it can never issue a
+   second trial, extend an expired one, or overwrite a paid period. That makes
+   it safe to call after any contact save. */
+
+export const TRIAL_DAYS = 90
+export const TRIAL_DESCRIPTION = `Free ${TRIAL_DAYS}-day introductory subscription`
+
+/* YYYY-MM-DD, `days` after the given day. */
+export function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00`)
+  if (isNaN(d)) return dateStr
+  d.setDate(d.getDate() + days)
+  return todayStr(d)
+}
+
+export const isTrialSubscription = (row) =>
+  Number(row?.amount) === 0 && /introductory|trial/i.test(String(row?.description || ''))
+
+/* Give a newly created 2nd party their free period. Returns
+   { created, row, error }; `error` is for logging only — the contact itself is
+   already saved and must not be rolled back over this. */
+export async function ensureTrialSubscription(contactId, contactTypes = [], { companyId = null, userId = null } = {}) {
+  const types = Array.isArray(contactTypes) ? contactTypes : [contactTypes]
+  const isSecondParty = types.some(t => t === 'supplier' || t === 'partner')
+  if (!contactId || !isSecondParty) return { created: false, row: null, error: null }
+
+  try {
+    // Anything already on file — paid, expired or awaiting payment — means this
+    // contact has been dealt with; the trial is for genuinely new parties only.
+    const { data: existing, error: readErr } = await supabase
+      .from('subscriptions').select('id').eq('contact_id', contactId).limit(1)
+    if (readErr) {
+      const missing = /subscriptions/i.test(readErr.message) && /not exist|schema cache/i.test(readErr.message)
+      return { created: false, row: null, error: missing ? null : readErr.message }
+    }
+    if (existing?.length) return { created: false, row: null, error: null }
+
+    const start = todayStr()
+    const { data, error } = await supabase.from('subscriptions').insert([{
+      contact_id:   contactId,
+      description:  TRIAL_DESCRIPTION,
+      start_date:   start,
+      end_date:     addDays(start, TRIAL_DAYS),
+      amount:       0,
+      currency:     'USD',
+      is_paid:      true,                      // nothing to collect — it is free
+      paid_at:      new Date().toISOString(),
+      paid_by_note: 'Issued automatically when the contact was created',
+      is_active:    true,                      // they can sign in straight away
+      ...(companyId ? { company_id: companyId } : {}),
+      created_by:   userId,
+    }]).select('*').single()
+
+    if (error) return { created: false, row: null, error: error.message }
+    return { created: true, row: data, error: null }
+  } catch (e) {
+    return { created: false, row: null, error: e?.message || 'Could not issue the trial subscription.' }
+  }
+}

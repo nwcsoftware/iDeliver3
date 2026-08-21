@@ -41,6 +41,7 @@ const pageTitles = {
   '/supplier-settlements': 'Supplier Settlements',
   '/party-statements': 'Shop Statements',
   '/inventory': 'Inventory',
+  '/currency-check': 'Currency Check',
 }
 
 const roleLabel = {

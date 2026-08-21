@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -45,6 +46,8 @@ const navGroups = [
       { to: '/cashier-box',      icon: Wallet,     label: 'Cashier Box' },
       { to: '/credit-customers', icon: CreditCard, label: 'Credit Customers' },
       { to: '/retail-invoices',  icon: Receipt,    label: 'Retail Invoices' },
+      // Amounts that look like they were typed against the wrong currency.
+      { to: '/currency-check',   icon: ArrowRightLeft, label: 'Currency Check' },
     ],
   },
   {

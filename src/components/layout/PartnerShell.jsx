@@ -7,6 +7,7 @@ import Header from './Header'
 import BroadcastPopup from '../messages/BroadcastPopup'
 import MessagesIndicator from '../messages/MessagesIndicator'
 import { checkSubscriptionAccess, accessDeniedMessage } from '../../lib/subscriptions'
+import SubscriptionAgreementGate from '../subscriptions/SubscriptionAgreementGate'
 import DeliveriesPage from '../../pages/DeliveriesPage'
 import ShopInventoryPage from '../../pages/ShopInventoryPage'
 import MySubscriptionPage from '../../pages/MySubscriptionPage'
@@ -163,7 +164,10 @@ export default function PartnerShell() {
     )
   }
 
+  /* The agreement stands in front of the portal — and in front of AppProvider,
+     so nothing is fetched for someone who hasn't accepted yet. */
   return (
+    <SubscriptionAgreementGate contactId={partyContactId} companyId={currentUser?.company_id ?? null}>
     <AppProvider>
       <OrderQuickViewProvider>
       <HashRouter>
@@ -209,5 +213,6 @@ export default function PartnerShell() {
       </HashRouter>
       </OrderQuickViewProvider>
     </AppProvider>
+    </SubscriptionAgreementGate>
   )
 }

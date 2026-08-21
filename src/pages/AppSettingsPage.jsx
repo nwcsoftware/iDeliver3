@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
@@ -9,6 +10,24 @@ export default function AppSettingsPage() {
   const { appSettings, updateAppSettings } = useApp()
   const { hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
+  const canSetLimits = hasRole('super_admin', 'admin')
+  const limits = { ...DEFAULT_CURRENCY_LIMITS, ...(appSettings.currencyLimits || {}) }
+
+  /* Currency limits are edited as drafts and committed when the field is left,
+     not on every keystroke: they are a company-wide setting, so typing "2000"
+     would otherwise push 2, 20, 200 and 2000 to every signed-in user in turn.
+     Blank and 0 both mean "no bound" on that side, which is how LBP is set up:
+     checked from below only. */
+  const [limitDraft, setLimitDraft] = useState({})   // { 'USD.max': '2000' }
+
+  const commitLimit = (cur, side, raw) => {
+    setLimitDraft(d => { const n = { ...d }; delete n[`${cur}.${side}`]; return n })
+    const next = Math.max(0, Math.round(Number(raw) || 0))
+    if (next === (Number(limits[cur]?.[side]) || 0)) return          // nothing changed
+    updateAppSettings({
+      currencyLimits: { ...limits, [cur]: { ...(limits[cur] || {}), [side]: next } },
+    })
+  }
 
   // Restriction: lock a local-market invoice once its order is saved (super admin).
   const lockInvoices = appSettings.lockSavedLocalInvoices !== false
@@ -306,6 +325,77 @@ export default function AppSettingsPage() {
               Only the super admin can change this. It is a company-wide policy — it applies to
               <span className="text-slate-400"> every signed-in user on any device or location</span>,
               and takes effect immediately.
+            </p>
+          </div>
+        )}
+
+        {/* ── Currency limits ───────────────────────────────────────────── */}
+        {canSetLimits && (
+          <div className="card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-100">Currency limits</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  What a plausible amount looks like in each currency. An amount below the minimum, or above
+                  the maximum, is flagged on the <span className="text-slate-300">Currency Check</span> page
+                  and in the daily <span className="text-slate-300">Check orders</span> audit as probably
+                  typed against the wrong currency. Nothing is ever blocked or corrected — it is only
+                  pointed at.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-surface-border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-surface-hover/40 border-b border-surface-border">
+                    <th className="text-left px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Currency</th>
+                    <th className="text-left px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Minimum</th>
+                    <th className="text-left px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Maximum</th>
+                    <th className="text-left px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Reads as</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {['USD', 'LBP', 'EUR'].map(cur => {
+                    const min = Number(limits[cur]?.min) || 0
+                    const max = Number(limits[cur]?.max) || 0
+                    return (
+                      <tr key={cur} className="border-b border-surface-border/50 last:border-0">
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-200">{cur}</td>
+                        {['min', 'max'].map(side => {
+                          const key = `${cur}.${side}`
+                          const stored = side === 'min' ? min : max
+                          return (
+                            <td key={side} className="px-4 py-2">
+                              <input type="number" min="0" step="1" className="input py-1.5 text-xs w-36"
+                                placeholder={side === 'min' ? 'no minimum' : 'no maximum'}
+                                value={limitDraft[key] ?? (stored || '')}
+                                onChange={e => setLimitDraft(d => ({ ...d, [key]: e.target.value }))}
+                                onBlur={e => commitLimit(cur, side, e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+                            </td>
+                          )
+                        })}
+                        <td className="px-4 py-2 text-[11px] text-slate-400">
+                          {!min && !max ? <span className="text-slate-600">not checked</span>
+                            : min && max ? `flag under ${min.toLocaleString()} or over ${max.toLocaleString()}`
+                            : min ? `flag under ${min.toLocaleString()}`
+                            : `flag over ${max.toLocaleString()}`}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Leave a box empty for no limit on that side — LBP normally needs only a minimum, USD only a
+              maximum. Zero amounts are never flagged. This is a company-wide rule: it applies to
+              <span className="text-slate-400"> every signed-in user</span>, immediately.
             </p>
           </div>
         )}

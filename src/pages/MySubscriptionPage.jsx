@@ -1,11 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
   CreditCard, CalendarRange, CheckCircle2, Circle, AlertCircle, Loader, Clock,
+  ShieldCheck, ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchSubscriptionsForContact, subscriptionStatus, STATUS_STYLES, daysLeft, todayStr,
 } from '../lib/subscriptions'
+import {
+  fetchAgreement, agreementText, AGREEMENT_STATUS, SUBSCRIPTION_PLANS, PLAN_CURRENCY,
+} from '../lib/subscriptionAgreement'
 
 const dmy = (d) => {
   if (!d) return '—'
@@ -26,11 +30,16 @@ export default function MySubscriptionPage({ partyContactId = null }) {
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
+  const [agreement, setAgreement] = useState(null)   // their answer to the agreement
+  const [showTerms, setShowTerms] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { rows: r, error: e } = await fetchSubscriptionsForContact(contactId)
-    setRows(r); setError(e || ''); setLoading(false)
+    const [{ rows: r, error: e }, ag] = await Promise.all([
+      fetchSubscriptionsForContact(contactId),
+      fetchAgreement(contactId),
+    ])
+    setRows(r); setError(e || ''); setAgreement(ag.row); setLoading(false)
   }, [contactId])
 
   useEffect(() => { load() }, [load])
@@ -137,6 +146,57 @@ export default function MySubscriptionPage({ partyContactId = null }) {
                 Subscriptions are managed by the administration — this page is for your information only.
               </p>
             </div>
+
+            {/* What they accepted, and the fees it commits them to. Kept on the
+                page they already visit for their subscription, so the terms are
+                never something they saw once and can't find again. */}
+            {agreement?.status === 'agreed' && (
+              <div className="card p-5 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0">
+                    <ShieldCheck className="w-4 h-4 text-green-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-100">Subscription agreement accepted</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {agreement.responded_at ? `On ${dmy(String(agreement.responded_at).slice(0, 10))}` : 'Accepted'}
+                      {agreement.responded_name ? ` by ${agreement.responded_name}` : ''}
+                      {agreement.version ? ` · version ${agreement.version}` : ''}
+                    </p>
+                  </div>
+                  <span className={`text-[11px] border rounded px-2 py-0.5 flex-shrink-0 ${AGREEMENT_STATUS.agreed.cls}`}>
+                    {AGREEMENT_STATUS.agreed.label}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                  {SUBSCRIPTION_PLANS.map(pl => (
+                    <span key={pl.key}
+                      className={`px-2 py-1 rounded-lg border ${
+                        pl.key === (agreement.plan || 'basic')
+                          ? 'bg-brand-500/10 text-brand-300 border-brand-500/30'
+                          : 'border-surface-border text-slate-500'}`}>
+                      {pl.name} {Number(pl.key === 'basic' ? agreement.basic_price
+                        : pl.key === 'pro' ? agreement.pro_price
+                        : agreement.pro_max_price) || pl.price} {agreement.currency || PLAN_CURRENCY}/month
+                    </span>
+                  ))}
+                </div>
+
+                <button onClick={() => setShowTerms(o => !o)}
+                  className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200">
+                  <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showTerms ? 'rotate-90' : ''}`} />
+                  {showTerms ? 'Hide the agreement' : 'Read the agreement'}
+                </button>
+                {showTerms && (
+                  <div className="rounded-lg border border-surface-border bg-surface-hover/20 p-4">
+                    <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                      {agreement.agreement_text || agreementText({ trialEndsOn: agreement.trial_ends_on, planKey: agreement.plan })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Previous periods */}
             {others.length > 0 && (
