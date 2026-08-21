@@ -136,7 +136,7 @@ export async function fetchAgreementMap(version = AGREEMENT_VERSION) {
   try {
     const { data, error } = await supabase
       .from('subscription_agreements')
-      .select('contact_id, status, responded_at, responded_name, note, plan, version')
+      .select('*')                 // whole row: the PDF prints what was accepted
       .eq('version', version)
     if (error) return { map: new Map(), missing: tableMissing(error), error: error.message }
     const map = new Map()
@@ -169,3 +169,19 @@ export async function fetchTrialEnd(contactId) {
 }
 
 export const daysToTrialEnd = (endDate) => daysUntilDate(endDate)
+
+/* The subscriber's own details, for the agreement document. Small enough to ask
+   for on its own rather than threading a contact record through the portal. */
+export async function fetchAgreementParty(contactId) {
+  if (!contactId) return null
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, code, company_name, first_name, last_name, mobile')
+      .eq('id', contactId)
+      .maybeSingle()
+    return error ? null : (data ?? null)
+  } catch {
+    return null
+  }
+}

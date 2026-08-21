@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CreditCard, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
   CheckCircle2, Circle, Power, PowerOff, Building, Handshake, CalendarRange,
-  AlertTriangle, AlertOctagon, XCircle, RefreshCw, Users, Wallet, CalendarClock, FileSignature,
+  AlertTriangle, AlertOctagon, XCircle, RefreshCw, Users, Wallet, CalendarClock, FileSignature, FileDown,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -15,6 +15,7 @@ import {
   isTrialSubscription, TRIAL_DAYS,
 } from '../lib/subscriptions'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
+import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const STATUS_FILTERS = [
@@ -532,15 +533,25 @@ export default function SubscriptionsPage() {
                       const ast = agreementStatusOf(r)
                       const cls = AGREEMENT_STATUS[ast]?.cls ?? AGREEMENT_STATUS.pending.cls
                       const when = ag?.responded_at ? String(ag.responded_at).slice(0, 10) : ''
+                      // Clicking it downloads that party's agreement — signed if
+                      // they answered, with signature lines if they haven't.
                       return (
-                        <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${cls}`}
-                          title={ag
-                            ? [`${AGREEMENT_STATUS[ast].label} on ${when}`,
-                               ag.responded_name ? `by ${ag.responded_name}` : '',
-                               ag.note ? `“${ag.note}”` : ''].filter(Boolean).join(' · ')
-                            : 'Not answered yet — they see the agreement next time they sign in'}>
+                        <button
+                          onClick={() => downloadAgreementPdf({
+                            contact: r.contact,
+                            agreement: ag,
+                            trialEnd: isTrialSubscription(r) ? r.end_date : null,
+                          })}
+                          className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap inline-flex items-center gap-1 hover:brightness-125 ${cls}`}
+                          title={[
+                            ag ? `${AGREEMENT_STATUS[ast].label} on ${when}` : 'Not answered yet — they see the agreement next time they sign in',
+                            ag?.responded_name ? `by ${ag.responded_name}` : '',
+                            ag?.note ? `“${ag.note}”` : '',
+                            'Click to download the agreement as a PDF',
+                          ].filter(Boolean).join(' · ')}>
                           {AGREEMENT_STATUS[ast].label}
-                        </span>
+                          <FileDown className="w-3 h-3 opacity-60" />
+                        </button>
                       )
                     })()}
                   </td>

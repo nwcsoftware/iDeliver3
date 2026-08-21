@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
   CreditCard, CalendarRange, CheckCircle2, Circle, AlertCircle, Loader, Clock,
-  ShieldCheck, ChevronRight,
+  ShieldCheck, ChevronRight, FileDown,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -9,7 +9,9 @@ import {
 } from '../lib/subscriptions'
 import {
   fetchAgreement, agreementText, AGREEMENT_STATUS, SUBSCRIPTION_PLANS, PLAN_CURRENCY,
+  fetchAgreementParty,
 } from '../lib/subscriptionAgreement'
+import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
 
 const dmy = (d) => {
   if (!d) return '—'
@@ -31,15 +33,17 @@ export default function MySubscriptionPage({ partyContactId = null }) {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
   const [agreement, setAgreement] = useState(null)   // their answer to the agreement
+  const [party,     setParty]     = useState(null)   // their own details, for the PDF
   const [showTerms, setShowTerms] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ rows: r, error: e }, ag] = await Promise.all([
+    const [{ rows: r, error: e }, ag, who] = await Promise.all([
       fetchSubscriptionsForContact(contactId),
       fetchAgreement(contactId),
+      fetchAgreementParty(contactId),
     ])
-    setRows(r); setError(e || ''); setAgreement(ag.row); setLoading(false)
+    setRows(r); setError(e || ''); setAgreement(ag.row); setParty(who); setLoading(false)
   }, [contactId])
 
   useEffect(() => { load() }, [load])
@@ -183,11 +187,18 @@ export default function MySubscriptionPage({ partyContactId = null }) {
                   ))}
                 </div>
 
-                <button onClick={() => setShowTerms(o => !o)}
-                  className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200">
-                  <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showTerms ? 'rotate-90' : ''}`} />
-                  {showTerms ? 'Hide the agreement' : 'Read the agreement'}
-                </button>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button onClick={() => setShowTerms(o => !o)}
+                    className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200">
+                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showTerms ? 'rotate-90' : ''}`} />
+                    {showTerms ? 'Hide the agreement' : 'Read the agreement'}
+                  </button>
+                  {/* Their own copy, as accepted — the prices and dates of that day. */}
+                  <button onClick={() => downloadAgreementPdf({ contact: party, agreement })}
+                    className="flex items-center gap-1.5 text-[11px] text-brand-300 hover:text-brand-200">
+                    <FileDown className="w-3.5 h-3.5" /> Download PDF
+                  </button>
+                </div>
                 {showTerms && (
                   <div className="rounded-lg border border-surface-border bg-surface-hover/20 p-4">
                     <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">

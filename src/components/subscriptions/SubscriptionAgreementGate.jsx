@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
-  ShieldCheck, Check, X, Loader, AlertCircle, CalendarClock, FileText, ArrowLeft,
+  ShieldCheck, Check, X, Loader, AlertCircle, CalendarClock, FileText, ArrowLeft, FileDown,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { getDeviceName } from '../../lib/device'
 import {
   SUBSCRIPTION_PLANS, PLAN_CURRENCY, DEFAULT_PLAN, TRIAL_PLAN_DAYS, planByKey,
   AGREEMENT_VERSION, agreementText, fetchAgreement, saveAgreement, fetchTrialEnd,
-  daysToTrialEnd,
+  daysToTrialEnd, fetchAgreementParty,
 } from '../../lib/subscriptionAgreement'
+import { downloadAgreementPdf } from '../../lib/subscriptionAgreementPdf'
 
 /* The subscription agreement, shown to a supplier / partner before their portal
    opens (supabase-fix128.sql).
@@ -39,17 +40,20 @@ export default function SubscriptionAgreementGate({ contactId, companyId = null,
   const [error,   setError]   = useState('')
   const [confirmDecline, setConfirmDecline] = useState(false)
   const [reason,  setReason]  = useState('')
+  const [party,   setParty]   = useState(null)   // the subscriber, for the PDF
 
   const planKey = DEFAULT_PLAN
   const plan    = planByKey(planKey)
 
   const load = useCallback(async () => {
     if (!contactId) { setState('open'); return }          // unlinked login: nothing to agree to
-    const [{ status, missing, error: err }, end] = await Promise.all([
+    const [{ status, missing, error: err }, end, who] = await Promise.all([
       fetchAgreement(contactId),
       fetchTrialEnd(contactId),
+      fetchAgreementParty(contactId),
     ])
     setTrialEnd(end)
+    setParty(who)
     // Missing table or a failed lookup → let them work.
     if (missing || err)          { setState('open'); return }
     if (status === 'agreed')     { setState('open'); return }
@@ -224,10 +228,18 @@ export default function SubscriptionAgreementGate({ contactId, companyId = null,
                 </label>
 
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
-                  <button onClick={() => setConfirmDecline(true)} disabled={saving}
-                    className="btn-ghost px-4 py-2 text-sm border border-surface-border text-slate-400 hover:text-red-300">
-                    I do not agree
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setConfirmDecline(true)} disabled={saving}
+                      className="btn-ghost px-4 py-2 text-sm border border-surface-border text-slate-400 hover:text-red-300">
+                      I do not agree
+                    </button>
+                    {/* A copy to keep, or to sign on paper — theirs before they answer. */}
+                    <button onClick={() => downloadAgreementPdf({ contact: party, agreement: null, trialEnd })}
+                      className="btn-ghost px-3 py-2 text-sm border border-surface-border text-slate-400 hover:text-slate-200"
+                      title="Download this agreement as a PDF">
+                      <FileDown className="w-4 h-4" /> PDF
+                    </button>
+                  </div>
                   <button onClick={() => answer('agreed')} disabled={!checked || saving}
                     className="btn-primary px-5 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
                     {saving ? <><Loader className="w-4 h-4 animate-spin" /> Saving…</>
