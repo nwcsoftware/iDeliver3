@@ -18,6 +18,7 @@ import {
   resolveSubAccount, subAccountBalance, checkSubAccountCharge,
   isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
 } from '../lib/subAccounts'
+import { orderTouchesInactive, visibleContacts } from '../lib/contactVisibility'
 import { orderTotalsByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderAmountBreakdown, AmountSummaryContent, placeHoverPanel, fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import MobileInput from '../components/MobileInput'
 import SearchMultiSelect from '../components/SearchMultiSelect'
@@ -735,7 +736,7 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 
 export default function DeliveriesPage({ closed = false, partyContactId = null }) {
   const { orders, drivers, zones, refreshOrder, ordersError, loading, COMPANY_ID, showSummary, appSettings,
-          loadFullOrderHistory, ordersFullyLoaded } = useApp()
+          loadFullOrderHistory, ordersFullyLoaded, inactiveContactIds } = useApp()
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
   // Minutes before an order's scheduled start time at which its row turns red (0 = off).
@@ -1039,14 +1040,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // not restricted to suppliers; it lists all contacts (search by name /
       // mobile / contact code).
       fetchAllRows(() => supabase.from('contacts')
-        .select('id,first_name,last_name,mobile,company_name,contact_type,contact_types,entity_type,code,account_number')
+        .select('id,first_name,last_name,mobile,company_name,contact_type,contact_types,entity_type,code,account_number,is_active')
         .order('first_name')
         .order('id')),
       supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
       typesQ,
       // Package providers — contacts categorised as "Online".
       supabase.from('contacts')
-        .select('id,first_name,last_name,company_name,contact_type,account_number,code')
+        .select('id,first_name,last_name,company_name,contact_type,account_number,code,is_active')
         .eq('contact_category', 'Online'),
       lookupQ('business_types'),
       lookupQ('contact_categories'),
@@ -1056,7 +1057,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // customer via a fallback to o.customer, so a since-deactivated customer stays
     // visible on that order. Treat null/undefined is_active as active.
     setCustomers((custs ?? []).filter(c => c.is_active !== false))
-    setAllContacts(allc ?? [])
+    setAllContacts((allc ?? []).filter(c => c.is_active !== false))
     // Account numbers + credit settlements, needed to enforce each account's
     // limit and expiry when an order is closed. Paged for the same reason the
     // contact pickers are: both are past PostgREST's 1000-row cap.
@@ -1071,7 +1072,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setCreditPayments(pays ?? [])
     setProducts(prods  ?? [])
     setOrderTypes(types ?? [])
-    setProviders(provs ?? [])
+    // Package providers and retail shops: same rule as the customer picker.
+    setProviders((provs ?? []).filter(c => c.is_active !== false))
     setBusinessTypes((bt ?? []).map(r => r.name))
     setContactCategories((cc ?? []).map(r => r.name))
   }, [COMPANY_ID])
@@ -1198,12 +1200,21 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   const filtered = orders.filter(o => {
+    /* A retired contact is hidden from everyone but the super admin — and so is
+       its work. Leaving the orders on the list while the contact vanished from
+       the pickers would be the worst of both: rows nobody can act on properly. */
+    if (!isSuperAdmin && orderTouchesInactive(o, inactiveContactIds)) return false
     // 2nd-party view: restrict to orders that reference this contact (their
     // packages or retail invoices). Empty while ownership is still loading.
     if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(o.id))) return false
     // Closed orders live on their own page; the daily Orders page excludes them.
     const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
     const q = search.toLowerCase()
+    // Numbers are shown grouped (account "6089 0774 4864", phone "+961 70 334
+    // 868") but stored unspaced, so a search is matched twice: as typed, and
+    // with every non-digit stripped from both sides. Typing what is on the
+    // screen then finds the row, however it was punctuated.
+    const qDigits = q.replace(/\D/g, '')
     const matchSearch = !search || [
       o.order_number,
       o.recipient_name,
@@ -1214,7 +1225,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       o.main_account,
       o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
       o.customer?.account_number,
-    ].some(v => String(v ?? '').toLowerCase().includes(q))
+      o.customer?.code,             // CST-000123 / PTN-000004, shown in their column
+      o.customer?.mobile,
+    ].some(v => {
+      const text = String(v ?? '').toLowerCase()
+      if (text.includes(q)) return true
+      if (qDigits.length < 3) return false            // "70" would match half the list
+      const digits = text.replace(/\D/g, '')
+      return digits.length > 0 && digits.includes(qDigits)
+    })
     return matchClosed && matchSearch
       && (confirmFilter === 'all' || (confirmFilter === 'confirmed' ? isConfirmed(o) : !isConfirmed(o)))
       && (filter === 'all' || normalizeStatus(o.status) === filter)
@@ -3528,6 +3547,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       </p>
                       {o.customer.account_number && (
                         <p className="text-slate-500 text-[11px] font-mono tracking-wider">{formatAccountNumber(o.customer.account_number)}</p>
+                      )}
+                      {/* The contact code (CST-000123, PTN-000004) under the
+                          account number — the reference people quote on
+                          statements and over the phone. */}
+                      {o.customer.code && (
+                        <p className="text-slate-500 text-[11px] font-mono tracking-wider">{o.customer.code}</p>
                       )}
                     </div>
                   ) : <span className="text-slate-600">—</span>}

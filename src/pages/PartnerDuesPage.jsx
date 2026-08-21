@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Handshake, Search, FilterX, HandCoins, X, AlertCircle, Plus, Trash2, CheckCircle2 } from 'lucide-react'
+import { Handshake, Search, FilterX, HandCoins, X, AlertCircle, Plus, Trash2, CheckCircle2, FileDown } from 'lucide-react'
+import { jsPDF } from 'jspdf'
+import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -25,7 +27,7 @@ function fmtMoney(value, currency) {
 }
 
 export default function PartnerDuesPage() {
-  const { orders, loading, COMPANY_ID, loadFullOrderHistory } = useApp()
+  const { orders, loading, COMPANY_ID, loadFullOrderHistory, inactiveContactIds } = useApp()
   const { currentUser, hasRole } = useAuth()
 
   // Partner balances span the whole history, so pull every order (beyond the window).
@@ -35,6 +37,7 @@ export default function PartnerDuesPage() {
   // Only the super admin may delete a settled payout — it reverses a recorded
   // payment, so regular admins can't undo it.
   const canDeletePayout = hasRole('super_admin')
+  const canSeeRetired   = hasRole('super_admin')
 
   const [payouts,    setPayouts]    = useState([])
   const [payLoading, setPayLoading] = useState(true)
@@ -71,6 +74,26 @@ export default function PartnerDuesPage() {
 
   useEffect(() => { fetchPayouts() }, [fetchPayouts])
 
+  /* Account numbers, by contact id.
+
+     The dues rows are derived from the order embeds, which carry only the id,
+     code and name — so searching by the account number found nothing, even
+     though it is the number partners quote from their statements. One small
+     query beats widening the orders select, which every page pays for. */
+  const [accountNos, setAccountNos] = useState({})
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      let q = supabase.from('contacts')
+        .select('id, account_number')
+        .overlaps('contact_types', ['partner', 'supplier'])
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data } = await q
+      if (alive && data) setAccountNos(Object.fromEntries(data.map(c => [c.id, c.account_number || ''])))
+    })()
+    return () => { alive = false }
+  }, [COMPANY_ID])
+
   const list = useMemo(
     () => buildPartnerDues({ orders, payouts, from: dateFrom, to: dateTo }),
     [orders, payouts, dateFrom, dateTo],
@@ -79,11 +102,16 @@ export default function PartnerDuesPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return list.filter(p => {
-      if (q && !p.name.toLowerCase().includes(q) && !String(p.code ?? '').toLowerCase().includes(q)) return false
+      // A retired partner is invisible to everyone but the super admin, here as
+      // everywhere else. Its dues are settled before it can be retired at all.
+      if (!canSeeRetired && inactiveContactIds?.has(p.id)) return false
+      const hit = !q || [p.name, p.code, accountNos[p.id]]
+        .some(v => String(v ?? '').toLowerCase().includes(q))
+      if (!hit) return false
       if (onlyDue && !p.curs.some(c => round2(p.cur[c].dues) !== 0)) return false
       return true
     })
-  }, [list, search, onlyDue])
+  }, [list, search, onlyDue, accountNos, inactiveContactIds, canSeeRetired])
 
   // Count of closed orders (within the date range) that carry partner packages —
   // i.e. the orders the totals below are built from.
@@ -109,6 +137,74 @@ export default function PartnerDuesPage() {
     return rows.map(c => (
       <div key={c} className={`tabular-nums whitespace-nowrap ${cls}`}>{fmtMoney(p.cur[c][key], c)}</div>
     ))
+  }
+
+  /* ── PDF — exactly what is on the screen, filters and all ─────────────
+     A partner asking "what do you owe me?" wants the same figures the office
+     is looking at, so this exports the filtered rows rather than re-querying:
+     what you see is what they get. */
+  function exportPdf() {
+    const now = new Date()
+    const marginX = 12
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    doc.setFontSize(14); doc.setTextColor(20)
+    doc.text('Partner Dues', marginX, 16)
+
+    // The period and filters, spelled out — a report without them invites the
+    // question "for which dates?" every single time.
+    const bits = []
+    bits.push(dateFrom || dateTo
+      ? `Period: ${dateFrom || 'the beginning'} → ${dateTo || 'today'}`
+      : 'Period: all time')
+    if (search)  bits.push(`Search: "${search}"`)
+    if (onlyDue) bits.push('Outstanding only')
+    doc.setFontSize(9); doc.setTextColor(110)
+    doc.text(bits.join('   |   '), marginX, 22)
+    doc.text(`Generated ${now.toLocaleString()} · ${filtered.length} partner${filtered.length === 1 ? '' : 's'}`
+      + ` · ${orderCount} closed order${orderCount === 1 ? '' : 's'} with packages`, marginX, 27)
+
+    // One line per currency inside a cell, the way the table shows it.
+    const cell = (p, key) => {
+      const rows = p.curs.filter(c => round2(p.cur[c][key]) !== 0)
+      return rows.length ? rows.map(c => fmtMoney(p.cur[c][key], c)).join('\n') : '—'
+    }
+
+    autoTable(doc, {
+      startY: 32,
+      head: [['Partner', 'Code / account', 'Delivered packages', 'Paid directly', 'Collected by drivers',
+              'Collected by call center', 'Paid to partner', 'Partner dues']],
+      body: filtered.map(p => [
+        p.name, [p.code, accountNos[p.id]].filter(Boolean).join('\n') || '—',
+        cell(p, 'delivered'), cell(p, 'paidDirect'), cell(p, 'collectedDrivers'),
+        cell(p, 'collectedOffice'), cell(p, 'paidOut'), cell(p, 'dues'),
+      ]),
+      styles: { fontSize: 7.5, cellPadding: 1.6, valign: 'middle' },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' },
+        5: { halign: 'right' }, 6: { halign: 'right' },
+        7: { halign: 'right', fontStyle: 'bold' },
+      },
+    })
+
+    let y = (doc.lastAutoTable?.finalY ?? 32) + 8
+    doc.setFontSize(10); doc.setTextColor(20)
+    doc.text('Totals', marginX, y); y += 5
+    doc.setFontSize(9)
+    for (const c of activeCurs) {
+      const t = totals[c]
+      doc.text(
+        `${c} — Delivered ${fmtMoney(t.delivered, c)}   Paid directly ${fmtMoney(t.paidDirect, c)}   `
+        + `Paid to partner ${fmtMoney(t.paidOut, c)}   Dues ${fmtMoney(t.dues, c)}`,
+        marginX, y)
+      y += 5
+    }
+    if (activeCurs.length === 0) doc.text('Nothing outstanding for this selection.', marginX, y)
+
+    const stamp = [dateFrom, dateTo].filter(Boolean).join('_') || now.toISOString().slice(0, 10)
+    doc.save(`partner-dues-${stamp}.pdf`)
   }
 
   /* ── record a payout ──────────────────────────────────────── */
@@ -191,7 +287,7 @@ export default function PartnerDuesPage() {
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input className="input py-1.5 text-xs pl-8" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Partner name or code" />
+              placeholder="Partner name, code or account number" />
           </div>
         </div>
         <div>
@@ -214,6 +310,12 @@ export default function PartnerDuesPage() {
             <FilterX className="w-3.5 h-3.5" /> Clear
           </button>
         )}
+        {/* The report is whatever is on screen — filters, dates and all. */}
+        <button type="button" onClick={exportPdf} disabled={filtered.length === 0}
+          title="Export what is shown to PDF"
+          className="ml-auto h-[34px] px-3 rounded-lg text-xs font-medium border border-surface-border text-slate-200 hover:bg-surface-hover inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+          <FileDown className="w-3.5 h-3.5" /> Export PDF
+        </button>
       </div>
 
       {/* ── summary ────────────────────────────────────────── */}

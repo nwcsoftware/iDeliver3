@@ -22,9 +22,12 @@ import { CURRENCIES } from './partnerDues'
    ── The balance ────────────────────────────────────────────────────────────
      goods sold (not paid to them directly)
    − commission we earned
-   − delivery fees charged to them
    − already paid out to them
    = pending
+
+   Delivery fees are reported but NOT deducted: a fee is billed on the order and
+   collected with it, so it settles on its own account. This matches Partner
+   Dues, the page payouts are made from — the two must agree.
 
    Every figure is per currency; nothing is ever converted. */
 
@@ -177,16 +180,25 @@ export function buildPartyStatement({ orders = [], payouts = [], contactId, from
     bump(totals.received, p.currency, Number(p.amount) || 0)
   }
 
-  // Pending = what we hold for them, less what we earned and what we paid.
+  /* Pending = what we hold for them, less what we earned and what we paid out.
+
+     Delivery fees are deliberately NOT deducted. A fee is billed on the order
+     and collected with it — from the driver's cash or at the counter — so it is
+     settled on its own account. Netting it here disagreed with Partner Dues,
+     the page the payouts are actually made from, and left a shop that had been
+     paid in full showing a large negative balance. Two pages answering "what do
+     we owe?" differently is worse than either answer. The fees remain on their
+     own card, and in `feesOwed`, so nothing is hidden. */
   const currencies = new Set([
     ...Object.keys(totals.goods), ...Object.keys(totals.commission),
-    ...Object.keys(totals.fees),  ...Object.keys(totals.received),
+    ...Object.keys(totals.received),
   ])
   for (const c of currencies) {
-    const v = round2((totals.goods[c] || 0) - (totals.commission[c] || 0)
-                     - (totals.fees[c] || 0) - (totals.received[c] || 0))
+    const v = round2((totals.goods[c] || 0) - (totals.commission[c] || 0) - (totals.received[c] || 0))
     if (v) totals.pending[c] = v
   }
+  // What the shop owes US for delivery on its own orders — reported, not netted.
+  totals.feesOwed = { ...totals.fees }
 
   rows.sort((a, b) => String(b.date).localeCompare(String(a.date))
     || String(b.orderNumber).localeCompare(String(a.orderNumber)))

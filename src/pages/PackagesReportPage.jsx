@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Package, Search, FilterX, AlertCircle, Calendar } from 'lucide-react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
+import { Package, Search, FilterX, AlertCircle, Calendar, X } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
+import ContactCombobox from '../components/orders/ContactCombobox'
 import { fetchOrdersByIds } from '../lib/packageOrders'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 
 /* Packages report — every delivery package across all orders, with its reference,
    reception (recipient) name, order number, delivery date, delivery address and
@@ -34,7 +37,9 @@ function deliveryDay(pk) {
 }
 
 export default function PackagesReportPage() {
-  const { COMPANY_ID, loadFullOrderHistory } = useApp()
+  const { COMPANY_ID, loadFullOrderHistory, inactiveContactIds } = useApp()
+  const { hasRole } = useAuth()
+  const canSeeRetired = hasRole('super_admin')
   // The startup fetch only covers the last few days; this page reads
   // further back, so it asks for the full history once.
   useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
@@ -49,6 +54,20 @@ export default function PackagesReportPage() {
   const [dateFrom,    setDateFrom]     = useState('')
   const [dateTo,      setDateTo]       = useState('')
   const [onlyDelivered, setOnlyDelivered] = useState(true)
+  // What we have already handed to partners (partner_payouts, fix82) — the
+  // third figure the balance needs. Packages alone only say what was owed.
+  const [payouts, setPayouts] = useState([])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      let q = supabase.from('partner_payouts').select('partner_id, amount, currency, paid_at')
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      const { data } = await q
+      if (alive && data) setPayouts(data)
+    })()
+    return () => { alive = false }
+  }, [COMPANY_ID])
 
   const fetchPackages = useCallback(async () => {
     setLoading(true); setError('')
@@ -78,15 +97,19 @@ export default function PackagesReportPage() {
   const partners = useMemo(() => {
     const map = new Map()
     for (const r of rows) {
-      if (r.provider_id && !map.has(r.provider_id)) map.set(r.provider_id, providerName(r.provider))
+      // Keep the whole contact: the picker searches its name, code and mobile,
+      // and shows the code beside each result.
+      if (r.provider_id && !map.has(r.provider_id)) map.set(r.provider_id, r.provider || { id: r.provider_id })
     }
-    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+    return [...map.values()].sort((a, b) => providerName(a).localeCompare(providerName(b)))
   }, [rows])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     const r = recipient.trim().toLowerCase()
     return rows.filter(pk => {
+      // Packages of a retired partner follow the partner out of sight.
+      if (!canSeeRetired && pk.provider_id && inactiveContactIds?.has(pk.provider_id)) return false
       if (onlyDelivered && !pk.order?.isclosed) return false
       if (partnerId && String(pk.provider_id) !== String(partnerId)) return false
       const day = deliveryDay(pk)
@@ -94,15 +117,24 @@ export default function PackagesReportPage() {
       if (dateTo   && (!day || day > dateTo))   return false
       if (r && !String(pk.order?.recipient_name ?? '').toLowerCase().includes(r)) return false
       if (q) {
-        const hay = [
+        const fields = [
           pk.tracking_number, pk.order?.order_number, pk.order?.recipient_name,
           pk.order?.delivery_address, providerName(pk.provider),
-        ].map(v => String(v ?? '').toLowerCase()).join(' ')
-        if (!hay.includes(q)) return false
+          pk.provider?.code,          // PTN-000004, shown under the partner name
+        ].map(v => String(v ?? '').toLowerCase())
+        // Matched as typed, and again with punctuation stripped from both
+        // sides, so "PTN-000004", "ptn000004" and "000004" all find the row.
+        const qDigits = q.replace(/\D/g, '')
+        const hit = fields.some(t => t.includes(q))
+          || (qDigits.length >= 3 && fields.some(t => {
+            const d = t.replace(/\D/g, '')
+            return d.length > 0 && d.includes(qDigits)
+          }))
+        if (!hit) return false
       }
       return true
     })
-  }, [rows, search, partnerId, recipient, dateFrom, dateTo, onlyDelivered])
+  }, [rows, search, partnerId, recipient, dateFrom, dateTo, onlyDelivered, inactiveContactIds, canSeeRetired])
 
   // Sort by delivery date, newest first.
   const sorted = useMemo(
@@ -117,13 +149,35 @@ export default function PackagesReportPage() {
     for (const pk of filtered) {
       const cur = pk.currency || pk.order?.currency || 'USD'
       const amt = round2(pk.package_price)
-      const b = t[cur] || (t[cur] = { total: 0, paid: 0, balance: 0 })
+      const b = t[cur] || (t[cur] = { total: 0, paid: 0, paidOut: 0, balance: 0 })
       b.total = round2(b.total + amt)
       if (pk.paid) b.paid = round2(b.paid + amt)
     }
-    for (const cur of Object.keys(t)) t[cur].balance = round2(t[cur].total - t[cur].paid)
+    /* What has been paid out to the partners in view.
+
+       Payouts are not attached to a package — they settle a partner's account
+       as a whole — so they are matched by partner, and by the date range when
+       one is set. Without a partner filter this sums the payouts of every
+       partner appearing in the list, which is what makes the balance below add
+       up to the same figure Partner Dues shows. */
+    const partnerIds = new Set(filtered.map(pk => pk.provider_id).filter(Boolean))
+    for (const po of payouts) {
+      if (!partnerIds.has(po.partner_id)) continue
+      const day = String(po.paid_at || '').slice(0, 10)
+      if (dateFrom && day && day < dateFrom) continue
+      if (dateTo   && day && day > dateTo)   continue
+      const cur = po.currency || 'USD'
+      const b = t[cur] || (t[cur] = { total: 0, paid: 0, paidOut: 0, balance: 0 })
+      b.paidOut = round2((b.paidOut || 0) + round2(po.amount))
+    }
+
+    // Owed − settled directly with the partner − already paid out to them.
+    for (const cur of Object.keys(t)) {
+      t[cur].paidOut = round2(t[cur].paidOut || 0)
+      t[cur].balance = round2(t[cur].total - t[cur].paid - t[cur].paidOut)
+    }
     return t
-  }, [filtered])
+  }, [filtered, payouts, dateFrom, dateTo])
   const totalCurs = CURRENCIES.filter(c => totals[c])
 
   const hasFilters = search || partnerId || recipient || dateFrom || dateTo
@@ -157,15 +211,30 @@ export default function PackagesReportPage() {
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input className="input py-1.5 text-xs pl-8" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Reference, order #, reception, address, partner…" />
+              placeholder="Reference, order #, reception, address, partner or code…" />
           </div>
         </div>
-        <div className="min-w-[160px]">
+        <div className="min-w-[220px]">
           <label className="label">Partner</label>
-          <select className="input py-1.5 text-xs" value={partnerId} onChange={e => setPartnerId(e.target.value)}>
-            <option value="">All partners</option>
-            {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          {/* Type to find a partner by name, code or mobile — the same picker
+              the order form uses, so it behaves the way people already know. */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1 min-w-0">
+              <ContactCombobox
+                value={partnerId}
+                options={partners}
+                compact
+                placeholder="All partners — type a name or code…"
+                onSelect={c => setPartnerId(c?.id || '')}
+              />
+            </div>
+            {partnerId && (
+              <button type="button" onClick={() => setPartnerId('')} title="Show every partner"
+                className="h-[30px] w-[30px] flex-shrink-0 rounded-lg border border-surface-border text-slate-500 hover:text-slate-200 inline-flex items-center justify-center">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
         <div className="min-w-[150px]">
           <label className="label">Reception</label>
@@ -196,10 +265,11 @@ export default function PackagesReportPage() {
 
       {/* ── totals ─────────────────────────────────────────── */}
       {totalCurs.length > 0 && (
-        <div className="card p-4 grid gap-3 sm:grid-cols-3">
+        <div className="card p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
             { key: 'total',   label: 'Total packages price', cls: 'text-brand-300' },
             { key: 'paid',    label: 'Total paid directly',  cls: 'text-green-400' },
+            { key: 'paidOut', label: 'Paid to partner',      cls: 'text-teal-300' },
             { key: 'balance', label: 'Balance due',          cls: 'text-amber-400' },
           ].map(row => (
             <div key={row.key} className="rounded-lg border border-surface-border p-3 space-y-1">
@@ -241,8 +311,17 @@ export default function PackagesReportPage() {
                     {!pk.order?.isclosed && <span className="ml-1.5 text-[9px] text-amber-400/80">open</span>}
                   </td>
                   <td className="px-3 py-2 text-slate-300">{pk.order?.recipient_name || '—'}</td>
-                  <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{pk.order?.order_number ?? '—'}</td>
-                  <td className="px-3 py-2 text-slate-400">{providerName(pk.provider)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <OrderNumber value={pk.order?.order_number} id={pk.order_id} className="text-xs" />
+                  </td>
+                  <td className="px-3 py-2 text-slate-400">
+                    <div>{providerName(pk.provider)}</div>
+                    {/* The contact code (PTN-000004) — the reference partners
+                        quote on statements and over the phone. */}
+                    {pk.provider?.code && (
+                      <div className="text-slate-500 text-[11px] font-mono tracking-wider">{pk.provider.code}</div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
                     {day ? <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-600" />{day}</span> : '—'}
                   </td>

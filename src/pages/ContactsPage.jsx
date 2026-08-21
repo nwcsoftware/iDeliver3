@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
@@ -70,7 +71,7 @@ const BASE_FORM = {
 
 export default function ContactsPage({ type }) {
   const cfg = TYPE_CONFIG[type] ?? TYPE_CONFIG.customer
-  const { COMPANY_ID } = useApp()
+  const { COMPANY_ID, orders, loadFullOrderHistory, refreshInactiveContacts } = useApp()
   const { currentUser, hasRole } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
   const isSuperAdmin = hasRole('super_admin')   // only the super admin may hard-delete a contact
@@ -85,6 +86,8 @@ export default function ContactsPage({ type }) {
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [toggling,  setToggling]  = useState(null)
+  const [checking,  setChecking]  = useState(null)   // settlement check in flight
+  const [deactivate, setDeactivate] = useState(null) // { contact, blocked, reasons }
   const [businessTypes,     setBusinessTypes]     = useState([])   // custom types from business_types
   const [contactCategories, setContactCategories] = useState([])   // custom contact_categories
   const [addresses,      setAddresses]      = useState([])
@@ -179,13 +182,20 @@ export default function ContactsPage({ type }) {
   /* ── filter ──────────────────────────────────────────────── */
 
   // Only admins may view inactive/all; normal users always see active only.
-  const effFilter = isAdmin ? filter : 'active'
+  /* Retired contacts belong to the super admin alone. Everyone else sees the
+     active list only — no filter to flip, so a deactivated contact cannot be
+     found, opened, or attached to new work. */
+  const effFilter = isSuperAdmin ? filter : 'active'
   const visible = contacts.filter(c => {
-    const matchSearch =
-      `${c.first_name} ${c.last_name}`.toLowerCase().includes(search.toLowerCase()) ||
-      c.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-      c.mobile?.includes(search) ||
-      c.email?.toLowerCase().includes(search.toLowerCase())
+    /* Name, company, phone, email — and the two numbers people actually quote
+       at each other: the contact code (PTN-000004) and the account number.
+       Searching by either used to return nothing, which made the code on every
+       statement and label useless for finding anyone. */
+    const q = search.trim().toLowerCase()
+    const matchSearch = !q || [
+      `${c.first_name ?? ''} ${c.last_name ?? ''}`,
+      c.company_name, c.mobile, c.email, c.code, c.account_number,
+    ].some(v => String(v ?? '').toLowerCase().includes(q))
     const matchFilter =
       effFilter === 'all'      ? true :
       effFilter === 'active'   ? c.is_active :
@@ -422,11 +432,38 @@ export default function ContactsPage({ type }) {
     fetchContacts()
   }
 
+  /* Deactivating hides a contact from everyone but the super admin — its orders
+     included — so it has to be settled first. Retiring a contact that is still
+     owed money, or still owes us, would bury the debt where the office cannot
+     see it. Reactivating needs no check: nothing is being hidden. */
+  const contactDisplayName = (c) =>
+    c?.company_name?.trim() || `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim() || 'this contact'
+
   async function toggleActive(c) {
+    if (c.is_active) {
+      setChecking(c.id)
+      // Balances span the whole history, not the startup window.
+      await loadFullOrderHistory?.()
+      const { data: payouts } = await supabase.from('partner_payouts').select('partner_id, amount, currency')
+      const result = await contactSettlement(c.id, { orders, payouts: payouts ?? [] })
+      setChecking(null)
+      setDeactivate({ contact: c, ...result })
+      return
+    }
     setToggling(c.id)
-    await supabase.from('contacts').update({ is_active: !c.is_active }).eq('id', c.id)
-    await fetchContacts()
+    await supabase.from('contacts').update({ is_active: true }).eq('id', c.id)
+    await fetchContacts(); refreshInactiveContacts?.()
     setToggling(null)
+  }
+
+  /* Confirmed from the dialog — only reachable when nothing is outstanding. */
+  async function confirmDeactivate() {
+    const c = deactivate?.contact
+    if (!c || deactivate.blocked) return
+    setToggling(c.id)
+    await supabase.from('contacts').update({ is_active: false }).eq('id', c.id)
+    await fetchContacts(); refreshInactiveContacts?.()
+    setToggling(null); setDeactivate(null)
   }
 
   /* Super-admin hard delete — only offered for already-deactivated contacts. If the
@@ -434,7 +471,7 @@ export default function ContactsPage({ type }) {
      rejects the delete and the error is surfaced rather than silently failing. */
   async function deleteContact(c) {
     if (!isSuperAdmin || c.is_active) return
-    const name = c.company_name?.trim() || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'this contact'
+    const name = contactDisplayName(c)
     if (!window.confirm(`Permanently delete “${name}”?\n\nThis cannot be undone. It will fail if the contact is still linked to any orders or records.`)) return
     setToggling(c.id)
     const { error: err } = await supabase.from('contacts').delete().eq('id', c.id)
@@ -527,8 +564,9 @@ export default function ContactsPage({ type }) {
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
-        {/* Active/inactive/all toggle — admins only; normal users see active only. */}
-        {isAdmin && (
+        {/* Active / inactive / all — the super admin alone. A retired contact is
+            invisible to everyone else, so there is nothing for them to filter. */}
+        {isSuperAdmin && (
           <div className="flex items-center gap-1">
             {['active', 'inactive', 'all'].map(f => (
               <button key={f} onClick={() => setFilter(f)}
@@ -885,6 +923,71 @@ export default function ContactsPage({ type }) {
           </div>
         </div>
       )}
+
+      {/* ── Deactivating a contact ──────────────────────────────────────
+          Refused while anything is outstanding: a retired contact disappears
+          for every user but the super admin, taking its orders with it, so a
+          debt hidden this way would never be chased. */}
+      {deactivate && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[80] p-4">
+          <div className="card w-full max-w-lg p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                deactivate.blocked ? 'bg-red-500/10 border border-red-500/30' : 'bg-amber-500/10 border border-amber-500/30'}`}>
+                <AlertCircle className={`w-4 h-4 ${deactivate.blocked ? 'text-red-400' : 'text-amber-400'}`} />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  {deactivate.blocked ? 'Cannot deactivate yet' : 'Deactivate this contact?'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {contactDisplayName(deactivate.contact)}
+                  {deactivate.contact?.code ? ` · ${deactivate.contact.code}` : ''}
+                </p>
+              </div>
+            </div>
+
+            {deactivate.blocked ? (
+              <>
+                <p className="text-xs text-slate-300">
+                  Settle these first — everything below must be closed or paid before the contact can be retired:
+                </p>
+                <div className="space-y-2">
+                  {deactivate.reasons.map(r => (
+                    <div key={r.key} className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2">
+                      <p className="text-xs font-semibold text-red-200">{r.label}</p>
+                      {r.detail && <p className="text-[11px] text-slate-400 mt-0.5 break-words">{r.detail}</p>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-green-300">Nothing is outstanding — no open orders, no dues, no balance.</p>
+                <p className="text-xs text-slate-400">
+                  Once deactivated, this contact and its orders are hidden from admins and users everywhere in
+                  the application, including every dropdown. Only a super admin will still see them. Stock
+                  movements keep showing the contact, so the inventory history and its totals stay correct.
+                </p>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setDeactivate(null)}
+                className="btn-ghost px-4 py-2 text-sm border border-surface-border">
+                {deactivate.blocked ? 'Close' : 'Cancel'}
+              </button>
+              {!deactivate.blocked && (
+                <button onClick={confirmDeactivate} disabled={toggling === deactivate.contact?.id}
+                  className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
+                  Deactivate
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

@@ -111,9 +111,18 @@ export default function ContactCombobox({
     return hay.includes(q) ||
       (o.mobile || '').includes(query.trim()) ||
       o.code?.toLowerCase?.().includes(q)
-  }).slice(0, 50)
+  })
+    /* A retired contact only reaches this list for a super admin — everyone
+       else has it filtered out upstream. Sort it below the live ones and label
+       it, so "Madame Bougie" twice is never a guess about which is current. */
+    .sort((a, b) => (a.is_active === false ? 1 : 0) - (b.is_active === false ? 1 : 0))
+    .slice(0, 50)
   const exact     = options.some(o => cname(o).toLowerCase() === q)
-  const canCreate = !!q && !exact
+  // Creating is offered only where the caller can actually do it. A picker
+  // used purely as a filter (the Packages page) passes no onAddNew, and
+  // offering to add a contact from a filter box is a trap: it looks like a
+  // way to search and turns into a way to create data by accident.
+  const canCreate = !!q && !exact && typeof onAddNew === 'function'
 
   function pick(c) { onSelect?.(c); close() }
 
@@ -152,7 +161,8 @@ export default function ContactCombobox({
               const sub = [showPerson ? personName(c) : null, c.mobile || null].filter(Boolean).join('  ·  ')
               return (
                 <button type="button" key={c.id} onMouseDown={e => { e.preventDefault(); pick(c) }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover border-b border-surface-border/50 last:border-0">
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover border-b border-surface-border/50 last:border-0 ${
+                    c.is_active === false ? 'opacity-60' : ''}`}>
                   <span className="flex-1 min-w-0">
                     <span className="block text-slate-100 text-xs truncate">{cname(c)}</span>
                     {sub && <span className="block text-[10px] text-slate-500 truncate">{sub}</span>}
@@ -161,6 +171,11 @@ export default function ContactCombobox({
                   {contactRoles(c).map(role => (
                     <span key={role} className="text-[9px] uppercase tracking-wide text-slate-400 bg-surface-hover border border-surface-border rounded px-1.5 py-0.5 flex-shrink-0">{role}</span>
                   ))}
+                  {c.is_active === false && (
+                    <span className="text-[9px] uppercase tracking-wide text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 flex-shrink-0">
+                      deactivated
+                    </span>
+                  )}
                 </button>
               )
             })}
@@ -171,7 +186,10 @@ export default function ContactCombobox({
               </button>
             )}
             {matches.length === 0 && !canCreate && (
-              <p className="px-3 py-2 text-xs text-slate-600">{options.length ? 'No matches' : 'Type a name to add a new one'}</p>
+              <p className="px-3 py-2 text-xs text-slate-600">
+                {options.length ? 'No matches'
+                  : (typeof onAddNew === 'function' ? 'Type a name to add a new one' : 'Nothing to choose from')}
+              </p>
             )}
           </div>
         </div>

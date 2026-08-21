@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect} from 'react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
 import { CalendarRange, AlertTriangle, CheckCircle2, Loader, X, Trash2, CheckSquare, Square } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -232,7 +233,7 @@ export default function DeleteOrdersRangePage() {
                               {on ? <CheckSquare className="w-4 h-4 text-red-400" /> : <Square className="w-4 h-4 text-slate-600" />}
                             </td>
                             <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{dateOnly(o.scheduled_date)}</td>
-                            <td className="px-3 py-2 font-mono text-brand-400 text-xs whitespace-nowrap">{o.order_number}</td>
+                            <td className="px-3 py-2 text-xs whitespace-nowrap"><OrderNumber value={o.order_number} id={o.id} className="text-xs" /></td>
                             <td className="px-3 py-2 text-slate-300 text-xs truncate max-w-[10rem]">{o.recipient_name || '—'}</td>
                             <td className="px-3 py-2 text-slate-400 text-xs truncate max-w-[10rem]">{o.customer || '—'}</td>
                             <td className="px-3 py-2 text-right text-xs text-slate-500 tabular-nums">

@@ -1,13 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
 import {
   Wallet, Package, Truck, Building, HandCoins, Clock, CheckCircle2, AlertCircle,
-  Search, Calendar, Percent, Store, Smartphone, Headphones, X, FileDown,
+  Calendar, Percent, Store, Smartphone, Headphones, X, FileDown,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import { buildPartyStatement, SOURCES, bagText, money } from '../lib/partyStatement'
 import { partnerName } from '../lib/partnerDues'
+import ContactCombobox from '../components/orders/ContactCombobox'
+import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 
 const todayStr = (d = new Date()) => {
   const pad = n => String(n).padStart(2, '0')
@@ -33,7 +36,7 @@ const SOURCE_TONE = {
    Everything is derived (lib/partyStatement); nothing here writes. */
 export default function PartyStatementPage({ partyContactId = null }) {
   const { currentUser, hasRole } = useAuth()
-  const { orders, loading, loadFullOrderHistory } = useApp()
+  const { orders, loading, loadFullOrderHistory, ordersFullyLoaded } = useApp()
 
   const isOffice = !partyContactId && hasRole('super_admin', 'admin', 'call_center')
   const ownId    = partyContactId || currentUser?.contact_id || null
@@ -43,8 +46,9 @@ export default function PartyStatementPage({ partyContactId = null }) {
 
   const [parties,   setParties]   = useState([])
   const [pickedId,  setPickedId]  = useState(ownId || '')
-  const [partySearch, setPartySearch] = useState('')
   const [payouts,   setPayouts]   = useState([])
+  const [payoutsLoaded, setPayoutsLoaded] = useState(false)
+  const [partiesLoaded, setPartiesLoaded] = useState(false)
   const [from,      setFrom]      = useState(monthStart())
   const [to,        setTo]        = useState(todayStr())
   const [sourceFilter, setSourceFilter] = useState('')
@@ -59,14 +63,20 @@ export default function PartyStatementPage({ partyContactId = null }) {
     if (!isOffice) return undefined
     let alive = true
     ;(async () => {
-      const { data, error: e } = await fetchAllRows(() => supabase
-        .from('contacts')
-        .select('id, first_name, last_name, company_name, code, contact_types, partner_percentage, partner_percentage_type')
-        .overlaps('contact_types', ['supplier', 'partner'])
-        .order('company_name'))
+      const { data, error: e } = await fetchAllRows(() => {
+        let q = supabase.from('contacts')
+          .select('id, first_name, last_name, company_name, code, contact_types, is_active, partner_percentage, partner_percentage_type')
+          .overlaps('contact_types', ['supplier', 'partner'])
+          .order('company_name')
+        // Retired shops are the super admin's business alone — for everyone
+        // else they must not even be selectable.
+        if (!hasRole('super_admin')) q = q.eq('is_active', true)
+        return q
+      })
       if (!alive) return
       if (e) setError(e.message)
       else setParties(data ?? [])
+      setPartiesLoaded(true)
     })()
     return () => { alive = false }
   }, [isOffice])
@@ -80,18 +90,21 @@ export default function PartyStatementPage({ partyContactId = null }) {
         .select('id, first_name, last_name, company_name, code, contact_types, partner_percentage, partner_percentage_type')
         .eq('id', ownId).maybeSingle()
       if (alive && data) setParties([data])
+      if (alive) setPartiesLoaded(true)
     })()
     return () => { alive = false }
   }, [isOffice, ownId])
 
   const loadPayouts = useCallback(async () => {
-    if (!contactId) { setPayouts([]); return }
+    if (!contactId) { setPayouts([]); setPayoutsLoaded(true); return }
+    setPayoutsLoaded(false)
     const { data, error: e } = await supabase
       .from('partner_payouts').select('*')
       .eq('partner_id', contactId)
       .order('paid_at', { ascending: false })
     if (e) setError(e.message)
     else   { setPayouts(data ?? []); setError('') }
+    setPayoutsLoaded(true)
   }, [contactId])
   useEffect(() => { loadPayouts() }, [loadPayouts])
 
@@ -99,15 +112,20 @@ export default function PartyStatementPage({ partyContactId = null }) {
     () => buildPartyStatement({ orders, payouts, contactId, from, to }),
     [orders, payouts, contactId, from, to])
 
+  /* The pending balance is cumulative — everything up to the end date, not just
+     what happened inside the period.
+
+     Scoping it to the period produced nonsense: a payout settling months of
+     deliveries lands on one day, so a month that contains the payment but not
+     the deliveries showed a large negative balance. Goods and payments sit on
+     different axes; only an as-of-date total reconciles them. */
+  const asOf = useMemo(
+    () => buildPartyStatement({ orders, payouts, contactId, from: '', to }),
+    [orders, payouts, contactId, to])
+
   const visibleRows = rows.filter(r =>
     (!sourceFilter || r.source === sourceFilter)
     && (!statusFilter || (statusFilter === 'delivered' ? r.delivered : !r.delivered)))
-
-  const partyOptions = parties.filter(p => {
-    const q = partySearch.trim().toLowerCase()
-    if (!q) return true
-    return [partnerName(p), p.code].some(v => String(v ?? '').toLowerCase().includes(q))
-  })
 
   /* One CSV of exactly what is on screen — shops ask for this to reconcile. */
   function exportCsv() {
@@ -139,8 +157,26 @@ export default function PartyStatementPage({ partyContactId = null }) {
     </div>
   )
 
+  /* The wait this page is known for is the full order history: a statement
+     spans months, so the startup window is not enough and every order has to be
+     pulled before a single figure is right. Say so while it happens. */
+  const ordersReady = !!ordersFullyLoaded && !loading?.orders
+  const busy = !ordersReady || !partiesLoaded || (!!contactId && !payoutsLoaded)
+  const loadSteps = [
+    { label: 'Loading order history', done: ordersReady, hint: `${orders.length.toLocaleString()} orders` },
+    { label: isOffice ? 'Reading shops' : 'Reading your shop', done: partiesLoaded },
+    { label: 'Reading payments made', done: !contactId || payoutsLoaded },
+    { label: 'Building the statement', done: !busy },
+  ]
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <DataLoadingOverlay
+        open={busy}
+        title="Gathering data"
+        subtitle="Building the statement from every order and payment on record…"
+        steps={loadSteps}
+      />
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -151,23 +187,25 @@ export default function PartyStatementPage({ partyContactId = null }) {
         </div>
 
         {isOffice && (
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-              <input className="input pl-9 py-1.5 text-xs w-48" placeholder="Find a shop…"
-                value={partySearch} onChange={e => setPartySearch(e.target.value)} />
+          /* One box that searches: name, code or mobile, with the code shown
+             beside each result. No "add new" — this picks an existing shop to
+             read, it is not a place to create one. */
+          <div className="flex items-center gap-1.5 w-[22rem] max-w-full">
+            <div className="flex-1 min-w-0">
+              <ContactCombobox
+                value={pickedId}
+                options={parties}
+                compact
+                placeholder="Choose a shop — type a name or code…"
+                onSelect={c => setPickedId(c?.id || '')}
+              />
             </div>
-            <select className="input py-1.5 text-xs w-64" value={pickedId}
-              onChange={e => setPickedId(e.target.value)}>
-              <option value="">— Choose a supplier or partner —</option>
-              {partyOptions.map(p => (
-                <option key={p.id} value={p.id}>
-                  {partnerName(p)}{p.code ? ` · ${p.code}` : ''}
-                  {(p.contact_types ?? []).includes('supplier') ? ' · supplier' : ''}
-                  {(p.contact_types ?? []).includes('partner')  ? ' · partner'  : ''}
-                </option>
-              ))}
-            </select>
+            {pickedId && (
+              <button type="button" onClick={() => setPickedId('')} title="Choose another shop"
+                className="h-[30px] w-[30px] flex-shrink-0 rounded-lg border border-surface-border text-slate-500 hover:text-slate-200 inline-flex items-center justify-center">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
 
@@ -241,12 +279,16 @@ export default function PartyStatementPage({ partyContactId = null }) {
           {/* The number both sides care about */}
           <div className="card p-4 border-brand-500/30 bg-brand-500/5 flex items-center gap-4 flex-wrap">
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-brand-300 font-semibold">Pending balance</p>
+              <p className="text-[11px] uppercase tracking-wider text-brand-300 font-semibold">
+                Pending balance <span className="text-slate-400 font-normal normal-case">· as of {to || 'today'}</span>
+              </p>
               <p className="text-xs text-slate-400 mt-0.5">
-                Goods sold − commission − delivery fees − payouts already received
+                Everything up to this date: goods sold − commission − payouts received.
+                Delivery fees are billed on the orders and settled with them, so they are not
+                deducted here. The cards above cover the selected period only.
               </p>
             </div>
-            <p className="ml-auto text-xl font-bold tabular-nums text-brand-200">{bagText(totals.pending)}</p>
+            <p className="ml-auto text-xl font-bold tabular-nums text-brand-200">{bagText(asOf.totals.pending)}</p>
           </div>
 
           {/* Where the orders came from — and why commission differs */}
@@ -320,7 +362,7 @@ export default function PartyStatementPage({ partyContactId = null }) {
                     const Icon = SOURCE_ICON[r.source]
                     return (
                       <tr key={r.id} className="border-b border-surface-border/50 hover:bg-surface-hover/30">
-                        <td className="px-3 py-2 font-mono text-xs text-brand-300 whitespace-nowrap">{r.orderNumber || '—'}</td>
+                        <td className="px-3 py-2 text-xs whitespace-nowrap"><OrderNumber value={r.orderNumber} id={r.id} className="text-xs" /></td>
                         <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{r.date || '—'}</td>
                         <td className="px-3 py-2">
                           <span className={`inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${SOURCE_TONE[r.source]}`}>

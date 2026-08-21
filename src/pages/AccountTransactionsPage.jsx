@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
 import { Search, BookText, FilterX, FileDown } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
@@ -260,7 +261,7 @@ export default function AccountTransactionsPage() {
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   {r.order_number
-                    ? <span className="font-mono text-xs text-brand-400">{r.order_number}</span>
+                    ? <OrderNumber value={r.order_number} className="text-xs" />
                     : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-300 whitespace-nowrap">{r.account_number ?? <span className="text-slate-600">—</span>}</td>

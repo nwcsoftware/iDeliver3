@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase, fetchAllRows, fetchAllRowsKeyset, HEAVY_PAGE_SIZE } from '../lib/supabase'
+import { fetchInactiveContactIds } from '../lib/contactVisibility'
 import { useAuth } from './AuthContext'
 import { fetchHeaderBackgrounds, pickCurrent } from '../lib/headerBackground'
 
@@ -13,7 +14,7 @@ const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
 const ORDER_SELECT = `
   *,
   driver:contacts!driver_id(id, first_name, last_name, mobile, driver_status),
-  customer:contacts!customer_id(id, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
+  customer:contacts!customer_id(id, code, first_name, last_name, mobile, account_number, entity_type, contact_type, contact_types, company_name, credit_debit_allowed),
   zone:delivery_zones(id, name),
   order_items(currency, line_total, is_deleted),
   delivery_packages(package_price, paid, currency, provider_id, provider:contacts!provider_id(id, code, company_name, first_name, last_name)),
@@ -110,6 +111,14 @@ export function AppProvider({ children }) {
   // True once the full order history (not just the recent window) is loaded into
   // `orders`. Financial pages wait for this before trusting balances.
   const [ordersFullyLoaded, setOrdersFullyLoaded] = useState(false)
+  /* Retired contacts (is_active = false). Everyone but the super admin has them
+     hidden — from the lists, from every picker, and from the order lists — so
+     the ids are loaded once here and shared rather than re-queried per page. */
+  const [inactiveContactIds, setInactiveContactIds] = useState(() => new Set())
+  const refreshInactiveContacts = useCallback(async () => {
+    const { ids } = await fetchInactiveContactIds(COMPANY_ID)
+    setInactiveContactIds(ids)
+  }, [])
   // Set once a real list has been fetched, and the reason if a fetch failed.
   // Until then a single-row refresh must not invent a list (see below).
   const ordersLoadedRef = useRef(false)
@@ -548,6 +557,7 @@ export function AppProvider({ children }) {
     fetchDrivers()
     fetchOrders()
     fetchZones()
+    refreshInactiveContacts()
 
     const driversChannel = supabase
       .channel('contacts-driver-changes')
@@ -587,6 +597,8 @@ export function AppProvider({ children }) {
     <AppContext.Provider value={{
       drivers, fetchDrivers,
       orders,  fetchOrders, ordersError,
+      // Retired contacts — hidden from everyone but the super admin.
+      inactiveContactIds, refreshInactiveContacts,
       // Targeted refreshes — always prefer these to fetchOrders() after a
       // mutation: they fetch only the rows that changed.
       refreshOrder: refreshOrderIntoState, refreshOrders: refreshOrdersIntoState,

@@ -12,6 +12,7 @@ import ShopInventoryPage from '../../pages/ShopInventoryPage'
 import MySubscriptionPage from '../../pages/MySubscriptionPage'
 import PartnerStatementPage from '../../pages/PartnerStatementPage'
 import PartyStatementPage from '../../pages/PartyStatementPage'
+import { OrderQuickViewProvider } from '../orders/OrderQuickView'
 import ShopStockPage from '../../pages/ShopStockPage'
 import logo from '../../assets/Logo.png'
 
@@ -164,6 +165,7 @@ export default function PartnerShell() {
 
   return (
     <AppProvider>
+      <OrderQuickViewProvider>
       <HashRouter>
         <div className="h-screen flex flex-col overflow-hidden">
           <BroadcastPopup />
@@ -205,6 +207,7 @@ export default function PartnerShell() {
           </div>
         </div>
       </HashRouter>
+      </OrderQuickViewProvider>
     </AppProvider>
   )
 }

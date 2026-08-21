@@ -35,6 +35,7 @@ import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
 import PartyStatementPage     from './pages/PartyStatementPage'
+import { OrderQuickViewProvider } from './components/orders/OrderQuickView'
 import SoftwareSubscriptionsPage from './pages/SoftwareSubscriptionsPage'
 import ChangeRequestsPage     from './pages/ChangeRequestsPage'
 import PackageLabelsPage      from './pages/PackageLabelsPage'
@@ -95,6 +96,9 @@ function AppShell() {
 
   return (
     <AppProvider>
+      {/* One quick-view popup for the whole app: click an order number on any
+          page and read the order without leaving it. */}
+      <OrderQuickViewProvider>
       <HashRouter>
         <div className="h-screen flex flex-col overflow-hidden">
           <BroadcastPopup />
@@ -152,6 +156,7 @@ function AppShell() {
           </div>
         </div>
       </HashRouter>
+      </OrderQuickViewProvider>
     </AppProvider>
   )
 }

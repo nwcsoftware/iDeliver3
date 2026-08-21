@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
 import { Wallet, AlertTriangle, CheckCircle2, Loader, X, EyeOff, RotateCcw, Undo2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -227,7 +228,7 @@ export default function CashierBoxResetPage() {
                         return (
                           <tr key={o.id} className="border-b border-surface-border/50">
                             <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{dateOnly(o.closed_at)}</td>
-                            <td className="px-3 py-2 font-mono text-brand-400 text-xs whitespace-nowrap">{o.order_number}</td>
+                            <td className="px-3 py-2 text-xs whitespace-nowrap"><OrderNumber value={o.order_number} id={o.id} className="text-xs" /></td>
                             <td className="px-3 py-2 text-slate-300 text-xs truncate max-w-[10rem]">{o.recipient_name || '—'}</td>
                             <td className="px-3 py-2 text-slate-400 text-xs truncate max-w-[10rem]">{o.customer || '—'}</td>
                             <td className="px-3 py-2 text-right text-xs text-slate-500 tabular-nums">

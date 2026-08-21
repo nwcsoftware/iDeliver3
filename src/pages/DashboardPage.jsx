@@ -1,4 +1,5 @@
 import React from 'react'
+import { OrderNumber } from '../components/orders/OrderQuickView'
 import { Package, Users, Truck, CheckCircle } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -130,7 +131,7 @@ export default function DashboardPage() {
               </tr>
             ) : recentOrders.map(o => (
               <tr key={o.id} className="border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors">
-                <td className="px-5 py-3 font-mono text-xs text-brand-400">{o.order_number}</td>
+                <td className="px-5 py-3 text-xs"><OrderNumber value={o.order_number} id={o.id} className="text-xs" /></td>
                 <td className="px-5 py-3">
                   <p className="text-slate-200">{o.recipient_name}</p>
                   <p className="text-slate-500 text-xs">{formatMobile(o.recipient_mobile)}</p>
