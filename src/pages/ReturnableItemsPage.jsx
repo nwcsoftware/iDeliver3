@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 const daysSince = iso => {
   if (!iso) return 0
@@ -77,12 +78,33 @@ export default function ReturnableItemsPage() {
 
   const totalOut = Object.values(outByProduct).reduce((s, n) => s + n, 0)
 
-  const visible = rows.filter(r => {
+  /* What each column sorts BY. "Days out" sorts by the number of days, not by
+     the words beside it, so the longest-outstanding item comes to the top in
+     one click — which is the whole reason this page is read. A returned item
+     has no days out and sinks to the bottom either way. */
+  const sortValue = useCallback((r, key) => {
+    switch (key) {
+      case 'product':   return `${r.product?.name || ''} ${r.product?.code || ''}`.toLowerCase()
+      case 'order':     return (r.order?.order_number || '').toLowerCase()
+      case 'recipient': return (r.order?.recipient_name || '').toLowerCase()
+      case 'driver':    return driverName(r.order).toLowerCase()
+      case 'issued':    return r.added_at || ''
+      case 'days':      return r.is_returned ? null : daysSince(r.added_at)
+      case 'qty':       return Number(r.quantity) || 0
+      case 'returned':  return r.is_returned ? 1 : 0
+      default:          return ''
+    }
+  }, [])
+
+  const filtered = rows.filter(r => {
     if (!showReturned && r.is_returned) return false
     const s = search.trim().toLowerCase()
     return !s || [r.product?.code, r.product?.name, r.order?.order_number, r.order?.recipient_name, driverName(r.order)]
       .some(v => String(v ?? '').toLowerCase().includes(s))
   })
+
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const visible = sortRows(filtered)
 
   /* ── actions ──────────────────────────────────────────────── */
 
@@ -140,7 +162,7 @@ export default function ReturnableItemsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -197,12 +219,21 @@ export default function ReturnableItemsPage() {
       </div>
 
       {/* Issued items (from order_items) */}
-      <div className="card overflow-x-auto">
+      {/* The table scrolls inside the card so its header stays put while the
+          list of what is still out is read from top to bottom. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm min-w-[960px]">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-card">
             <tr className="border-b border-surface-border">
-              {['Product', 'Order #', 'Recipient', 'Driver', 'Issued', 'Days Out', 'Qty', 'Returned', ''].map((h, i) => (
-                <th key={h} className={`px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap ${i === 5 || i === 6 ? 'text-right' : 'text-left'}`}>{h}</th>
+              {[
+                ['Product', 'product'], ['Order #', 'order'], ['Recipient', 'recipient'],
+                ['Driver', 'driver'], ['Issued', 'issued'], ['Days Out', 'days'],
+                ['Qty', 'qty'], ['Returned', 'returned'], ['', null],
+              ].map(([label, key], i) => (
+                <SortTh key={label || 'actions'} label={label} sortKey={key} sort={sort} onSort={cycle}
+                  align={i === 5 || i === 6 ? 'right' : 'left'}
+                  className="px-4 py-3 text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap" />
               ))}
             </tr>
           </thead>
@@ -268,6 +299,7 @@ export default function ReturnableItemsPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {orderModal && (

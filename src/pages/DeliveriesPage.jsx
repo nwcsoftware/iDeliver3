@@ -1752,14 +1752,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // Shared form fields (commission %, business type, contact category).
       ...contactTypeExtras(newContactType, newCustomer),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
-      /* Who raised it, by NAME and by ACCOUNT (fix137). The name is what a
-         report prints and stays readable if the account is renamed or removed;
-         the id is what a query joins on. Stamped on creation only — an edit
-         years later must not rewrite who took the order in the first place. */
-      ...(modal === 'add' ? {
-        created_by:    currentUserName || currentUser?.username || null,
-        created_by_id: currentUser?.user_id || null,
-      } : {}),
       branch_id:      currentUser?.branch_id || null,
       created_by:     currentUser?.user_id   || null,
       account_number: accountNumber || null,
@@ -2381,6 +2373,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 confirmed_by:    currentUser?.user_id || null,
               }
             : {})),
+      /* Who raised it, by NAME and by ACCOUNT (fix137). The name is what a
+         report prints and stays readable if the account is later renamed or
+         deleted; the id is what a query joins on. Stamped on creation only —
+         editing an order years later must not rewrite who took it. */
+      ...(modal === 'add' ? {
+        created_by:    currentUserName || currentUser?.username || null,
+        created_by_id: currentUser?.user_id || null,
+      } : {}),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
     }
 
@@ -3070,7 +3070,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── render ──────────────────────────────────────────────── */
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
 
       {/* Opening an order from a deep link (e.g. the header bell's list) pulls
           its items, packages, services and payments first. Block the screen
@@ -3335,10 +3335,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         </div>
       )}
 
-      {/* List */}
-      <div className="card overflow-hidden">
+      {/* List. The table scrolls inside the card so its header can stay put —
+          a day's orders run well past a screenful, and the columns are what
+          make the rows readable. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-20 bg-surface-card">
             <tr className="border-b border-surface-border">
               {['Order #','Schedule','Recipient','Customer','Driver',
                 ...(partyContactId ? [] : ['Delivery Fee']),'Notes','Status',
@@ -3809,6 +3812,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             ])}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* ── Floating summary bar (filtered orders + per-currency totals) ── */}
