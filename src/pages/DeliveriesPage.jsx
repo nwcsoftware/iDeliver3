@@ -5332,7 +5332,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   value={customerSearch}
                   onChange={e => setCustomerSearch(e.target.value)}
                   placeholder="Search by name, mobile, email, address…"
-                  autoFocus
                 />
                 />
                 {customerSearch && (
@@ -5616,7 +5615,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       onChange={e => setDriverQuickSearch(e.target.value)}
                       placeholder="Search driver…"
                       className={`input pl-8 py-1.5 text-xs ${driverQuickSearch ? 'pr-8' : ''}`}
-                      autoFocus
                       ref={driverSearchRef}
                     />
                     {driverQuickSearch && (

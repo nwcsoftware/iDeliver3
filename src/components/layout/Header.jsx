@@ -411,7 +411,6 @@ export default function Header() {
                       onChange={e => setBellSearch(e.target.value)}
                       placeholder="Search order number, reception, customer or delivery location…"
                       className="input pl-9 py-1.5 text-xs disabled:opacity-50"
-                      autoFocus
                       disabled={confirming}
                     />
                   </div>

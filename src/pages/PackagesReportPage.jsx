@@ -6,6 +6,7 @@ import ContactCombobox from '../components/orders/ContactCombobox'
 import { fetchOrdersByIds } from '../lib/packageOrders'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* Packages report — every delivery package across all orders, with its reference,
    reception (recipient) name, order number, delivery date, delivery address and
@@ -136,11 +137,31 @@ export default function PackagesReportPage() {
     })
   }, [rows, search, partnerId, recipient, dateFrom, dateTo, onlyDelivered, inactiveContactIds, canSeeRetired])
 
-  // Sort by delivery date, newest first.
-  const sorted = useMemo(
+  // Newest delivery first — the order the list returns to when a column sort
+  // is cycled off.
+  const byDate = useMemo(
     () => filtered.slice().sort((a, b) => deliveryDay(b).localeCompare(deliveryDay(a))),
     [filtered],
   )
+
+  /* What each column sorts BY. Price sorts by the figure and by CURRENCY first,
+     so USD groups with USD instead of ranking LBP 300,000 above USD 40 — two
+     numbers that measure nothing in common. */
+  const sortValue = useCallback((pk, key) => {
+    switch (key) {
+      case 'ref':       return (pk.tracking_number || '').toLowerCase()
+      case 'reception': return (pk.order?.recipient_name || '').toLowerCase()
+      case 'order':     return (pk.order?.order_number || '').toLowerCase()
+      case 'partner':   return providerName(pk.provider).toLowerCase()
+      case 'date':      return deliveryDay(pk) || ''
+      case 'address':   return (pk.order?.delivery_address || '').toLowerCase()
+      case 'price':     return `${pk.currency || 'USD'}|`
+        + String(Math.round(Math.abs(Number(pk.package_price) || 0) * 100)).padStart(14, '0')
+      default:          return ''
+    }
+  }, [])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const sorted = useMemo(() => sortRows(byDate), [byDate, sortRows])
 
   // Per-currency grand totals across the filtered rows: full package value, the
   // part paid directly to the partner, and the remaining balance (value − paid).
@@ -186,7 +207,7 @@ export default function PackagesReportPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       {/* ── header ─────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         <div className="w-8 h-8 rounded-lg border flex items-center justify-center bg-brand-600/20 border-brand-600/30">
@@ -283,17 +304,20 @@ export default function PackagesReportPage() {
       )}
 
       {/* ── table ──────────────────────────────────────────── */}
-      <div className="card overflow-x-auto">
+      {/* The table scrolls inside the card so its header can stay put — this
+          list runs to hundreds of packages across a date range. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-surface-hover/40">
-              <th className="px-3 py-2 font-medium">Reference</th>
-              <th className="px-3 py-2 font-medium">Reception</th>
-              <th className="px-3 py-2 font-medium">Order #</th>
-              <th className="px-3 py-2 font-medium">Partner</th>
-              <th className="px-3 py-2 font-medium">Delivery date</th>
-              <th className="px-3 py-2 font-medium">Delivery address</th>
-              <th className="px-3 py-2 font-medium text-right">Price</th>
+          <thead className="sticky top-0 z-10 bg-surface-card">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <SortTh label="Reference"        sortKey="ref"       sort={sort} onSort={cycle} />
+              <SortTh label="Reception"        sortKey="reception" sort={sort} onSort={cycle} />
+              <SortTh label="Order #"          sortKey="order"     sort={sort} onSort={cycle} />
+              <SortTh label="Partner"          sortKey="partner"   sort={sort} onSort={cycle} />
+              <SortTh label="Delivery date"    sortKey="date"      sort={sort} onSort={cycle} />
+              <SortTh label="Delivery address" sortKey="address"   sort={sort} onSort={cycle} />
+              <SortTh label="Price"            sortKey="price"     sort={sort} onSort={cycle} align="right" />
             </tr>
           </thead>
           <tbody>
@@ -350,6 +374,7 @@ export default function PackagesReportPage() {
             </tfoot>
           )}
         </table>
+        </div>
       </div>
     </div>
   )

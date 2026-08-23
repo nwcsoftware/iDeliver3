@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Receipt, FilterX, FileDown, HandCoins, X, Loader, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Receipt, FilterX, FileDown, HandCoins, X, Loader, AlertCircle, CheckCircle2, Pin, PinOff, ChevronRight } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
+import { OrderNumber } from '../components/orders/OrderQuickView'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* Business types a supplier/shop can have (mirrors the Suppliers form). */
 const SHOP_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
@@ -48,6 +50,29 @@ export default function RetailInvoicesPage() {
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
   const [filters,  setFilters]  = useState(EMPTY_FILTERS)
+
+  /* The filter panel folds away — eight boxes take a third of the screen
+     before a single invoice is visible — and can be pinned open for anyone who
+     works from it all day. Both remembered per device: a preference about this
+     screen, not something the office has to agree on. */
+  const PANEL_KEY = 'ideliver_retail_filters'
+  const [panel, setPanel] = useState(() => {
+    try { return { open: true, pinned: false, ...(JSON.parse(localStorage.getItem(PANEL_KEY) || '{}')) } }
+    catch { return { open: true, pinned: false } }
+  })
+  const savePanel = (next) => {
+    setPanel(next)
+    try { localStorage.setItem(PANEL_KEY, JSON.stringify(next)) } catch { /* a preference, not data */ }
+  }
+  // Pinned means always shown, so pinning opens it; unpinning leaves it as is.
+  const togglePin  = () => savePanel({ ...panel, pinned: !panel.pinned, open: panel.pinned ? panel.open : true })
+  const toggleOpen = () => { if (!panel.pinned) savePanel({ ...panel, open: !panel.open }) }
+  const panelOpen  = panel.open || panel.pinned
+
+  // Which filters are actually narrowing the list, for the folded-away summary.
+  const activeFilterNames = Object.entries(filters)
+    .filter(([k, v]) => v !== EMPTY_FILTERS[k])
+    .map(([k]) => k.replace(/_/g, ' '))
 
   // Commission collection: which invoice ids are ticked, the confirmation modal,
   // and the in-flight save.
@@ -109,6 +134,33 @@ export default function RetailInvoicesPage() {
 
     return matchSearch && matchCode && matchOrder && matchShop && matchType && matchFrom && matchTo && matchPaid && matchComm
   })
+
+  /* What each column sorts BY. Value and Commission sort by CURRENCY first and
+     then by the figure, so USD groups with USD rather than ranking LBP 300,000
+     above USD 40 — two numbers that measure nothing in common. Paid and
+     Collected sort by their state, so all the outstanding ones come together. */
+  const moneySortKey = (amount, currency) =>
+    `${currency || 'USD'}|${String(Math.round(Math.abs(Number(amount) || 0) * 100)).padStart(14, '0')}`
+
+  const sortValue = useCallback((inv, key) => {
+    switch (key) {
+      case 'order':      return (inv.order?.order_number || '').toLowerCase()
+      case 'code':       return (inv.contact_code || '').toLowerCase()
+      case 'shop':       return (inv.shop_name || '').toLowerCase()
+      case 'type':       return (inv.shop_type || '').toLowerCase()
+      case 'source':     return inv.is_procurement ? 1 : 0
+      case 'ref':        return (inv.invoice_reference || '').toLowerCase()
+      case 'date':       return inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : ''
+      case 'value':      return moneySortKey(inv.invoice_value, inv.currency)
+      case 'currency':   return inv.currency || ''
+      case 'paid':       return inv.exclude_calculation === true ? 1 : 0
+      case 'commission': return moneySortKey(commissionAmount(inv), inv.currency)
+      case 'collected':  return inv.commission_collected === true ? 1 : 0
+      default:           return ''
+    }
+  }, [])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const sortedVisible = useMemo(() => sortRows(visible), [visible, sortRows])
 
   // Per-currency totals for the visible rows: full value, the part already paid,
   // and the outstanding balance (value − paid). Paid invoices count fully as paid.
@@ -272,7 +324,7 @@ export default function RetailInvoicesPage() {
   /* ── render ──────────────────────────────────────────────── */
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -292,8 +344,6 @@ export default function RetailInvoicesPage() {
             onChange={e => setSearch(e.target.value)}
             placeholder="Search order #, code, shop, type, ref…"
             className="input pl-9"
-            type
-            ref
           />
         </div>
 
@@ -311,8 +361,41 @@ export default function RetailInvoicesPage() {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="card p-4">
+      {/* Filters — folded away or pinned open. The search box and Collect
+          Commission stay outside: they are how you get anywhere on this page. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={toggleOpen} disabled={panel.pinned}
+          title={panel.pinned ? 'Pinned open — unpin to fold it away'
+            : (panelOpen ? 'Hide the filters' : 'Show the filters')}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            panel.pinned
+              ? 'border-surface-border text-slate-500 cursor-default'
+              : 'border-surface-border text-slate-300 hover:bg-surface-hover'}`}>
+          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${panelOpen ? 'rotate-90' : ''}`} />
+          Filters
+        </button>
+
+        <button onClick={togglePin}
+          title={panel.pinned ? 'Unpin — let it fold away' : 'Pin — keep it open on this device'}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            panel.pinned
+              ? 'bg-brand-500/15 text-brand-300 border-brand-500/30'
+              : 'border-surface-border text-slate-400 hover:bg-surface-hover'}`}>
+          {panel.pinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
+          {panel.pinned ? 'Pinned' : 'Pin'}
+        </button>
+
+        {/* Folded away, the filters must still announce themselves — a hidden
+            filter is the reason a list looks short for no apparent reason. */}
+        {!panelOpen && activeFilterNames.length > 0 && (
+          <span className="px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-amber-500/10 text-amber-300 border-amber-500/30">
+            {activeFilterNames.length} filter{activeFilterNames.length === 1 ? '' : 's'} on — {activeFilterNames.join(', ')}
+          </span>
+        )}
+      </div>
+
+      {panelOpen && (
+      <div className="card p-4 flex-shrink-0">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div>
             <label className="label">Contact Code</label>
@@ -366,29 +449,39 @@ export default function RetailInvoicesPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* List */}
-      <div className="card overflow-hidden">
+      {/* The table scrolls inside the card so its header — and the select-all
+          box with it — stays put on a list that runs to hundreds of invoices. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-card">
             <tr className="border-b border-surface-border">
-              <th className="px-4 py-3 w-8">
+              <th className="px-4 py-3 w-8 bg-surface-card">
                 <input type="checkbox" className="accent-green-500 w-4 h-4 align-middle"
                   checked={allVisibleSelected} disabled={collectableVisible.length === 0}
                   onChange={toggleAllVisible}
                   title={collectableVisible.length === 0 ? 'No collectable commission in view' : 'Select all collectable in view'} />
               </th>
-              {['Order #', 'Contact Code', 'Shop', 'Business Type', 'Source', 'Invoice Ref', 'Date', 'Value', 'Currency', 'Paid', 'Commission', 'Collected'].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
+              {[
+                ['Order #', 'order'], ['Contact Code', 'code'], ['Shop', 'shop'],
+                ['Business Type', 'type'], ['Source', 'source'], ['Invoice Ref', 'ref'],
+                ['Date', 'date'], ['Value', 'value'], ['Currency', 'currency'],
+                ['Paid', 'paid'], ['Commission', 'commission'], ['Collected', 'collected'],
+              ].map(([label, key]) => (
+                <SortTh key={key} label={label} sortKey={key} sort={sort} onSort={cycle}
+                  className="px-4 py-3 text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap" />
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : visible.length === 0 ? (
+            ) : sortedVisible.length === 0 ? (
               <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">No invoices found</td></tr>
-            ) : visible.map(inv => (
+            ) : sortedVisible.map(inv => (
               <tr key={inv.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${selected.has(inv.id) ? 'bg-green-500/5' : ''}`}>
                 <td className="px-4 py-3">
                   {isCollectable(inv) ? (
@@ -399,8 +492,11 @@ export default function RetailInvoicesPage() {
                   )}
                 </td>
                 <td className="px-4 py-3">
+                  {/* The same quick view every other list opens — an invoice
+                      only makes sense against the order it was raised on. */}
                   {inv.order?.order_number
-                    ? <span className="font-mono text-xs text-brand-400 bg-brand-600/10 border border-brand-600/20 px-2 py-0.5 rounded">{inv.order.order_number}</span>
+                    ? <OrderNumber value={inv.order.order_number} id={inv.order_id}
+                        className="text-xs bg-brand-600/10 border border-brand-600/20 px-2 py-0.5 rounded" />
                     : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-300">{inv.contact_code ?? <span className="text-slate-600">—</span>}</td>
@@ -459,6 +555,7 @@ export default function RetailInvoicesPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Floating summary bar — same width as the list, sticks to the bottom.

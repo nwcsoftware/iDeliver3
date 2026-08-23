@@ -192,7 +192,6 @@ export default function AccountTransactionsPage() {
             onChange={e => setSearch(e.target.value)}
             placeholder="Search order #, account #, customer, ref, description…"
             className="input pl-9"
-            ref
           />
         </div>
 
