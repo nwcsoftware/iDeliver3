@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { getDeviceName } from '../../lib/device'
+import { subscriptionScope } from '../../lib/subscriptions'
 import {
   SUBSCRIPTION_PLANS, PLAN_CURRENCY, DEFAULT_PLAN, TRIAL_PLAN_DAYS, planByKey,
   AGREEMENT_VERSION, agreementText, fetchAgreement, saveAgreement, fetchTrialEnd,
@@ -47,6 +48,14 @@ export default function SubscriptionAgreementGate({ contactId, companyId = null,
 
   const load = useCallback(async () => {
     if (!contactId) { setState('open'); return }          // unlinked login: nothing to agree to
+
+    /* The agreement is a promise to pay the monthly fee. A party that isn't
+       subject to a subscription — the first ten partners — has no fee to
+       promise, so asking them to accept one would be asking them to agree to
+       something that does not apply. */
+    const scope = await subscriptionScope(contactId)
+    if (!scope.subject) { setState('open'); return }
+
     const [{ status, missing, error: err }, end, who] = await Promise.all([
       fetchAgreement(contactId),
       fetchTrialEnd(contactId),

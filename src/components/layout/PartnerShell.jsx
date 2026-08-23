@@ -22,7 +22,7 @@ import logo from '../../assets/Logo.png'
 // orders list). No other route is mounted here, so nothing else is reachable.
 // My Shop is supplier-only — suppliers stock the shop inventory sold in the
 // customer app; partners never add items, so they don't get the page at all.
-const navItems = [
+export const navItems = [
   { to: '/sold-orders',      icon: Package,      label: 'Sold Orders' },
   { to: '/completed-orders', icon: PackageCheck, label: 'Completed Orders' },
   { to: '/my-shop',          icon: Store,        label: 'My Shop', supplierOnly: true },
@@ -142,9 +142,9 @@ export default function PartnerShell() {
     if (!currentUser) return undefined
     let cancelled = false
     const check = async () => {
-      const { allowed, reason, row } = await checkSubscriptionAccess(currentUser.contact_id)
-      if (cancelled || allowed) return
-      setDenied(accessDeniedMessage(reason, row))
+      const gate = await checkSubscriptionAccess(currentUser.contact_id)
+      if (cancelled || gate.allowed) return
+      setDenied(accessDeniedMessage(gate.reason, gate.row, gate))
     }
     check()
     const t = setInterval(check, 5 * 60 * 1000)

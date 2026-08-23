@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Minus, Square, Copy, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, Search, MapPin, CheckSquare, MinusSquare, Check, Loader2 } from 'lucide-react'
+import { pinnedNav, navGroups } from './Sidebar'
+import { navItems as partnerNavItems } from './PartnerShell'
+import { Minus, Square, Copy, X, Bell, LogOut, ChevronDown, Receipt, EyeOff, MapPin, CheckSquare, MinusSquare, Check, Loader2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useApp } from '../../context/AppContext'
 import { supabase } from '../../lib/supabase'
 import LicenseNotice from '../LicenseNotice'
 import { isVideoBanner } from '../../lib/headerBackground'
 import PartnerSubscriptionNotice from '../PartnerSubscriptionNotice'
+import SearchField from '../ui/SearchField'
 
 // Orders still waiting for someone to confirm them — what the "Unconfirmed"
 // chip on the Deliveries page shows. Mirrors DeliveriesPage's isConfirmed
@@ -23,25 +26,48 @@ const isUnconfirmedOrder = (o) =>
   o?.isclosed !== true &&
   !['cancelled', 'failed'].includes(String(o?.status || '').toLowerCase())
 
-const pageTitles = {
+/* The header wears the page it is showing: its icon and its name.
+
+   Both come from the MENUS themselves — the office sidebar and the 2nd-party
+   portal — so a page cannot be called one thing on the left and another at the
+   top, and a page added to the menu arrives here already named and iconned
+   with nothing to remember.
+
+   The few entries below are overrides, kept only where the header wants a
+   fuller name than a narrow menu can carry ("Orders" on the rail is
+   "Daily Orders" at the top of the screen). */
+const TITLE_OVERRIDES = {
   '/':           'Dashboard',
   '/drivers':    'Driver Management',
-  '/deliveries': 'Deliveries',
+  '/deliveries': 'Daily Orders',
   '/tracking':   'Real-time Tracking',
   '/reports':    'Reports & Analytics',
-  '/settings/users': 'User Accounts',
-  '/settings/shop-categories': 'Shop Categories',
-  '/settings/header-background': 'Header Background',
-  '/settings/subscriptions': 'Subscriptions',
-  '/settings/software-subscriptions': 'Software Subscriptions',
-  '/settings/change-requests': 'Change Requests',
-  '/package-labels': 'Package Labels',
-  '/sold-orders':      'Sold Orders',
-  '/completed-orders': 'Completed Orders',
-  '/supplier-settlements': 'Supplier Settlements',
   '/party-statements': 'Shop Statements',
-  '/inventory': 'Inventory',
-  '/currency-check': 'Currency Check',
+}
+
+/* Every route the app can show, flattened from the two menus into
+   { path: { title, Icon } }. */
+const PAGE_META = (() => {
+  const meta = {}
+  const put = (item) => {
+    if (!item?.to) return
+    meta[item.to] = { title: TITLE_OVERRIDES[item.to] || item.label, Icon: item.icon }
+  }
+  for (const item of pinnedNav) put(item)
+  for (const group of navGroups) for (const item of group.items ?? []) put(item)
+  for (const item of partnerNavItems) put(item)
+  return meta
+})()
+
+/* The page for a path. Exact first; then the longest matching prefix, so a
+   detail route under a section still wears its section's identity rather than
+   falling back to the product name. */
+function pageMetaFor(pathname = '/') {
+  if (PAGE_META[pathname]) return PAGE_META[pathname]
+  const match = Object.keys(PAGE_META)
+    .filter(p => p !== '/' && pathname.startsWith(p + '/'))
+    .sort((a, b) => b.length - a.length)[0]
+  return match ? PAGE_META[match] : null
 }
 
 const roleLabel = {
@@ -57,7 +83,9 @@ const roleLabel = {
 export default function Header() {
   const location             = useLocation()
   const navigate             = useNavigate()
-  const title                = pageTitles[location.pathname] || 'iDeliver III'
+  const page                 = pageMetaFor(location.pathname)
+  const title                = page?.title || 'iDeliver III'
+  const PageIcon             = page?.Icon || null
   const { currentUser, logout } = useAuth()
   const { orders, refreshOrders, showSummary, toggleShowSummary, headerBackground } = useApp()
   const electron             = window.electron
@@ -261,8 +289,16 @@ export default function Header() {
         </>
       )}
 
-      {/* Title */}
-      <h1 className="relative text-sm font-semibold text-slate-100 flex-1 drop-shadow">{title}</h1>
+      {/* Title — the page's own icon beside its name, so the header says where
+          you are at a glance rather than only in words. */}
+      <div className="relative flex items-center gap-2 flex-1 min-w-0">
+        {PageIcon && (
+          <span className="w-7 h-7 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
+            <PageIcon className="w-4 h-4 text-brand-300" />
+          </span>
+        )}
+        <h1 className="text-sm font-semibold text-slate-100 truncate drop-shadow">{title}</h1>
+      </div>
 
       {/* Expiry bar — stays put from a month before expiry until renewal. Each
           component renders only for the roles it serves: the office sees the
@@ -370,11 +406,14 @@ export default function Header() {
                 {/* Search across number, recipient, customer and location */}
                 <div className="px-5 py-2.5 border-b border-surface-border flex-shrink-0">
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                    <input autoFocus disabled={confirming}
-                      className="input pl-9 py-1.5 text-xs disabled:opacity-50" value={bellSearch}
+                    <SearchField
+                      value={bellSearch}
                       onChange={e => setBellSearch(e.target.value)}
-                      placeholder="Search order number, reception, customer or delivery location…" />
+                      placeholder="Search order number, reception, customer or delivery location…"
+                      className="input pl-9 py-1.5 text-xs disabled:opacity-50"
+                      autoFocus
+                      disabled={confirming}
+                    />
                   </div>
                 </div>
 

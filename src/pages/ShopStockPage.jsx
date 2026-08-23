@@ -1,7 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Boxes, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, PackageOpen,
-  ArrowDownCircle, ArrowUpCircle, ShoppingCart, Clock, Store,
+  Boxes,
+  Plus,
+  X,
+  Loader,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  PackageOpen,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  ShoppingCart,
+  Clock,
+  Store,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -10,6 +21,7 @@ import {
   MOVEMENT_TYPES, fetchMovements, fetchReservations, summarise,
   saveMovement, deleteMovement,
 } from '../lib/shopStock'
+import SearchField from '../components/ui/SearchField'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const emptyMove = (itemId = '') => ({ item_id: itemId, movement_type: 'in', quantity: '', notes: '', moved_at: todayISO() })
@@ -143,9 +155,12 @@ export default function ShopStockPage({ partyContactId = null }) {
           <h2 className="text-base font-semibold text-slate-100">Inventory</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search items…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search items…"
+            className="input pl-9"
+          />
         </div>
         <button className="btn-primary ml-auto" onClick={() => openAdd()} disabled={items.length === 0}>
           <Plus className="w-4 h-4" /> New movement

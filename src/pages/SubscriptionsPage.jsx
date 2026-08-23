@@ -1,8 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  CreditCard, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
-  CheckCircle2, Circle, Power, PowerOff, Building, Handshake, CalendarRange,
-  AlertTriangle, AlertOctagon, XCircle, RefreshCw, Users, Wallet, CalendarClock, FileSignature, FileDown,
+  CreditCard,
+  Plus,
+  X,
+  Loader,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  Shield,
+  CheckCircle2,
+  Circle,
+  Power,
+  PowerOff,
+  Building,
+  Handshake,
+  CalendarRange,
+  AlertTriangle,
+  AlertOctagon,
+  XCircle,
+  RefreshCw,
+  Users,
+  Wallet,
+  CalendarClock,
+  FileSignature,
+  FileDown,
+  Info,
+  ArrowUpAZ,
+  ArrowDownZA,
+  ChevronsUpDown,
+  Pin,
+  PinOff,
+  FilterX,
+  ChevronRight,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -12,10 +41,13 @@ import {
   subscriptionStatus, STATUS_STYLES, contactLabel, todayStr,
   subscriptionsSummary, coveredContactIds, renewalStage, RENEWAL_STAGES,
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
-  isTrialSubscription, TRIAL_DAYS,
+  isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
+  rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
 } from '../lib/subscriptions'
+import { SEATS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
+import SearchField from '../components/ui/SearchField'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const STATUS_FILTERS = [
@@ -85,6 +117,8 @@ export default function SubscriptionsPage() {
   const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
   const [agreementsOff, setAgreementsOff] = useState(false) // fix128 not run yet
   const [parties,    setParties]    = useState([])          // supplier/partner contacts
+  // Contacts that have a login — the only ones that occupy a seat (fix136).
+  const [loginIds,   setLoginIds]   = useState(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
 
@@ -93,6 +127,52 @@ export default function SubscriptionsPage() {
   const [partyFilter,   setPartyFilter]   = useState('all')
   const [renewalFilter, setRenewalFilter] = useState('')     // '' | 'due' | 'urgent' | 'expired'
   const [agreeFilter,   setAgreeFilter]   = useState('')     // '' | 'pending' | 'agreed' | 'rejected'
+
+  /* The summary and filters fold away, because on a laptop they can take half
+     the screen before a single subscription is visible. Pinning keeps them
+     open for good — a person who works from the figures should not have to
+     reopen them every visit. Both choices are remembered per device: it is a
+     preference about this screen, not something the office needs to agree on. */
+  const PANEL_KEY = 'ideliver_subs_panel'
+  const [panel, setPanel] = useState(() => {
+    try { return { open: true, pinned: false, ...(JSON.parse(localStorage.getItem(PANEL_KEY) || '{}')) } }
+    catch { return { open: true, pinned: false } }
+  })
+  const savePanel = (next) => {
+    setPanel(next)
+    try { localStorage.setItem(PANEL_KEY, JSON.stringify(next)) } catch { /* a preference, not data */ }
+  }
+  // Pinned means always shown, so pinning opens it and unpinning leaves it as is.
+  const togglePin  = () => savePanel({ ...panel, pinned: !panel.pinned, open: panel.pinned ? panel.open : true })
+  const toggleOpen = () => { if (!panel.pinned) savePanel({ ...panel, open: !panel.open }) }
+  const panelOpen  = panel.open || panel.pinned
+
+  /* One place that puts the list back to everything, so no filter can be left
+     behind by a button that was written before it existed. */
+  const activeFilters = [
+    search && 'search',
+    statusFilter !== 'all' && 'status',
+    partyFilter !== 'all' && 'party',
+    renewalFilter && 'renewal',
+    agreeFilter && 'agreement',
+  ].filter(Boolean)
+
+  const clearFilters = () => {
+    setSearch('')
+    setStatusFilter('all')
+    setPartyFilter('all')
+    setRenewalFilter('')
+    setAgreeFilter('')
+  }
+
+  /* Column sorting, cycling A→Z, Z→A, then back to the order the query
+     returned. The third state is the point: "newest first" is itself a view,
+     and without a way back to it a click on a header is a one-way door. */
+  const [sort, setSort] = useState({ key: null, dir: null })
+  const cycleSort = (key) => setSort(s => (
+    s.key !== key ? { key, dir: 'asc' }
+      : s.dir === 'asc' ? { key, dir: 'desc' }
+      : { key: null, dir: null }))
 
   const [modal,   setModal]   = useState(null)   // 'add' | row
   const [form,    setForm]    = useState(emptyForm())
@@ -123,10 +203,16 @@ export default function SubscriptionsPage() {
     ;(async () => {
       const { data } = await supabase
         .from('contacts')
-        .select('id, first_name, last_name, company_name, code, contact_types')
+        .select('id, first_name, last_name, company_name, code, contact_types, created_at, is_active')
         .overlaps('contact_types', ['supplier', 'partner'])
         .order('first_name')
       setParties(data ?? [])
+
+      const { data: logins } = await supabase
+        .from('user_accounts')
+        .select('contact_id')
+        .not('contact_id', 'is', null)
+      setLoginIds(new Set((logins ?? []).map(l => l.contact_id)))
     })()
   }, [canView])
 
@@ -163,6 +249,41 @@ export default function SubscriptionsPage() {
     })
   }, [rows, search, statusFilter, partyFilter, renewalFilter, agreeFilter, today, covered, agreements])
 
+  /* What each column sorts BY — not always what it shows. Renewal sorts by the
+     days left, so "Expired" and "3 days" sit at the same end; Amount by the
+     figure rather than its formatted text; Agreement by where the party stands.
+     Sorting by the printed string would order 10 before 9. */
+  const sortValue = (r, key) => {
+    switch (key) {
+      case 'party':       return contactLabel(r.contact).toLowerCase()
+      case 'description': return (r.description || '').toLowerCase()
+      case 'start':       return r.start_date || ''
+      case 'end':         return r.end_date || ''
+      case 'renewal': {
+        const { days } = stageOf(r)
+        return days == null ? Number.NEGATIVE_INFINITY : days
+      }
+      case 'amount':      return Number(r.amount) || 0
+      case 'payment':     return r.is_paid ? 1 : 0
+      case 'status':      return subscriptionStatus(r, today)
+      case 'agreement':   return agreementStatusOf(r)
+      default:            return ''
+    }
+  }
+
+  const sorted = useMemo(() => {
+    if (!sort.key || !sort.dir) return filtered            // the natural order
+    const dir = sort.dir === 'asc' ? 1 : -1
+    return filtered.slice().sort((a, b) => {
+      const va = sortValue(a, sort.key)
+      const vb = sortValue(b, sort.key)
+      if (va === vb) return contactLabel(a.contact).localeCompare(contactLabel(b.contact))
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
+      return String(va).localeCompare(String(vb)) * dir
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, sort, today, agreements, covered])
+
   // Headline figures over the whole list (not the filtered view) — counts, money
   // per currency, and how many renewals are coming up.
   const summary = useMemo(() => subscriptionsSummary(rows, today), [rows, today])
@@ -170,6 +291,27 @@ export default function SubscriptionsPage() {
   /* Agreements are counted per CONTACT, not per subscription row: one party
      with three periods has answered once, and counting the rows would say
      three. */
+  /* Who actually has to subscribe: every supplier, and partners from the
+     eleventh onward. Computed from the party list already loaded, so it costs
+     nothing extra. */
+  const partnerRanks = useMemo(() => rankPartners(parties, loginIds), [parties, loginIds])
+  const scopeOf = useCallback((contact) => {
+    if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
+    return scopeFor(contact, partnerRanks.get(contact.id) ?? null)
+  }, [partnerRanks])
+
+  const scopeCounts = useMemo(() => {
+    // Seats are held by parties that can sign in; the rest of the address book
+    // is contacts, not subscriptions.
+    const seated = parties.filter(c => c.is_active !== false && loginIds.has(c.id))
+    const livePartners = seated.filter(c => isPartnerContact(c) && !isSupplierContact(c))
+    return {
+      suppliers: seated.filter(c => isSupplierContact(c)).length,
+      free: Math.min(PARTNER_FREE_LIMIT, livePartners.length),
+      paying: Math.max(0, livePartners.length - PARTNER_FREE_LIMIT),
+    }
+  }, [parties, loginIds])
+
   const agreeCounts = useMemo(() => {
     const seen = new Map()
     for (const r of rows) {
@@ -192,6 +334,26 @@ export default function SubscriptionsPage() {
   }
 
   function openAdd() { setForm(emptyForm()); setFormErr(''); setModal('add') }
+  /* Renewing a partner is always the same arrangement — one year at USD 10,
+     invoiced to 3asari3 — so the form offers exactly that rather than making
+     the super admin retype the licence every time. A supplier renews onto its
+     chosen monthly plan instead, which is the party's own decision. */
+  function renewPartner(r) {
+    const from = r?.end_date && r.end_date >= todayStr() ? addDays(r.end_date, 1) : todayStr()
+    setForm({
+      contact_id: r.contact_id,
+      description: `Annual partner seat — ${from.slice(0, 4)}`,
+      start_date: from,
+      end_date: addDays(from, 364),
+      amount: String(SEATS.partner.extraRate),
+      currency: RATE_CURRENCY,
+      is_paid: false,
+      paid_by_note: 'Invoiced to 3asari3 with the annual package',
+      is_active: false,
+    })
+    setFormErr(''); setModal('add')
+  }
+
   function openEdit(r) {
     setForm({
       contact_id: r.contact_id ?? '', description: r.description ?? '',
@@ -245,7 +407,7 @@ export default function SubscriptionsPage() {
   const COL_COUNT = isSuperAdmin ? 10 : 9     // header cells, for the empty/loading rows
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -253,9 +415,12 @@ export default function SubscriptionsPage() {
           <h2 className="text-base font-semibold text-slate-100">Subscriptions</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search supplier, partner or description…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search supplier, partner or description…"
+            className="input pl-9"
+          />
         </div>
         {isSuperAdmin && (
           <button className="btn-primary ml-auto" onClick={openAdd}>
@@ -264,6 +429,51 @@ export default function SubscriptionsPage() {
         )}
       </div>
 
+      {/* ── Summary & filters, foldable and pinnable ─────────────────────
+          The title, the search box and New subscription stay outside: those
+          are how you get anywhere on this page, so they are never hidden. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={toggleOpen} disabled={panel.pinned}
+          title={panel.pinned ? 'Pinned open — unpin to fold it away' : (panelOpen ? 'Hide the summary and filters' : 'Show the summary and filters')}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            panel.pinned
+              ? 'border-surface-border text-slate-500 cursor-default'
+              : 'border-surface-border text-slate-300 hover:bg-surface-hover'}`}>
+          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${panelOpen ? 'rotate-90' : ''}`} />
+          Summary &amp; filters
+        </button>
+
+        <button onClick={togglePin}
+          title={panel.pinned ? 'Unpin — let it fold away' : 'Pin — keep it open on this device'}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            panel.pinned
+              ? 'bg-brand-500/15 text-brand-300 border-brand-500/30'
+              : 'border-surface-border text-slate-400 hover:bg-surface-hover'}`}>
+          {panel.pinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
+          {panel.pinned ? 'Pinned' : 'Pin'}
+        </button>
+
+        {/* Folded away, the filters must still announce themselves — a hidden
+            filter is the reason a list looks empty for no apparent reason. */}
+        {!panelOpen && activeFilters.length > 0 && (
+          <span className="px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-amber-500/10 text-amber-300 border-amber-500/30">
+            {activeFilters.length} filter{activeFilters.length === 1 ? '' : 's'} on — {activeFilters.join(', ')}
+          </span>
+        )}
+
+        {activeFilters.length > 0 && (
+          <button onClick={clearFilters}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-surface-border text-slate-400 hover:text-slate-200">
+            <FilterX className="w-3.5 h-3.5" /> Clear filters
+          </button>
+        )}
+
+        <span className="ml-auto text-[11px] text-slate-500">
+          {sorted.length} of {rows.length} subscription{rows.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {panelOpen && (<>
       {/* ── Summary (super admin) ────────────────────────────────────────
           How many subscriptions there are, what they are worth, and what needs
           renewing — over the whole list, not the filtered view, so the figures
@@ -373,6 +583,22 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
+      {/* The rule, in one line — the figures under it are what it produces today. */}
+      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg border border-surface-border bg-surface-hover/30">
+        <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          <span className="text-slate-200">Suppliers always subscribe.</span>{' '}
+          Partners get the first {PARTNER_FREE_LIMIT} free — from the {PARTNER_FREE_LIMIT + 1}th onward they
+          subscribe too. The free slots are held by the {PARTNER_FREE_LIMIT} longest-standing live partners, so
+          retiring one passes its slot to the next in line.
+          <span className="block mt-1 text-slate-500">
+            Today: {scopeCounts.suppliers} supplier{scopeCounts.suppliers === 1 ? '' : 's'} ·
+            {' '}{scopeCounts.free} free partner{scopeCounts.free === 1 ? '' : 's'} ·
+            {' '}{scopeCounts.paying} partner{scopeCounts.paying === 1 ? '' : 's'} subscribing.
+          </span>
+        </p>
+      </div>
+
       {/* Filters */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1">
@@ -409,13 +635,14 @@ export default function SubscriptionsPage() {
             Agreement {AGREEMENT_STATUS[agreeFilter].label.toLowerCase()}
           </span>
         )}
-        {(search || statusFilter !== 'all' || partyFilter !== 'all' || renewalFilter || agreeFilter) && (
-          <button onClick={() => { setSearch(''); setStatusFilter('all'); setPartyFilter('all'); setRenewalFilter(''); setAgreeFilter('') }}
+        {activeFilters.length > 0 && (
+          <button onClick={clearFilters}
             className="btn-ghost py-1.5 px-2.5 text-xs text-slate-400 border border-surface-border">
-            <X className="w-3.5 h-3.5" /> Clear
+            <FilterX className="w-3.5 h-3.5" /> Clear filters
           </button>
         )}
       </div>
+      </>)}
 
       {agreementsOff && isSuperAdmin && (
         <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
@@ -435,21 +662,46 @@ export default function SubscriptionsPage() {
       )}
 
       {/* List */}
-      <div className="card overflow-hidden">
+      {/* The table scrolls inside the card so the header can stay put: on a long
+          list the column you are reading is otherwise off the top of the screen
+          by the time you reach the rows you came for. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-y-auto flex-1 min-h-0">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-card">
             <tr className="border-b border-surface-border">
-              {['Supplier / Partner', 'Description', 'Start', 'End', 'Renewal', 'Amount', 'Payment', 'Status', 'Agreement', ...(isSuperAdmin ? [''] : [])].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
+              {[
+                ['Supplier / Partner', 'party'], ['Description', 'description'],
+                ['Start', 'start'], ['End', 'end'], ['Renewal', 'renewal'],
+                ['Amount', 'amount'], ['Payment', 'payment'], ['Status', 'status'],
+                ['Agreement', 'agreement'],
+                ...(isSuperAdmin ? [['', null]] : []),
+              ].map(([label, key]) => (
+                <th key={label || 'actions'}
+                  className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider bg-surface-card">
+                  {key ? (
+                    <button onClick={() => cycleSort(key)}
+                      title={sort.key === key
+                        ? (sort.dir === 'asc' ? 'Sorted A→Z — click for Z→A' : 'Sorted Z→A — click to clear')
+                        : `Sort by ${label}`}
+                      className={`inline-flex items-center gap-1 uppercase tracking-wider transition-colors ${
+                        sort.key === key ? 'text-brand-300' : 'hover:text-slate-300'}`}>
+                      {label}
+                      {sort.key === key
+                        ? (sort.dir === 'asc' ? <ArrowUpAZ className="w-3.5 h-3.5" /> : <ArrowDownZA className="w-3.5 h-3.5" />)
+                        : <ChevronsUpDown className="w-3 h-3 opacity-40" />}
+                    </button>
+                  ) : label}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={COL_COUNT} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
+            ) : sorted.length === 0 ? (
               <tr><td colSpan={COL_COUNT} className="px-4 py-10 text-center text-slate-500">No subscriptions found</td></tr>
-            ) : filtered.map(r => {
+            ) : sorted.map(r => {
               const st  = subscriptionStatus(r, today)
               const cfg = STATUS_STYLES[st] ?? STATUS_STYLES.deactivated
               const Icon = partyIcon(r.contact)
@@ -471,6 +723,18 @@ export default function SubscriptionsPage() {
                     <div className="flex items-center gap-2">
                       <Icon className="w-4 h-4 text-slate-500 flex-shrink-0" />
                       <span className={`font-medium ${lapsed ? strike : 'text-slate-100'}`}>{contactLabel(r.contact)}</span>
+                      {(() => {
+                        const sc = scopeOf(r.contact)
+                        if (sc.subject) return null
+                        return (
+                          <span title={sc.scope === SCOPE.partnerFree
+                            ? `Partner #${sc.rank} — inside the first ${PARTNER_FREE_LIMIT}, so no subscription is required`
+                            : 'Not subject to a subscription'}
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-fresh-500/30 bg-fresh-500/10 text-fresh-300 whitespace-nowrap flex-shrink-0">
+                            free partner{sc.rank ? ` #${sc.rank}` : ''}
+                          </span>
+                        )
+                      })()}
                     </div>
                   </td>
                   <td className="px-4 py-3 max-w-[16rem]">
@@ -567,6 +831,13 @@ export default function SubscriptionsPage() {
                             r.is_active ? 'text-green-400 hover:text-red-400' : 'text-slate-400 hover:text-green-400'}`}>
                           {r.is_active ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
                         </button>
+                        {!isSupplierContact(r.contact) && (
+                          <button onClick={() => renewPartner(r)}
+                            title={`Renew — one year at ${SEATS.partner.extraRate} ${RATE_CURRENCY}, invoiced to 3asari3`}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-brand-300">
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        )}
                         <button onClick={() => openEdit(r)} title="Edit"
                           className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100"><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setConfirmDelete(r)} title="Delete"
@@ -579,6 +850,7 @@ export default function SubscriptionsPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* What the four renewal icons mean — stated once, under the list. */}

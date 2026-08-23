@@ -85,9 +85,13 @@ export function currencyIssue(amount, currency, limits = DEFAULT_CURRENCY_LIMITS
    check has to run per line rather than per order. */
 export function orderMoneyLines(order) {
   const lines = []
-  const push = (kind, label, amount, currency, ref) => {
+  /* `by` is who collected the money. It exists for a payment and nothing else:
+     a delivery fee or a package price is a figure on the order, not something
+     a person handed over, and inventing a name for those would be worse than
+     leaving the column empty. */
+  const push = (kind, label, amount, currency, ref, by = null) => {
     if (num(amount) === 0) return
-    lines.push({ kind, label, amount: round2(amount), currency: currency || order?.currency || 'USD', ref })
+    lines.push({ kind, label, amount: round2(amount), currency: currency || order?.currency || 'USD', ref, by })
   }
 
   push('fee', 'Delivery fee', order?.delivery_fee, order?.currency)
@@ -111,7 +115,8 @@ export function orderMoneyLines(order) {
     push('ad', 'Ad', a.price, a.currency, a.platform)
   }
   for (const pc of order?.payment_collections ?? []) {
-    push('payment', 'Payment', pc.amount, pc.currency, pc.collected_by_name || pc.collection_group)
+    push('payment', 'Payment', pc.amount, pc.currency,
+      pc.collection_group, pc.collected_by_name || null)
   }
   return lines
 }
@@ -144,6 +149,13 @@ export function scanCurrencyIssues(orders = [], limits = DEFAULT_CURRENCY_LIMITS
         date: o.scheduled_date || String(o.created_at || '').slice(0, 10),
         closed: !!o.isclosed,
         customer: o.customer,
+        /* Who raised the order, and where it came from. `created_by` holds the
+           name as it was at the time (fix137); `created_by_id` is the account,
+           resolved to a name by the page — the only place that knows the user
+           list — for orders raised before the name was stored. */
+        createdByName: o.created_by || null,
+        createdById: o.created_by_id || null,
+        source: o.order_source || null,
         ...issue,
       })
     }

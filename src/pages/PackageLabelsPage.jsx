@@ -1,6 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Tags, Search, Printer, FileDown, AlertCircle, Calendar, CheckSquare, Square, Package,
+  Tags,
+  Printer,
+  FileDown,
+  AlertCircle,
+  Calendar,
+  CheckSquare,
+  Square,
+  Package,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { jsPDF } from 'jspdf'
@@ -8,6 +15,7 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { orderTotalsByCurrency } from '../lib/orderAmounts'
 import logoUrl from '../assets/ideliver-logo-login.png'
+import SearchField from '../components/ui/SearchField'
 
 /* Package labels — pick a delivery date, tick the packages, print 5.8 × 6 cm
    labels carrying the order number, recipient, delivery location, the customer
@@ -318,9 +326,12 @@ export default function PackageLabelsPage() {
             </div>
           </div>
           <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input className="input pl-9" placeholder="Search order, reference, recipient…"
-              value={search} onChange={e => setSearch(e.target.value)} />
+            <SearchField
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search order, reference, recipient…"
+              className="input pl-9"
+            />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={savePdf} disabled={labels.length === 0}

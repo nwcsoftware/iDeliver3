@@ -20,7 +20,7 @@ import {
   MapPin,
   MessageCircle,
   Package,
-  Pencil,
+  Phone,
   Plus,
   Search,
   ShieldCheck,
@@ -38,6 +38,16 @@ import {
   Clock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { cancelOwnOrder, canCustomerCancel, CANCEL_REFUSED, SUPPORT_PHONE } from '../lib/orderCancel'
+import {
+  fetchCustomerThemes, pickCurrent as pickCurrentTheme, applyCustomerTheme,
+  themeByKey, DEFAULT_THEME, clearCustomerTheme,
+} from '../lib/customerThemes'
+import {
+  itemOptions, inStockValues, optionsExhausted, missingChoice, choiceGroups,
+  variantLabel as optionVariantLabel, pickedImage as optionPickedImage,
+  legacyVariantFields, valueState, prunePicks, extrasTotal, pickedExtras,
+} from '../lib/shopOptions'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
 import { reserveCartLine, releaseCartLine, convertReservationsToSales, summarise as summariseStock } from '../lib/shopStock'
@@ -100,6 +110,10 @@ const translations = {
     size: 'Size',
     quantity: 'Qty',
     chooseColor: 'Choose a color',
+    choosePrefix: 'Choose',
+    valueSoldOut: 'Sold out',
+    notInCombo: 'Not available with your choice',
+    extrasOptional: 'optional',
     chooseSize: 'Choose a size',
     selectOptions: 'Select size / color',
     colorsCount: '{{count}} colors',
@@ -151,6 +165,18 @@ const translations = {
     edit: 'Edit',
     editAddress: 'Edit Address',
     editOrder: 'Edit Order',
+    cancelOrder: 'Cancel order',
+    cancelAsk: 'Cancel this order?',
+    cancelAskBody: 'The order is called off and cannot be brought back. You can always place a new one.',
+    cancelKeep: 'Keep the order',
+    cancelYes: 'Yes, cancel it',
+    cancelReason: 'Tell us why (optional)',
+    cancelDone: 'Your order has been cancelled.',
+    cancelFailed: 'The order could not be cancelled. Please try again.',
+    cancelTooLate: 'The call center has already confirmed this order, so it can no longer be cancelled here. Please call us to cancel it.',
+    confirmedCallToCancel: 'Confirmed — to cancel it, please call the call center.',
+    callUs: 'Call {{phone}}',
+    orderCancelled: 'Cancelled',
     email: 'Email',
     emailAddress: 'Email address',
     endTime: 'End time',
@@ -346,6 +372,10 @@ const translations = {
     size: 'المقاس',
     quantity: 'الكمية',
     chooseColor: 'اختر اللون',
+    choosePrefix: 'اختر',
+    valueSoldOut: 'نفدت الكمية',
+    notInCombo: 'غير متوفر مع اختيارك',
+    extrasOptional: 'اختياري',
     chooseSize: 'اختر المقاس',
     selectOptions: 'اختر المقاس / اللون',
     colorsCount: '{{count}} ألوان',
@@ -400,6 +430,18 @@ const translations = {
     edit: 'تعديل',
     editAddress: 'تعديل العنوان',
     editOrder: 'تعديل الطلب',
+    cancelOrder: 'إلغاء الطلب',
+    cancelAsk: 'إلغاء هذا الطلب؟',
+    cancelAskBody: 'سيتم إلغاء الطلب ولا يمكن استرجاعه. يمكنك دائماً إنشاء طلب جديد.',
+    cancelKeep: 'الاحتفاظ بالطلب',
+    cancelYes: 'نعم، ألغِ الطلب',
+    cancelReason: 'أخبرنا السبب (اختياري)',
+    cancelDone: 'تم إلغاء طلبك.',
+    cancelFailed: 'تعذّر إلغاء الطلب. حاول مرة أخرى.',
+    cancelTooLate: 'أكد مركز الاتصال هذا الطلب، لذلك لا يمكن إلغاؤه من هنا. يرجى الاتصال بنا لإلغائه.',
+    confirmedCallToCancel: 'تم التأكيد — للإلغاء يرجى الاتصال بمركز الاتصال.',
+    callUs: 'اتصل بـ {{phone}}',
+    orderCancelled: 'ملغى',
     email: 'البريد الإلكتروني',
     emailAddress: 'عنوان البريد الإلكتروني',
     endTime: 'وقت الانتهاء',
@@ -594,6 +636,10 @@ translations.fr = {
   size: 'Taille',
   quantity: 'Qté',
   chooseColor: 'Choisissez une couleur',
+  choosePrefix: 'Choisissez',
+  valueSoldOut: 'Épuisé',
+  notInCombo: 'Indisponible avec votre choix',
+  extrasOptional: 'facultatif',
   chooseSize: 'Choisissez une taille',
   selectOptions: 'Choisir taille / couleur',
   colorsCount: '{{count}} couleurs',
@@ -631,6 +677,18 @@ translations.fr = {
   deliveryStatusUpdated: 'Statut de livraison mis a jour',
   edit: 'Modifier',
   editOrder: 'Modifier la commande',
+  cancelOrder: 'Annuler la commande',
+  cancelAsk: 'Annuler cette commande ?',
+  cancelAskBody: 'La commande est annulée et ne peut pas être rétablie. Vous pouvez en passer une nouvelle.',
+  cancelKeep: 'Garder la commande',
+  cancelYes: 'Oui, annuler',
+  cancelReason: 'Dites-nous pourquoi (facultatif)',
+  cancelDone: 'Votre commande a été annulée.',
+  cancelFailed: "La commande n'a pas pu être annulée. Réessayez.",
+  cancelTooLate: "Le centre d'appels a déjà confirmé cette commande ; elle ne peut plus être annulée ici. Appelez-nous pour l'annuler.",
+  confirmedCallToCancel: "Confirmée — pour l'annuler, appelez le centre d'appels.",
+  callUs: 'Appeler {{phone}}',
+  orderCancelled: 'Annulée',
   email: 'Email',
   endTime: 'Heure de fin',
   externalRequest: 'Demandez un chauffeur pour vous transporter, vous, vos colis ou vos achats, en toute sécurité et simplicité.',
@@ -768,6 +826,10 @@ translations.ro = {
   size: 'Marime',
   quantity: 'Cant.',
   chooseColor: 'Alege o culoare',
+  choosePrefix: 'Alege',
+  valueSoldOut: 'Stoc epuizat',
+  notInCombo: 'Indisponibil cu alegerea ta',
+  extrasOptional: 'optional',
   chooseSize: 'Alege o marime',
   selectOptions: 'Alege marime / culoare',
   colorsCount: '{{count}} culori',
@@ -805,6 +867,18 @@ translations.ro = {
   deliveryStatusUpdated: 'Statusul livrarii a fost actualizat',
   edit: 'Editeaza',
   editOrder: 'Editeaza comanda',
+  cancelOrder: 'Anuleaza comanda',
+  cancelAsk: 'Anulezi aceasta comanda?',
+  cancelAskBody: 'Comanda este anulata si nu mai poate fi recuperata. Poti plasa oricand una noua.',
+  cancelKeep: 'Pastreaza comanda',
+  cancelYes: 'Da, anuleaz-o',
+  cancelReason: 'Spune-ne de ce (optional)',
+  cancelDone: 'Comanda ta a fost anulata.',
+  cancelFailed: 'Comanda nu a putut fi anulata. Incearca din nou.',
+  cancelTooLate: 'Call center-ul a confirmat deja aceasta comanda, asa ca nu mai poate fi anulata aici. Suna-ne pentru anulare.',
+  confirmedCallToCancel: 'Confirmata — pentru anulare, suna la call center.',
+  callUs: 'Suna la {{phone}}',
+  orderCancelled: 'Anulata',
   email: 'Email',
   endTime: 'Ora de final',
   externalRequest: 'Solicită un șofer care să te transporte pe tine, coletele sau cumpărăturile tale în siguranță și comod.',
@@ -1071,7 +1145,10 @@ function AppBackdrop() {
   )
 }
 
-function Shell({ children, activeTab, onTab }) {
+/* `themed` = a seasonal clip is playing behind the app. The frame then goes
+   transparent so the movie is actually visible, and the decorative parcels step
+   aside rather than competing with it. */
+function Shell({ children, activeTab, onTab, themed = false }) {
   const { t, dir } = useI18n()
   const nav = [
     { id: 'home', label: t('home'), icon: Home },
@@ -1081,9 +1158,11 @@ function Shell({ children, activeTab, onTab }) {
   ]
 
   return (
-    <div className="min-h-screen overflow-hidden bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden bg-[#FFF8EF] shadow-2xl shadow-cyan-950/10">
-        <AppBackdrop />
+    <div className={cx('min-h-screen overflow-hidden text-[#071923]', themed && 'bg-transparent')}
+      style={themed ? undefined : { background: 'rgb(var(--app-ground))' }} dir={dir}>
+      <div className="relative mx-auto flex min-h-screen w-full max-w-full md:max-w-md flex-col overflow-hidden shadow-2xl shadow-cyan-950/10"
+        style={{ background: themed ? 'transparent' : 'rgb(var(--app-ground))' }}>
+        {!themed && <AppBackdrop />}
         <div className="relative z-10 flex-1 overflow-y-auto pb-20">{children}</div>
         <nav className="fixed bottom-0 left-0 z-20 w-full max-w-full md:left-1/2 md:max-w-md md:-translate-x-1/2 border-t border-shop-100 bg-white/95 px-4 py-3 backdrop-blur">
           <div className="grid grid-cols-4 gap-2">
@@ -1433,7 +1512,7 @@ function OtpScreen({ onDone, onBack, onGoogleLogin }) {
 
   return (
     <div className="min-h-dvh overflow-y-auto bg-[#eaf8fb] text-[#071923]" dir={dir}>
-      <div className="mx-auto min-h-dvh w-full max-w-full px-2 sm:px-0 md:max-w-md bg-[#FFF8EF] pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="mx-auto min-h-dvh w-full max-w-full px-2 sm:px-0 md:max-w-md bg-ground pb-[max(1rem,env(safe-area-inset-bottom))]">
         <Header title={t('customerRegistration')} subtitle={t('firstTimeSetup')} back onBack={step === 'otp' ? () => setStep('details') : onBack} />
         <main className="space-y-3 px-4 py-4">
           {step === 'details' && (
@@ -1731,18 +1810,23 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
   const [houseItems,  setHouseItems]  = useState([])     // 3asari3's own catalog
   const [stock,       setStock]       = useState({})     // itemId → { available, tracked }
   // Variant choices inside the popup (reset each time one is opened).
-  const [pickedColor, setPickedColor] = useState('')
-  const [pickedSize,  setPickedSize]  = useState('')
+  // One pick per option, keyed by the option's label — the shop names them, so
+  // there is no fixed set of fields to hold them in (fix129).
+  const [picks, setPicks] = useState({})
   const [pickedQty,   setPickedQty]   = useState(1)
   const [variantErr,  setVariantErr]  = useState('')
 
   // Open the item popup with a clean set of choices; a single colour/size is
   // preselected since there is nothing to decide.
   function openPreview(it) {
-    const colors = itemColors(it)
-    const sizes  = itemSizes(it)
-    setPickedColor(colors.length === 1 ? colors[0].name : '')
-    setPickedSize(sizes.length === 1 ? sizes[0] : '')
+    // A single available value is not a choice — pick it for them. Extras are
+    // never pre-picked: nobody wants to be charged for an add-on by default.
+    const chosen = {}
+    for (const g of choiceGroups(itemOptions(it))) {
+      const open = g.values.filter(v => valueState(it, g, v, chosen) === 'available')
+      if (open.length === 1) chosen[g.label] = open[0].name
+    }
+    setPicks(chosen)
     setPickedQty(1)
     setVariantErr('')
     setPreview(it)
@@ -1775,18 +1859,18 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
         .eq('is_active', true)
         .order('created_at', { ascending: false })
 
-      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER}`)
+      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER}`)
       // `images` (fix105), `categories` (fix103) and `colors`/`sizes` (fix106)
       // are newer columns — on a DB where a migration hasn't run yet, fall back
       // so the shop still lists.
       if (e && /opening_hours|hours_note/.test(e.message)) {
         const OWNER_OLD = OWNER.replace(',opening_hours,hours_note', '')
         ;({ data, error: e } = await supabase.from('shop_inventory')
-          .select(`id,name,description,price,currency,image_url,images,category,categories,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER_OLD}`)
+          .select(`id,name,description,price,currency,image_url,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER_OLD}`)
           .eq('is_displayed', true).eq('is_active', true)
           .order('created_at', { ascending: false }))
       }
-      if (e && /images|categories|colors|sizes|is_made_to_order/.test(e.message)) {
+      if (e && /options|combos|images|categories|colors|sizes|is_made_to_order/.test(e.message)) {
         ;({ data, error: e } = await run(`id,name,description,price,currency,image_url,category,owner_contact_id, ${OWNER}`))
       }
       if (cancelled) return
@@ -1800,13 +1884,13 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
       try {
         let { data: prods, error: prodErr } = await supabase
           .from('products')
-          .select('id,name,description,unit_price,currency,image_url,images,colors,sizes,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
+          .select('id,name,description,unit_price,currency,image_url,images,options,combos,colors,sizes,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
           .eq('is_active', true)
           .eq('is_displayed', true)      // published to the customer app (fix115)
           .eq('is_service', false)
           .eq('is_advertisement', false)
           .order('name')
-        if (prodErr && /images|colors|sizes/.test(prodErr.message)) {
+        if (prodErr && /options|combos|images|colors|sizes/.test(prodErr.message)) {
           ;({ data: prods } = await supabase
             .from('products')
             .select('id,name,description,unit_price,currency,image_url,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
@@ -1827,7 +1911,10 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
               ? pr.images.filter(Boolean)
               : (pr.image_url ? [pr.image_url] : []),
             categories: pr.category?.name ? [pr.category.name] : [],
-            // Colours and sizes come from the catalog too (fix116).
+            // The catalog carries the same options as a partner's shop (fix131);
+            // `colors`/`sizes` remain for rows saved before that.
+            options: Array.isArray(pr.options) ? pr.options : [],
+            combos:  Array.isArray(pr.combos)  ? pr.combos  : [],
             colors: Array.isArray(pr.colors) ? pr.colors : [],
             sizes:  Array.isArray(pr.sizes)  ? pr.sizes  : [],
             owner_contact_id: null,
@@ -1934,14 +2021,16 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
   const madeToOrder = it => !!it?.is_made_to_order
   const soldOut = it => {
     if (madeToOrder(it)) return false
+    // Every value of an option gone (all sizes finished) leaves nothing to
+    // choose — the item is out of stock however much the ledger says (fix129).
+    if (optionsExhausted(it)) return true
     const a = avail(it)
     return !!a?.tracked && a.available <= 0
   }
   const orderedCount = it => avail(it)?.sold || 0
 
-  // Variants (fix106) — optional colour/size lists on an item.
-  const itemColors = it => (Array.isArray(it?.colors) ? it.colors.filter(c => c?.name) : [])
-  const itemSizes  = it => (Array.isArray(it?.sizes)  ? it.sizes.filter(Boolean)       : [])
+  // Options (fix129) live in `itemOptions`, which also reads the old
+  // colours/sizes columns, so both shapes render through one path.
 
   // An item carries several category tags (fix103); rows saved before that
   // still have the single `category` string.
@@ -2007,27 +2096,33 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
   function addPreviewToCart() {
     // Guard as well as disable the button — nothing out of stock gets in.
     if (soldOut(preview)) { setVariantErr(t('outOfStockNote')); return }
-    const colors = itemColors(preview)
-    const sizes  = itemSizes(preview)
-    if (colors.length > 0 && !pickedColor) { setVariantErr(t('chooseColor')); return }
-    if (sizes.length  > 0 && !pickedSize)  { setVariantErr(t('chooseSize'));  return }
+    const groups = itemOptions(preview)
+    const missing = missingChoice(groups, picks, preview)
+    if (missing) { setVariantErr(`${t('choosePrefix')} ${missing.label.toLowerCase()}`); return }
 
-    const variant = [pickedColor, pickedSize].filter(Boolean).join(' · ')
+    const variant = optionVariantLabel(groups, picks)
+    // order_items keeps variant_color / variant_size from fix106; they are
+    // filled only when the shop's own label really means colour or size.
+    const legacy = legacyVariantFields(groups, picks)
     const added = guardedAdd(preview, {
       // One cart line per colour/size combination.
-      id: [preview.id, pickedColor, pickedSize].filter(Boolean).join('::'),
+      id: [preview.id,
+           ...choiceGroups(groups).map(g => picks[g.label]).filter(Boolean),
+           ...groups.flatMap(g => pickedExtras(g, picks))].join('::'),
       // Catalog items aren't shop_inventory rows — they hold no stock.
       shop_item_id: preview._house ? null : preview.id,
       product_id:   preview.product_id ?? null,
       name: preview.name,
       variant_label: variant || null,
-      color: pickedColor || null,
-      size:  pickedSize  || null,
+      color: legacy.color,
+      size:  legacy.size,
       qty: pickedQty,
-      price: Number(preview.price) || 0,
+      // Extras are per unit, so they belong in the line price rather than as a
+      // separate line the shop would have to match up again.
+      price: cartRound2((Number(preview.price) || 0) + extrasTotal(groups, picks)),
       currency: preview.currency || 'USD',
       // Show the chosen colour's swatch in the cart when it has one.
-      image_url: colors.find(c => c.name === pickedColor)?.image || itemImages(preview)[0] || preview.image_url,
+      image_url: optionPickedImage(groups, picks) || itemImages(preview)[0] || preview.image_url,
       owner_contact_id: preview.owner_contact_id,
       shop: preview.shop,
       commission_percentage: preview.owner?.partner_percentage ?? null,
@@ -2198,40 +2293,43 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
           <p className="mt-0.5 text-[10px] text-slate-400">{t('preparedOnRequest')}</p>
         )}
 
-        {/* Variants available — say so on the card, and show the
-            colour swatches so it's obvious a choice is needed. */}
-        {(itemColors(it).length > 0 || itemSizes(it).length > 0) && (
+        {/* Options on this item — say so on the card, with the first
+            few photo values, so it is obvious a choice is needed. The
+            count is of what is still AVAILABLE: offering "5 sizes" when
+            four have run out would be a promise the shop can't keep. */}
+        {itemOptions(it).length > 0 && (
           <div className="mt-1.5 space-y-1">
-            {itemColors(it).length > 0 && (
-              <div className="flex items-center gap-1">
-                {itemColors(it).slice(0, 4).map(c => (
-                  c.image
-                    ? <img key={c.name} src={c.image} alt={c.name} title={c.name}
-                        className="h-5 w-5 rounded-full border border-shop-100 object-cover" />
-                    : <span key={c.name} title={c.name}
-                        className="flex h-5 w-5 items-center justify-center rounded-full border border-shop-100 bg-shop-50 text-[8px] font-bold uppercase text-shop-700">
-                        {c.name.slice(0, 1)}
+            {choiceGroups(itemOptions(it)).filter(g => g.style === 'swatch').slice(0, 1).map(g => (
+              <div key={g.label} className="flex items-center gap-1">
+                {g.values.slice(0, 4).map(v => (
+                  v.image
+                    ? <img key={v.name} src={v.image} alt={v.name} title={v.name}
+                        className={cx('h-5 w-5 rounded-full border border-shop-100 object-cover', v.sold_out && 'opacity-40')} />
+                    : <span key={v.name} title={v.name}
+                        className={cx('flex h-5 w-5 items-center justify-center rounded-full border border-shop-100 bg-shop-50 text-[8px] font-bold uppercase text-shop-700',
+                          v.sold_out && 'opacity-40 line-through')}>
+                        {v.name.slice(0, 1)}
                       </span>
                 ))}
-                {itemColors(it).length > 4 && (
-                  <span className="text-[10px] font-semibold text-slate-400">+{itemColors(it).length - 4}</span>
+                {g.values.length > 4 && (
+                  <span className="text-[10px] font-semibold text-slate-400">+{g.values.length - 4}</span>
                 )}
               </div>
-            )}
+            ))}
             <p className="text-[10px] font-semibold text-slate-500">
-              {[
-                itemColors(it).length > 0 ? t('colorsCount', { count: itemColors(it).length }) : null,
-                itemSizes(it).length  > 0 ? t('sizesCount',  { count: itemSizes(it).length })  : null,
-              ].filter(Boolean).join(' · ')}
+              {itemOptions(it).map(g => (g.kind === 'extra'
+                ? `${inStockValues(g).length} ${g.label.toLowerCase()}`
+                : `${g.values.filter(v => valueState(it, g, v, {}) === 'available').length} ${g.label.toLowerCase()}`
+              )).join(' · ')}
             </p>
           </div>
         )}
 
         <button type="button" disabled={soldOut(it)}
           onClick={() => {
-            // Items with colours/sizes must be configured first, so
-            // the card's button opens the popup instead.
-            if (itemColors(it).length > 0 || itemSizes(it).length > 0) {
+            // An item with options must be configured first, so the
+            // card's button opens the popup instead.
+            if (itemOptions(it).length > 0) {
               openPreview({ ...it, shop: shopLabel })
               return
             }
@@ -2241,7 +2339,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
             soldOut(it) ? 'cursor-not-allowed bg-slate-200 text-slate-500' : 'bg-shop-600 text-white hover:bg-shop-700')}>
           {soldOut(it)
             ? t('outOfStock')
-            : (itemColors(it).length > 0 || itemSizes(it).length > 0)
+            : itemOptions(it).length > 0
               ? <><SlidersHorizontal className="h-3.5 w-3.5" /> {t('selectOptions')}</>
               : <><Plus className="h-3.5 w-3.5" /> {t('addToCart')}</>}
         </button>
@@ -2278,7 +2376,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
           } />
         {/* Search + category filter. The filter button lives inside the search
             pill and pulls down a category menu underneath it. */}
-        <div className="relative bg-[#FFF8EF] px-5 pb-3 pt-4">
+        <div className="relative bg-ground px-5 pb-3 pt-4">
           <label className="flex h-12 items-center gap-3 rounded-full border border-shop-100 bg-shop-50 pl-4 pr-1.5 text-sm text-slate-500">
             <Search className="h-4 w-4 text-shop-600" />
             <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={search}
@@ -2380,7 +2478,7 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
         {/* Shop types — the quickest way into a kind of shop. Hidden while a
             single shop is open, where the strip would mean nothing. */}
         {storeKey === null && !favOnly && shopTypes.length > 0 && (
-          <div className="border-b border-shop-100 bg-[#FFF8EF] pb-3">
+          <div className="border-b border-shop-100 bg-ground pb-3">
             <div className="flex gap-3 overflow-x-auto px-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <button type="button" onClick={() => setTypeFilter('')}
                 className="flex w-16 flex-shrink-0 flex-col items-center gap-1.5">
@@ -2864,53 +2962,97 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
                     ))}
                   </div>
                 )}
-                <p className="text-lg font-bold text-shop-700">{fmt(preview.price, preview.currency)}</p>
+                <p className="text-lg font-bold text-shop-700">
+                  {fmt((Number(preview.price) || 0) + extrasTotal(itemOptions(preview), picks), preview.currency)}
+                  {extrasTotal(itemOptions(preview), picks) > 0 && (
+                    <span className="ml-1.5 text-xs font-semibold text-slate-400">
+                      {fmt(preview.price, preview.currency)} + {fmt(extrasTotal(itemOptions(preview), picks), preview.currency)}
+                    </span>
+                  )}
+                </p>
                 {preview.description && (
                   <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{preview.description}</p>
                 )}
 
-                {/* ── Colour swatches ─────────────────────────── */}
-                {itemColors(preview).length > 0 && (
-                  <div>
-                    <p className="text-xs font-bold text-slate-950">{t('color')}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {itemColors(preview).map(c => {
-                        const on = pickedColor === c.name
-                        return (
-                          <button key={c.name} type="button"
-                            onClick={() => { setPickedColor(c.name); setVariantErr('') }}
-                            className={cx('w-24 overflow-hidden rounded-lg border bg-white text-left transition-colors',
-                              on ? 'border-shop-600 ring-2 ring-shop-200' : 'border-shop-100')}>
-                            {c.image
-                              ? <img src={c.image} alt={c.name} className="h-16 w-full object-cover" />
-                              : <div className="flex h-16 w-full items-center justify-center bg-shop-50"><ShoppingBag className="h-5 w-5 text-shop-200" /></div>}
-                            <span className="block px-1.5 py-1 text-[11px] font-semibold leading-tight text-slate-700">{c.name}</span>
-                          </button>
-                        )
-                      })}
+                {/* ── Options ─────────────────────────────────────
+                    Whatever the shop calls them — size, colour, flavour, and
+                    extras that add to the price. A value that has run out stays
+                    visible but greyed and struck through: seeing that 43 is
+                    finished is information, hiding it just looks like the shop
+                    never had it. A value the current choice rules out — 43 in
+                    a colour that never came in 43 — says so instead (fix130). */}
+                {itemOptions(preview).map(g => {
+                  const isExtra = g.kind === 'extra'
+                  const taken   = pickedExtras(g, picks)
+                  const toggleExtra = (name) => setPicks(p => {
+                    const list = Array.isArray(p[g.label]) ? p[g.label] : []
+                    return { ...p, [g.label]: list.includes(name) ? list.filter(x => x !== name) : [...list, name] }
+                  })
+                  const choose = (name) => {
+                    // Changing an earlier choice can invalidate a later one —
+                    // white doesn't come in 43 — so those are dropped, not
+                    // carried quietly into the cart.
+                    setPicks(p => prunePicks(preview, itemOptions(preview), { ...p, [g.label]: name }))
+                    setVariantErr('')
+                  }
+                  return (
+                    <div key={g.label}>
+                      <p className="text-xs font-bold text-slate-950">
+                        {g.label}
+                        {isExtra && <span className="ml-1.5 font-semibold text-slate-400">({t('extrasOptional')})</span>}
+                        {!isExtra && inStockValues(g).length === 0 && (
+                          <span className="ml-1.5 font-semibold text-rose-600">— {t('valueSoldOut')}</span>
+                        )}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {g.values.map(v => {
+                          const state = isExtra
+                            ? (v.sold_out ? 'sold_out' : 'available')
+                            : valueState(preview, g, v, picks)
+                          const gone = state !== 'available'
+                          const on   = isExtra ? taken.includes(v.name) : picks[g.label] === v.name
+                          const why  = state === 'sold_out' ? t('valueSoldOut')
+                            : state === 'not_sold' ? t('notInCombo') : undefined
+                          const delta = isExtra && Number(v.price_delta) > 0
+                            ? ` +${fmt(v.price_delta, preview.currency)}`
+                            : ''
+                          return g.style === 'swatch' ? (
+                            <button key={v.name} type="button" disabled={gone}
+                              title={why}
+                              onClick={() => (isExtra ? toggleExtra(v.name) : choose(v.name))}
+                              className={cx('relative w-24 overflow-hidden rounded-lg border bg-white text-left transition-colors',
+                                gone ? 'cursor-not-allowed border-slate-200 opacity-50'
+                                  : on ? 'border-shop-600 ring-2 ring-shop-200' : 'border-shop-100')}>
+                              {v.image
+                                ? <img src={v.image} alt={v.name} className="h-16 w-full object-cover" />
+                                : <div className="flex h-16 w-full items-center justify-center bg-shop-50"><ShoppingBag className="h-5 w-5 text-shop-200" /></div>}
+                              <span className={cx('block px-1.5 py-1 text-[11px] font-semibold leading-tight',
+                                gone ? 'text-slate-400 line-through' : 'text-slate-700')}>
+                                {v.name}{delta}
+                              </span>
+                              {gone && (
+                                <span className="absolute inset-x-0 top-6 bg-white/85 py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-rose-600">
+                                  {why}
+                                </span>
+                              )}
+                            </button>
+                          ) : (
+                            <button key={v.name} type="button" disabled={gone}
+                              title={why}
+                              onClick={() => (isExtra ? toggleExtra(v.name) : choose(v.name))}
+                              className={cx('min-w-[3rem] rounded-full border px-3 py-1.5 text-xs font-bold transition-colors',
+                                gone ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 line-through decoration-rose-400'
+                                  : on ? 'border-shop-600 bg-shop-600 text-white'
+                                  : 'border-shop-200 bg-white text-slate-700')}>
+                              {isExtra && <span className={cx('mr-1', on ? 'text-white' : 'text-shop-600')}>{on ? '✓' : '+'}</span>}
+                              {v.name}{delta}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-
-                {/* ── Size chips ──────────────────────────────── */}
-                {itemSizes(preview).length > 0 && (
-                  <div>
-                    <p className="text-xs font-bold text-slate-950">{t('size')}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {itemSizes(preview).map(s => {
-                        const on = pickedSize === s
-                        return (
-                          <button key={s} type="button"
-                            onClick={() => { setPickedSize(s); setVariantErr('') }}
-                            className={cx('min-w-[3rem] rounded-full border px-3 py-1.5 text-xs font-bold transition-colors',
-                              on ? 'border-shop-600 bg-shop-600 text-white' : 'border-shop-200 bg-white text-slate-700')}>
-                            {s}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
+                  )
+                })}
 
                 {/* ── Quantity ────────────────────────────────── */}
                 <div className="flex items-center gap-3">
@@ -3119,6 +3261,15 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
       order_source: 'customer application',
       order_type: CUSTOMER_APP_ORDER_TYPE,
       status: 'pending',
+      // Stated rather than left to the column default: an order from the app
+      // has not been agreed by anyone yet. It is what puts the order in the
+      // call center's confirm list — and what lets the customer still call it
+      // off from their phone until they do.
+      order_confirmed: false,
+      // Who placed it — the customer themselves (fix137), so the office sees
+      // "customer application\<their name>" rather than a blank.
+      created_by:    customerName(customer) || customerSession?.name || null,
+      created_by_id: customerSession?.user_id || null,
       payment_status: 'unpaid',
       // Nobody has agreed to collect this yet — the call center's confirmation
       // moves it to 'Awaiting Pickup'.
@@ -3235,7 +3386,7 @@ function CheckoutScreen({ cart, customerSession, onPlaced, onGoOrders, onBack })
   )
 }
 
-function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onViewOrder, onEditOrder }) {
+function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onViewOrder, onCancelOrder }) {
   const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [latestOrder, setLatestOrder] = useState(null)
@@ -3398,7 +3549,7 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
 
         <Section title={t('latestOrder')} subtitle={t('latestOrderSubtitle')}>
           {latestOrder ? (
-            <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onEdit={latestOrder.status === 'pending' && !latestOrder.confirmed ? () => onEditOrder(latestOrder) : undefined} />
+            <OrderCard order={latestOrder} onView={() => onViewOrder(latestOrder)} onCancel={onCancelOrder} />
           ) : (
             <div className="rounded-lg border border-shop-100 bg-slate-50 px-4 py-6 text-center">
               <p className="text-sm font-bold text-slate-950">{t('noOrdersYet')}</p>
@@ -3683,6 +3834,15 @@ function BookDeliveryScreen({ onSubmit, requirements, setRequirements, customerS
       order_source: 'customer application',
       order_type: CUSTOMER_APP_ORDER_TYPE,
       status: 'pending',
+      // Stated rather than left to the column default: an order from the app
+      // has not been agreed by anyone yet. It is what puts the order in the
+      // call center's confirm list — and what lets the customer still call it
+      // off from their phone until they do.
+      order_confirmed: false,
+      // Who placed it — the customer themselves (fix137), so the office sees
+      // "customer application\<their name>" rather than a blank.
+      created_by:    customerDisplayName || customerSession?.name || null,
+      created_by_id: customerSession?.user_id || null,
       payment_status: 'unpaid',
       // Nobody has agreed to collect this yet — the call center's confirmation
       // moves it to 'Awaiting Pickup'.
@@ -3888,7 +4048,7 @@ function Field({ label, value, type = 'text' }) {
   )
 }
 
-function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }) {
+function OrdersScreen({ customerSession, onView, onCancel, refreshKey = 0, deliveryStatusByOrder }) {
   const { t } = useI18n()
   const deliveryFilters = ['all', 'Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered']
   const [orders, setOrders] = useState([])
@@ -3952,6 +4112,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
           recipient_mobile,
           status,
           order_confirmed,
+          isclosed,
           delivery_status,
           payment_status,
           currency,
@@ -4026,7 +4187,7 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
 
     loadOrders()
     return () => { cancelled = true }
-  }, [customerSession])
+  }, [customerSession, refreshKey])
 
   return (
     <>
@@ -4070,16 +4231,75 @@ function OrdersScreen({ customerSession, onView, onEdit, deliveryStatusByOrder }
           </div>
         )}
         <div className="space-y-4">
-          {filtered.map(order => <OrderCard key={order.id} order={order} onView={() => onView(order)} onEdit={() => onEdit(order)} />)}
+          {filtered.map(order => <OrderCard key={order.id} order={order} onView={() => onView(order)} onCancel={onCancel} />)}
         </div>
       </main>
     </>
   )
 }
 
-function OrderCard({ order, onView, onEdit }) {
+/* The seasonal theme (supabase-fix133).
+
+   The super admin schedules a look — Ramadan, Christmas, high summer — and the
+   app wears it for those dates. Repainting is a handful of CSS variables, so
+   every existing screen follows without knowing a theme exists, and a phone
+   with nothing scheduled is left exactly as it was.
+
+   THE CUSTOMER APP ONLY. Two things keep the office console out of it: this
+   hook lives in — and runs only inside — the mobile app, which the console
+   never mounts; and the variables it sets are the app's role colours
+   (shop / fresh / accent), while the console paints from `brand` and
+   `surface`, which no theme touches. They are cleared again on unmount.
+
+   Read once per app start: a theme changes by the calendar, not by the minute,
+   and a customer's phone should not be polling for decoration. */
+function useCustomerTheme() {
+  const [theme, setTheme] = useState(null)          // the scheduled row, or null
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { rows } = await fetchCustomerThemes()
+      if (cancelled) return
+      const live = pickCurrentTheme(rows)
+      setTheme(live)
+      applyCustomerTheme(live?.theme_key || DEFAULT_THEME.key)
+    })()
+    return () => { cancelled = true; clearCustomerTheme() }
+  }, [])
+
+  return theme
+}
+
+/* The clip behind everything. Muted, looping and inert — decoration, never
+   something to interact with. Anyone who asked their phone to reduce motion
+   gets the poster still instead: a full-screen moving background is exactly
+   what that setting is for. */
+function ThemeBackdrop({ theme }) {
+  const reduced = typeof window !== 'undefined'
+    && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+  if (!theme?.media_url) return null
+  const dim = Math.min(0.95, Math.max(0, Number(theme.overlay ?? 0.55)))
+  return (
+    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      {reduced
+        ? (theme.poster_url && <img src={theme.poster_url} alt="" className="h-full w-full object-cover" />)
+        : <video src={theme.media_url} poster={theme.poster_url || undefined}
+            className="h-full w-full object-cover"
+            autoPlay loop muted playsInline preload="metadata" />}
+      {/* The app's own ground, laid over the clip at the chosen strength, is
+          what keeps prices and buttons readable on top of moving pictures. */}
+      <div className="absolute inset-0" style={{ background: 'rgb(var(--app-ground))', opacity: dim }} />
+    </div>
+  )
+}
+
+function OrderCard({ order, onView, onCancel }) {
   const { t } = useI18n()
-  const editable = order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery'
+  /* A placed order is never edited from the app — the office works from what
+     was sent. Until the call centre confirms it, though, it can still be
+     called off entirely. */
+  const cancellable = !!onCancel && canCustomerCancel(order.raw || {})
   return (
     <article className="rounded-lg border border-shop-100 bg-white p-4 shadow-sm shadow-shop-100/80">
       <div className="flex items-start justify-between gap-3">
@@ -4098,13 +4318,16 @@ function OrderCard({ order, onView, onEdit }) {
       <p className="mt-1 text-sm text-slate-500">{order.schedule}</p>
       <div className="mt-4 flex gap-3">
         <button type="button" onClick={onView} className="rounded-lg bg-shop-100 px-5 py-2 text-sm font-bold text-shop-700">{t('view')}</button>
-        {editable && <button type="button" onClick={onEdit} className="rounded-lg bg-fresh-100 px-5 py-2 text-sm font-bold text-fresh-700">{t('edit')}</button>}
+        {cancellable && (
+          <button type="button" onClick={() => onCancel(order)}
+            className="rounded-lg bg-rose-50 px-5 py-2 text-sm font-bold text-rose-700">{t('cancelOrder')}</button>
+        )}
       </div>
     </article>
   )
 }
 
-function OrderDetailsScreen({ order, onEdit, onBack }) {
+function OrderDetailsScreen({ order, onCancel, onBack }) {
   const { t } = useI18n()
   if (!order) {
     return (
@@ -4235,15 +4458,26 @@ function OrderDetailsScreen({ order, onEdit, onBack }) {
             ))}
           </div>
         </Section>
-        {order.status === 'pending' && !order.confirmed && order.type === 'Book Delivery' && (
-          <button type="button" onClick={() => onEdit(order)} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-fresh-100 text-sm font-bold text-fresh-700">
-            <Pencil className="h-4 w-4" />
-            {t('editOrder')}
+        {/* Before the call centre confirms it, the order is still the
+            customer's to call off. Afterwards it is being worked on, so the
+            way out is a phone call — offered here rather than left as a dead
+            "view only" notice. */}
+        {canCustomerCancel(order.raw || {}) && (
+          <button type="button" onClick={() => onCancel(order)}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-rose-50 text-sm font-bold text-rose-700">
+            <X className="h-4 w-4" />
+            {t('cancelOrder')}
           </button>
         )}
-        {order.confirmed && (
-          <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-500">
-            <Lock className="h-4 w-4" /> {t('confirmedViewOnly')}
+        {order.confirmed && order.status !== 'cancelled' && (
+          <div className="space-y-2 rounded-lg bg-slate-100 px-4 py-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-slate-500">
+              <Lock className="h-4 w-4" /> {t('confirmedCallToCancel')}
+            </p>
+            <a href={`tel:${SUPPORT_PHONE.replace(/\s/g, '')}`}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-shop-600 text-sm font-bold text-white">
+              <Phone className="h-4 w-4" /> {t('callUs', { phone: SUPPORT_PHONE })}
+            </a>
           </div>
         )}
       </main>
@@ -4257,328 +4491,6 @@ function InfoLine({ label, value, tone }) {
       <p className="text-xs text-slate-500">{label}</p>
       <p className={cx('mt-1 text-sm font-semibold', tone === 'amber' ? 'text-orange-700' : 'text-slate-950')}>{value}</p>
     </div>
-  )
-}
-
-function EditOrderScreen({ order, requirements, setRequirements, customerSession, onSave, onBack }) {
-  const { t } = useI18n()
-  const raw = order?.raw || {}
-  const [pickupAddress, setPickupAddress] = useState(raw.pickup_address || order?.pickup || '')
-  const [deliveryAddress, setDeliveryAddress] = useState(raw.delivery_address || order?.drop || '')
-  const [scheduledDate, setScheduledDate] = useState(raw.scheduled_date || todayDate())
-  const [scheduledFrom, setScheduledFrom] = useState(raw.scheduled_time_from ? String(raw.scheduled_time_from).slice(0, 5) : '')
-  const [scheduledTo, setScheduledTo] = useState(raw.scheduled_time_to ? String(raw.scheduled_time_to).slice(0, 5) : '')
-  const [notes, setNotes] = useState(raw.special_instructions || '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  // Lines that came from the Shop: the product is fixed, so only the quantity
-  // can change and the whole line can be removed. Typed requirement rows stay
-  // freely editable.
-  const [shopLines, setShopLines] = useState([])
-
-  useEffect(() => {
-    let cancelled = false
-    if (!order?.id) { setShopLines([]); return undefined }
-    ;(async () => {
-      const { data } = await supabase
-        .from('order_items')
-        .select('id,parcel_description,quantity,unit_price,currency,shop_item_id,supplier_name')
-        .eq('order_id', order.id)
-        .eq('is_deleted', false)
-        .not('shop_item_id', 'is', null)
-        .order('added_at')
-      if (cancelled) return
-      setShopLines((data ?? []).map(r => ({ ...r, quantity: Number(r.quantity) || 1 })))
-    })()
-    return () => { cancelled = true }
-  }, [order?.id])
-
-  useEffect(() => {
-    if (!order) return
-    const current = order.raw || {}
-    setPickupAddress(current.pickup_address || order.pickup || '')
-    setDeliveryAddress(current.delivery_address || order.drop || '')
-    setScheduledDate(current.scheduled_date || todayDate())
-    setScheduledFrom(current.scheduled_time_from ? String(current.scheduled_time_from).slice(0, 5) : '')
-    setScheduledTo(current.scheduled_time_to ? String(current.scheduled_time_to).slice(0, 5) : '')
-    setNotes(current.special_instructions || '')
-  }, [order])
-
-  function addRequirement() {
-    setRequirements(items => [...items, ''])
-  }
-
-  function updateRequirement(index, value) {
-    setRequirements(items => items.map((item, i) => (i === index ? value : item)))
-  }
-
-  function removeRequirement(index) {
-    setRequirements(items => items.filter((_, i) => i !== index))
-  }
-
-  async function saveChanges() {
-    setError('')
-
-    if (!order?.id) {
-      setError(t('selectOrderFromOrders'))
-      return
-    }
-    if (order.status !== 'pending') {
-      setError('This order is already confirmed and cannot be edited.')
-      return
-    }
-    if (order.confirmed) {
-      setError(t('confirmedViewOnly'))
-      return
-    }
-
-    const cleanRequirements = requirements.map(item => item.trim()).filter(Boolean)
-    if (!deliveryAddress.trim()) {
-      setError(t('deliveryLocationRequired'))
-      return
-    }
-    // Deleting product/requirement rows is allowed — the order can be saved even
-    // with none left (the items are just cleared).
-
-    setSaving(true)
-
-    const { data: latest, error: latestError } = await supabase
-      .from('delivery_orders')
-      .select('status, order_confirmed')
-      .eq('id', order.id)
-      .single()
-
-    if (latestError) {
-      setError(latestError.message)
-      setSaving(false)
-      return
-    }
-    if (latest?.status !== 'pending') {
-      setError('This order is no longer pending. Please reopen My Orders.')
-      setSaving(false)
-      return
-    }
-    if (latest?.order_confirmed === true) {
-      setError(t('confirmedViewOnly'))
-      setSaving(false)
-      return
-    }
-
-    const orderDetailsText = cleanRequirements.join('\n')
-    const updatePayload = {
-      pickup_address: pickupAddress.trim() || null,
-      delivery_address: deliveryAddress.trim(),
-      scheduled_date: scheduledDate || null,
-      scheduled_time_from: scheduledFrom || null,
-      scheduled_time_to: scheduledTo || null,
-      order_details_text: orderDetailsText,
-      special_instructions: notes.trim() || null,
-      updated_at: new Date().toISOString(),
-    }
-
-    const { error: orderError } = await supabase
-      .from('delivery_orders')
-      .update(updatePayload)
-      .eq('id', order.id)
-      .eq('status', 'pending')
-
-    if (orderError) {
-      setError(orderError.message)
-      setSaving(false)
-      return
-    }
-
-    // Only the typed requirement rows are replaced. Shop lines are updated in
-    // place (quantity) or removed explicitly — they carry a price and a
-    // supplier, so wiping them here would lose real money from the order.
-    const { error: softDeleteError } = await supabase
-      .from('order_items')
-      .update({
-        is_deleted: true,
-        deleted_by: customerSession?.user_id || null,
-        deleted_at: new Date().toISOString(),
-      })
-      .eq('order_id', order.id)
-      .eq('is_deleted', false)
-      .is('shop_item_id', null)
-
-    if (softDeleteError) {
-      setError(softDeleteError.message)
-      setSaving(false)
-      return
-    }
-
-    const itemRows = cleanRequirements.map(item => ({
-      order_id: order.id,
-      item_type: 'external_request',
-      parcel_description: item,
-      quantity: 1,
-      unit_price: 0,
-      currency: raw.currency || 'USD',
-      line_total: 0,
-      added_by: customerSession?.user_id || null,
-    }))
-
-    let insertedItems = []
-    if (itemRows.length) {
-      const { data, error: itemError } = await supabase
-        .from('order_items')
-        .insert(itemRows)
-        .select('id,item_type,parcel_description,quantity,line_total,is_deleted')
-      if (itemError) {
-        setError(itemError.message)
-        setSaving(false)
-        return
-      }
-      insertedItems = data || []
-    }
-
-    // Quantities the customer changed, and any line they removed.
-    for (const line of shopLines) {
-      if (line._removed) {
-        await supabase.from('order_items').update({
-          is_deleted: true,
-          deleted_by: customerSession?.user_id || null,
-          deleted_at: new Date().toISOString(),
-        }).eq('id', line.id)
-      } else {
-        await supabase.from('order_items').update({
-          quantity:   line.quantity,
-          line_total: cartRound2((Number(line.unit_price) || 0) * line.quantity),
-        }).eq('id', line.id)
-      }
-    }
-
-    // Keep the order's money in step with what's left on it.
-    const keptShop = shopLines.filter(l => !l._removed)
-    const shopTotal = cartRound2(keptShop.reduce((n, l) => n + (Number(l.unit_price) || 0) * l.quantity, 0))
-    await supabase.from('delivery_orders')
-      .update({ items_total: shopTotal, total_amount: shopTotal })
-      .eq('id', order.id)
-
-    const updatedRaw = {
-      ...raw,
-      ...updatePayload,
-      status: 'pending',
-      order_items: insertedItems || [],
-    }
-    onSave(mapCustomerOrder(updatedRaw, order.invoices || [], order.payments || []))
-    setSaving(false)
-  }
-
-  if (!order) {
-    return (
-      <>
-        <FixedHeader title={t('editOrder')} subtitle={t('noOrderSelected')} back onBack={onBack} />
-        <main className="px-5 py-6">
-          <div className="rounded-lg border border-shop-100 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-            {t('selectOrderFromOrders')}
-          </div>
-        </main>
-      </>
-    )
-  }
-
-  return (
-    <>
-      <FixedHeader title={t('editOrder')} subtitle={order.orderNumber} back onBack={onBack} right={<span className={cx('rounded-full px-3 py-1 text-xs font-bold capitalize', statusClass(order.status))}>{translatedStatus(t, order.status)}</span>} />
-      <main className="space-y-5 px-5 py-6">
-        <div className="rounded-lg border border-fresh-200 bg-fresh-50 px-4 py-3 text-sm font-medium text-fresh-700">
-          Changes update the same order. No new order number.
-        </div>
-        {error && (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {error}
-          </div>
-        )}
-
-        {shopLines.some(l => !l._removed) && (
-          <Section title={t('shopProducts')} subtitle={t('shopItemLocked')}>
-            <div className="space-y-3">
-              {shopLines.map((line, index) => (line._removed ? null : (
-                <div key={line.id} className="flex items-center gap-2 rounded-lg border border-shop-100 bg-slate-50 px-3 py-2">
-                  <ShoppingBag className="h-4 w-4 shrink-0 text-shop-600" />
-                  <div className="min-w-0 flex-1">
-                    {/* Product name is fixed — it identifies what the shop sells. */}
-                    <p className="truncate text-sm font-semibold text-slate-950">{line.parcel_description}</p>
-                    <p className="text-[11px] text-slate-500">
-                      {line.supplier_name ? `${line.supplier_name} · ` : ''}{cartFmt(line.unit_price, line.currency)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" aria-label="-"
-                      onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.max(1, l.quantity - 1) } : l))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700">
-                      <Minus className="h-4 w-4" />
-                    </button>
-                    <span className="w-5 text-center text-sm font-bold">{line.quantity}</span>
-                    <button type="button" aria-label="+"
-                      onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, quantity: Math.min(99, l.quantity + 1) } : l))}
-                      className="flex h-8 w-8 items-center justify-center rounded-full border border-shop-200 text-shop-700">
-                      <Plus className="h-4 w-4" />
-                    </button>
-                    <button type="button" onClick={() => setShopLines(ls => ls.map((l, i) => i === index ? { ...l, _removed: true } : l))}
-                      className="ml-1 text-rose-500">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              )))}
-            </div>
-          </Section>
-        )}
-
-        <Section
-          title={t('requirementRows')}
-          subtitle={t('savedBackToOrderItems')}
-          action={<button type="button" onClick={addRequirement} className="rounded-lg bg-shop-600 px-3 py-2 text-xs font-bold text-white">{t('add')}</button>}
-        >
-          <div className="space-y-3">
-            {requirements.map((item, index) => (
-              <div key={index} className="flex items-center gap-2 rounded-lg border border-shop-100 bg-slate-50 px-3 py-2">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-shop-100 text-xs font-bold text-shop-700">{index + 1}</span>
-                <input className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={item} onChange={event => updateRequirement(index, event.target.value)} placeholder={t('enterRequirement')} />
-                <button type="button" onClick={() => removeRequirement(index)} className="text-rose-500">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        <Section title={t('pickupDrop')}>
-          <div className="space-y-4">
-            <ControlledField label={t('pickupLocation')} value={pickupAddress} onChange={setPickupAddress} />
-            <ControlledField label={t('deliveryDropLocation')} value={deliveryAddress} onChange={setDeliveryAddress} />
-            <label className="block">
-              <span className="text-xs font-semibold text-slate-500">{t('notes')}</span>
-              <textarea
-                className="mt-2 min-h-24 w-full rounded-lg border border-shop-100 bg-slate-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-shop-300"
-                value={notes}
-                onChange={event => setNotes(event.target.value)}
-              />
-            </label>
-          </div>
-        </Section>
-
-        <Section title={t('schedule')}>
-          <div className="grid grid-cols-2 gap-3">
-            <ControlledField label={t('deliveryDate')} value={scheduledDate} onChange={setScheduledDate} type="date" />
-            <ControlledField label={t('startTime')} value={scheduledFrom} onChange={setScheduledFrom} type="time" />
-            <ControlledField label={t('endTime')} value={scheduledTo} onChange={setScheduledTo} type="time" />
-          </div>
-        </Section>
-
-        <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={saveChanges} disabled={saving || order.status !== 'pending' || order.confirmed} className="flex h-12 items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:bg-slate-300">
-            {saving ? t('saving') : t('saveChanges')}
-          </button>
-          <button type="button" onClick={onBack} disabled={saving} className="flex h-12 items-center justify-center rounded-lg border border-shop-100 bg-white text-sm font-bold text-slate-500 disabled:opacity-60">
-            {t('cancel')}
-          </button>
-        </div>
-      </main>
-    </>
   )
 }
 
@@ -5010,6 +4922,13 @@ export default function CustomerMobileApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!initialSession || devBypass)
   const [screen, setScreen] = useState(initialRoute)
   const [selectedOrder, setSelectedOrder] = useState(null)
+  /* Cancelling an order: { order, note, busy, error } while the sheet is open,
+     null when it isn't. Kept in the shell so it works from the home card, the
+     list and the details screen alike. */
+  // The season the app is wearing today (mobile only — see useCustomerTheme).
+  const activeTheme = useCustomerTheme()
+  const [cancelSheet, setCancelSheet] = useState(null)
+  const [ordersRefresh, setOrdersRefresh] = useState(0)
   // Shopping cart (persisted). Each entry: { id, name, price, currency, image_url,
   // owner_contact_id, shop, qty }.
   const [cart, setCart] = useState(() => {
@@ -5276,29 +5195,42 @@ export default function CustomerMobileApp() {
     setCustomerHash(tab)
   }
 
+  function askCancelOrder(order) {
+    if (!order) return
+    setCancelSheet({ order, note: '', busy: false, error: '' })
+  }
+
+  async function confirmCancelOrder() {
+    const sheet = cancelSheet
+    if (!sheet?.order) return
+    setCancelSheet(c => ({ ...c, busy: true, error: '' }))
+    const res = await cancelOwnOrder(sheet.order.id, {
+      note: sheet.note,
+      customerName: customerSession?.name || customerSession?.mobile || null,
+    })
+    if (!res.ok) {
+      // Confirmed while the sheet was open: the answer is a phone call, not a
+      // retry, so the sheet says so instead of failing silently.
+      setCancelSheet(c => ({
+        ...c,
+        busy: false,
+        error: res.reason === CANCEL_REFUSED.confirmed ? t('cancelTooLate') : t('cancelFailed'),
+        tooLate: res.reason === CANCEL_REFUSED.confirmed,
+      }))
+      return
+    }
+    setCancelSheet(null)
+    setOrdersRefresh(n => n + 1)          // the list re-reads; the row turns Cancelled
+    if (selectedOrder?.id === sheet.order.id) {
+      setSelectedOrder(o => (o ? { ...o, status: 'cancelled', raw: { ...(o.raw || {}), status: 'cancelled' } } : o))
+    }
+  }
+
   function openOrder(order) {
     setSelectedOrder(order)
     setScreen('orderDetails')
   }
 
-  function editOrder(order) {
-    if (!order) return
-    // A confirmed (call-center) or non-pending order is view-only — open its details.
-    if (order.confirmed || order.status !== 'pending') {
-      setSelectedOrder(order)
-      setScreen('orderDetails')
-      return
-    }
-    setSelectedOrder(order)
-    setRequirements(order.requirements || initialRequirements)
-    setScreen('editOrder')
-  }
-
-  function finishOrderEdit(updatedOrder) {
-    setSelectedOrder(updatedOrder)
-    setRequirements(updatedOrder.requirements || initialRequirements)
-    setScreen('orderDetails')
-  }
 
   async function logoutCustomer() {
     clearCustomerSession()
@@ -5326,13 +5258,10 @@ export default function CustomerMobileApp() {
     content = <CheckoutScreen cart={cart} customerSession={customerSession}
       onPlaced={() => setCart([])} onGoOrders={() => setScreen('orders')} onBack={() => setScreen('cart')} />
   } else if (screen === 'orders') {
-    content = <OrdersScreen customerSession={customerSession} onView={openOrder} onEdit={editOrder} deliveryStatusByOrder={deliveryStatusByOrder} />
+    content = <OrdersScreen customerSession={customerSession} onView={openOrder} onCancel={askCancelOrder} refreshKey={ordersRefresh} deliveryStatusByOrder={deliveryStatusByOrder} />
   } else if (screen === 'orderDetails') {
     activeTab = 'orders'
-    content = <OrderDetailsScreen order={selectedOrder} onEdit={editOrder} onBack={() => setScreen('orders')} />
-  } else if (screen === 'editOrder') {
-    activeTab = 'orders'
-    content = <EditOrderScreen order={selectedOrder} requirements={requirements} setRequirements={setRequirements} customerSession={customerSession} onBack={() => setScreen('orderDetails')} onSave={finishOrderEdit} />
+    content = <OrderDetailsScreen order={selectedOrder} onCancel={askCancelOrder} onBack={() => setScreen('orders')} />
   } else if (screen === 'profile') {
     content = <ProfileScreen customerSession={customerSession} onSessionUpdate={setCustomerSession} onLogout={logoutCustomer} />
   } else {
@@ -5345,14 +5274,15 @@ export default function CustomerMobileApp() {
         onProfile={() => setScreen('profile')}
         onShop={() => setScreen('shop')}
         onViewOrder={openOrder}
-        onEditOrder={editOrder}
+        onCancelOrder={askCancelOrder}
       />
     )
   }
 
   return (
     <I18nContext.Provider value={i18nValue}>
-      <Shell activeTab={activeTab} onTab={goTab}>
+      <ThemeBackdrop theme={activeTheme} />
+      <Shell activeTab={activeTab} onTab={goTab} themed={!!activeTheme?.media_url}>
         <DeliveryStatusNotice
           notice={deliveryNotice}
           onClose={() => setDeliveryNotice(null)}
@@ -5363,6 +5293,46 @@ export default function CustomerMobileApp() {
           }}
         />
         {content}
+        {cancelSheet && (
+          <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4">
+            <div className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
+              <p className="text-base font-bold text-slate-950">{t('cancelAsk')}</p>
+              <p className="mt-1 text-sm text-slate-500">{cancelSheet.order?.orderNumber}</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">{t('cancelAskBody')}</p>
+
+              {!cancelSheet.tooLate && (
+                <textarea rows={2} value={cancelSheet.note}
+                  onChange={e => setCancelSheet(c => ({ ...c, note: e.target.value }))}
+                  placeholder={t('cancelReason')}
+                  className="mt-3 w-full rounded-lg border border-shop-100 bg-shop-50 px-3 py-2 text-sm outline-none" />
+              )}
+
+              {cancelSheet.error && (
+                <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{cancelSheet.error}</p>
+              )}
+
+              {cancelSheet.tooLate ? (
+                <div className="mt-4 flex flex-col gap-2">
+                  <a href={`tel:${SUPPORT_PHONE.replace(/\s/g, '')}`}
+                    className="flex h-12 items-center justify-center gap-2 rounded-lg bg-shop-600 text-sm font-bold text-white">
+                    <Phone className="h-4 w-4" /> {t('callUs', { phone: SUPPORT_PHONE })}
+                  </a>
+                  <button type="button" onClick={() => setCancelSheet(null)}
+                    className="h-12 rounded-lg bg-slate-100 text-sm font-bold text-slate-600">{t('close')}</button>
+                </div>
+              ) : (
+                <div className="mt-4 flex flex-col gap-2">
+                  <button type="button" onClick={confirmCancelOrder} disabled={cancelSheet.busy}
+                    className="h-12 rounded-lg bg-rose-600 text-sm font-bold text-white disabled:bg-slate-300">
+                    {cancelSheet.busy ? '…' : t('cancelYes')}
+                  </button>
+                  <button type="button" onClick={() => setCancelSheet(null)} disabled={cancelSheet.busy}
+                    className="h-12 rounded-lg bg-slate-100 text-sm font-bold text-slate-600">{t('cancelKeep')}</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Shell>
     </I18nContext.Provider>
   )

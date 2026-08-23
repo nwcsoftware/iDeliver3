@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
-import { Trash2, AlertTriangle, CheckCircle2, Loader, Search, X } from 'lucide-react'
+import { Trash2, AlertTriangle, CheckCircle2, Loader, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import SearchField from '../components/ui/SearchField'
 
 /* The exact word the user must type to arm the deletion. */
 const CONFIRM_WORD = 'Confirmed'
@@ -119,15 +120,13 @@ export default function DeleteOrderPage() {
           <label className="label">Order number</label>
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input
-                className="input pl-9"
+              <SearchField
                 value={orderNumber}
                 onChange={e => { setOrderNumber(e.target.value); reset(true); setDone('') }}
-                onKeyDown={e => { if (e.key === 'Enter') findOrder() }}
                 placeholder="e.g. ORD-2026-00123"
-                autoComplete="off"
+                className="input pl-9"
                 disabled={busy}
+                onKeyDown={e => { if (e.key === 'Enter') findOrder() }}
               />
             </div>
             <button className="btn-primary" onClick={findOrder} disabled={!orderNumber.trim() || finding || busy}>

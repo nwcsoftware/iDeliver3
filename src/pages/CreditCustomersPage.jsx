@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { CreditCard, Search, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw, Trash2, Eraser, CalendarRange } from 'lucide-react'
+import { CreditCard, FilterX, FileDown, HandCoins, X, Banknote, CheckCircle2, AlertCircle, User, ChevronRight, Plus, Scissors, ChevronUp, ChevronDown, RotateCcw, Trash2, Eraser, CalendarRange } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -7,6 +7,8 @@ import { orderTotalsByCurrency } from '../lib/orderAmounts'
 import { formatAccountNumber } from '../lib/accountNumber'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* Multi-currency, matching Driver Settlements / Cashier Box. A currency only needs
    to exist in the DB currency_type enum and be listed here; zero columns hide. */
@@ -587,8 +589,40 @@ export default function CreditCustomersPage() {
   const busy = loading.orders || payLoading
 
   /* ── render ──────────────────────────────────────────────── */
+  /* What each statement column sorts BY. Charge and Payment sort by the figure
+     rather than its printed text, and the opening balance is pinned to the top
+     whichever way the rest is ordered — it is the line everything else is
+     counted from, not an entry among them. */
+  /* Charge and Payment hold a map of currency → amount, not a single figure, so
+     they sort by CURRENCY first and by the amount within it — grouping USD with
+     USD rather than ranking 1,830,000 LBP above 109 USD, which compares nothing
+     real. The amount is zero-padded so 9 sorts before 100. */
+  const moneySortKey = (map) => {
+    const entries = Object.entries(map || {}).filter(([, v]) => Number(v))
+    if (entries.length === 0) return ''                      // blanks sink
+    const [cur, amt] = entries.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0]
+    return `${cur}|${String(Math.round(Math.abs(Number(amt)) * 100)).padStart(14, '0')}`
+  }
+
+  const sortValue = useCallback((r, key) => {
+    switch (key) {
+      case 'date':    return r.date || ''
+      case 'ref':     return (r.ref || '').toLowerCase()
+      case 'desc':    return (r.label || '').toLowerCase()
+      case 'charge':  return moneySortKey(r.debit)
+      case 'payment': return moneySortKey(r.credit)
+      default:        return ''
+    }
+  }, [])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const visibleStatement = useMemo(() => {
+    const opening = statement.filter(r => r.kind === 'opening')
+    const rest    = statement.filter(r => r.kind !== 'opening')
+    return [...opening, ...sortRows(rest)]
+  }, [statement, sortRows])
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -603,9 +637,12 @@ export default function CreditCustomersPage() {
         </div>
 
         <div className="relative flex-1 max-w-xs ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search customer, account, mobile…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search customer, account, mobile…"
+            className="input pl-9"
+          />
         </div>
 
         <select className="input w-auto" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
@@ -628,11 +665,15 @@ export default function CreditCustomersPage() {
         )}
       </div>
 
-      <div className="flex gap-4 items-start">
+      {/* Both panes take the height the page has left, and scroll inside it.
+          A guessed max-height left a band of dead space under the customer
+          list that grew or shrank with whatever the toolbar happened to wrap
+          to; this way the space below matches the padding at the sides. */}
+      <div className="flex gap-4 items-stretch flex-1 min-h-0">
         {/* ── Customer list ──────────────────────────────────── */}
-        <div className="w-72 flex-shrink-0 bg-surface-card border border-surface-border rounded-xl overflow-hidden">
+        <div className="w-72 flex-shrink-0 bg-surface-card border border-surface-border rounded-xl overflow-hidden flex flex-col">
           <div className="px-3 py-2 border-b border-surface-border text-xs font-semibold text-slate-400 uppercase tracking-wider">Customers</div>
-          <div className="max-h-[calc(100vh-220px)] overflow-y-auto divide-y divide-surface-border/50">
+          <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-surface-border/50">
             {busy ? (
               <p className="px-3 py-6 text-center text-sm text-slate-500">Loading…</p>
             ) : customerList.length === 0 ? (
@@ -664,7 +705,7 @@ export default function CreditCustomersPage() {
         </div>
 
         {/* ── Statement ──────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 space-y-4">
+        <div className="flex-1 min-w-0 space-y-4 min-h-0 overflow-y-auto pr-1">
           {!selected ? (
             <div className="bg-surface-card border border-surface-border rounded-xl p-10 text-center text-slate-500">
               <ChevronRight className="w-6 h-6 mx-auto mb-2 opacity-50" />
@@ -746,21 +787,22 @@ export default function CreditCustomersPage() {
                     <span className="text-xs text-slate-500">{statement.length} entr{statement.length === 1 ? 'y' : 'ies'}{(dateFrom || dateTo) ? ' (filtered)' : ''}</span>
                   </div>
                 </div>
+                <div className="max-h-[60vh] overflow-auto">
                 <table className="w-full text-sm">
-                  <thead>
+                  <thead className="sticky top-0 z-10 bg-surface-card">
                     <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
-                      <th className="px-4 py-2 font-medium">Date</th>
-                      <th className="px-4 py-2 font-medium">Reference</th>
-                      <th className="px-4 py-2 font-medium">Description</th>
-                      <th className="px-4 py-2 font-medium text-right">Charge</th>
-                      <th className="px-4 py-2 font-medium text-right">Payment</th>
-                      {isAdmin && <th className="px-4 py-2 font-medium text-right w-12"></th>}
+                      <SortTh label="Date"        sortKey="date"    sort={sort} onSort={cycle} className="px-4" />
+                      <SortTh label="Reference"   sortKey="ref"     sort={sort} onSort={cycle} className="px-4" />
+                      <SortTh label="Description" sortKey="desc"    sort={sort} onSort={cycle} className="px-4" />
+                      <SortTh label="Charge"      sortKey="charge"  sort={sort} onSort={cycle} className="px-4" align="right" />
+                      <SortTh label="Payment"     sortKey="payment" sort={sort} onSort={cycle} className="px-4" align="right" />
+                      {isAdmin && <th className="px-4 py-2 font-medium text-right w-12 bg-surface-card"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {statement.length === 0 ? (
+                    {visibleStatement.length === 0 ? (
                       <tr><td colSpan={isAdmin ? 6 : 5} className="px-4 py-8 text-center text-slate-500">No entries for the selected dates.</td></tr>
-                    ) : statement.map((r, i) => (
+                    ) : visibleStatement.map((r, i) => (
                       <tr key={i} className={`border-b border-surface-border/50 ${r.kind === 'opening' ? 'bg-amber-500/5' : 'hover:bg-surface-hover/40'}`}>
                         <td className="px-4 py-2.5 text-slate-400 font-mono text-xs whitespace-nowrap">{r.date || '—'}</td>
                         <td className="px-4 py-2.5">
@@ -801,6 +843,7 @@ export default function CreditCustomersPage() {
                     </tfoot>
                   )}
                 </table>
+                </div>
               </div>
             </>
           )}

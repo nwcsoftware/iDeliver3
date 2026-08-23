@@ -12,7 +12,7 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
-import { ensureTrialSubscription } from '../lib/subscriptions'
+import { fetchPartyOrderIds, partyOwnsOrder, PARTY_LINE_TABLES } from '../lib/partyOrders'
 import { formatMobile } from '../lib/phone'
 import { buildOrderGroups, defaultOpenGroup } from '../lib/orderGroups'
 import {
@@ -37,6 +37,7 @@ import { saveOrderServices } from '../lib/orderServices'
 import TagLocationField from '../components/orders/TagLocationField'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { getSavedLocations, addSavedLocation, renameSavedLocation, removeSavedLocation, getHiddenLocations, hideLocation } from '../lib/savedLocations'
+import SearchField from '../components/ui/SearchField'
 
 /* ── constants ───────────────────────────────────────────── */
 
@@ -814,26 +815,44 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 
-  // 2nd-party (supplier/partner) view: the set of order ids this contact owns —
-  // orders whose packages (provider_id) or retail invoices (contact_id) point at
-  // them. `null` while loading, so we show nothing rather than everything.
+  /* 2nd-party (supplier/partner) view: the order ids this contact owns, through
+     any line that names them — packages, retail invoices, shop products sold in
+     the customer app, services. `null` while loading, so we show nothing rather
+     than everything. Orders raised FOR them are matched on the order row itself
+     (see partyOwnsOrder) and need no lookup. */
   const [ownedOrderIds, setOwnedOrderIds] = useState(null)
+  const [ownershipTick, setOwnershipTick] = useState(0)
   useEffect(() => {
-    if (!partyContactId) { setOwnedOrderIds(null); return }
+    if (!partyContactId) { setOwnedOrderIds(null); return undefined }
     let cancelled = false
-    ;(async () => {
-      const [pkgRes, invRes] = await Promise.all([
-        supabase.from('delivery_packages').select('order_id').eq('provider_id', partyContactId),
-        supabase.from('retail_goods_invoices').select('order_id').eq('contact_id', partyContactId),
-      ])
-      if (cancelled) return
-      const ids = new Set()
-      for (const r of pkgRes.data ?? []) if (r.order_id) ids.add(r.order_id)
-      for (const r of invRes.data ?? []) if (r.order_id) ids.add(r.order_id)
-      setOwnedOrderIds(ids)
-    })()
-    return () => { cancelled = true }
-  }, [partyContactId, orders])
+    // Coalesce the burst of order updates a busy day produces into one lookup.
+    const t = setTimeout(async () => {
+      const { ids } = await fetchPartyOrderIds(partyContactId)
+      if (!cancelled) setOwnedOrderIds(ids)
+    }, 250)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [partyContactId, orders, ownershipTick])
+
+  /* An order becomes theirs a moment AFTER it is created — the customer app
+     inserts the order, then its items — so the order arriving over realtime is
+     not yet recognisable as theirs. Watch the line tables that name them, and
+     re-ask when one changes. A slow tick backs it up where those tables aren't
+     in the realtime publication (supabase-fix132.sql). */
+  useEffect(() => {
+    if (!partyContactId) return undefined
+    const bump = () => setOwnershipTick(n => n + 1)
+    const channels = PARTY_LINE_TABLES.map(([table, column]) => supabase
+      .channel(`party-${table}-${partyContactId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table, filter: `${column}=eq.${partyContactId}` },
+        bump)
+      .subscribe())
+    const timer = setInterval(bump, 60_000)
+    return () => {
+      channels.forEach(c => supabase.removeChannel(c))
+      clearInterval(timer)
+    }
+  }, [partyContactId])
 
   // The party's own contact — used to auto-fill (and lock) the package provider
   // and retail-invoice shop so a 2nd-party order always references them.
@@ -1098,7 +1117,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     const o = orders.find(x => x.id === editId)
     if (!o) return   // wait until the orders list includes it
     // 2nd-party users may only deep-link into their own orders.
-    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(editId))) { setOpeningOrder(false); return }
+    if (partyContactId
+        && !(ownedOrderIds && partyOwnsOrder(orders.find(o => o.id === editId), partyContactId, ownedOrderIds))) {
+      setOpeningOrder(false); return
+    }
     handledEditRef.current = editId
     setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('edit'); return p }, { replace: true })
     ;(async () => {
@@ -1210,9 +1232,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
        its work. Leaving the orders on the list while the contact vanished from
        the pickers would be the worst of both: rows nobody can act on properly. */
     if (!isSuperAdmin && orderTouchesInactive(o, inactiveContactIds)) return false
-    // 2nd-party view: restrict to orders that reference this contact (their
-    // packages or retail invoices). Empty while ownership is still loading.
-    if (partyContactId && !(ownedOrderIds && ownedOrderIds.has(o.id))) return false
+    // 2nd-party view: restrict to orders that name this contact — through a
+    // line, or as the customer the order was raised for. Empty while the
+    // ownership lookup is still running.
+    if (partyContactId && !(ownedOrderIds && partyOwnsOrder(o, partyContactId, ownedOrderIds))) return false
     // Closed orders live on their own page; the daily Orders page excludes them.
     const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
     const q = search.toLowerCase()
@@ -1729,6 +1752,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // Shared form fields (commission %, business type, contact category).
       ...contactTypeExtras(newContactType, newCustomer),
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+      /* Who raised it, by NAME and by ACCOUNT (fix137). The name is what a
+         report prints and stays readable if the account is renamed or removed;
+         the id is what a query joins on. Stamped on creation only — an edit
+         years later must not rewrite who took the order in the first place. */
+      ...(modal === 'add' ? {
+        created_by:    currentUserName || currentUser?.username || null,
+        created_by_id: currentUser?.user_id || null,
+      } : {}),
       branch_id:      currentUser?.branch_id || null,
       created_by:     currentUser?.user_id   || null,
       account_number: accountNumber || null,
@@ -1740,13 +1771,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     )
     if (e) { setCustomerError(e.message); setSavingCustomer(false); return }
 
-    // A partner or supplier added from here gets the same free introductory
-    // subscription as one added from the Contacts page — otherwise where the
-    // contact was created would decide whether they can sign in.
-    const trial = await ensureTrialSubscription(data.id, [newContactType], {
-      companyId: COMPANY_ID, userId: currentUser?.user_id || null,
-    })
-    if (trial.error) console.warn('Could not issue the free subscription:', trial.error)
+    /* No trial from here: a contact created in the middle of an order has no
+       login, and a subscription without a login is a countdown on an account
+       nobody can use. It begins when an admin creates the username (fix136). */
 
     const addrErr = await saveContactAddresses({
       contactId: data.id, addresses: custAddresses, origIds: [],
@@ -3065,15 +3092,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         className="sticky top-0 z-20 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input className={`input pl-9 ${search ? 'pr-9' : ''}`} placeholder={closed ? 'Search closed orders…' : 'Search orders…'}
-              value={search} onChange={e => setSearch(e.target.value)} />
-            {search && (
-              <button type="button" onClick={() => setSearch('')} title="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            )}
+            <SearchField
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={closed ? 'Search closed orders…' : 'Search orders…'}
+            />
           </div>
 
           {/* Filters live under this line — this opens them, and the pin keeps
@@ -5305,12 +5328,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             {/* Search */}
             <div className="px-4 py-3 border-b border-surface-border flex-shrink-0">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  className="input pl-9 pr-8" autoFocus
-                  placeholder="Search by name, mobile, email, address…"
+                <SearchField
                   value={customerSearch}
                   onChange={e => setCustomerSearch(e.target.value)}
+                  placeholder="Search by name, mobile, email, address…"
+                  autoFocus
+                />
                 />
                 {customerSearch && (
                   <button type="button" onClick={() => setCustomerSearch('')}
@@ -5588,9 +5611,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <>
                 <div className="p-2 border-b border-surface-border">
                   <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                    <input ref={driverSearchRef} autoFocus className={`input pl-8 py-1.5 text-xs ${driverQuickSearch ? 'pr-8' : ''}`} placeholder="Search driver…"
-                      value={driverQuickSearch} onChange={e => setDriverQuickSearch(e.target.value)} />
+                    <SearchField
+                      value={driverQuickSearch}
+                      onChange={e => setDriverQuickSearch(e.target.value)}
+                      placeholder="Search driver…"
+                      className={`input pl-8 py-1.5 text-xs ${driverQuickSearch ? 'pr-8' : ''}`}
+                      autoFocus
+                      ref={driverSearchRef}
+                    />
                     {driverQuickSearch && (
                       <button type="button" onClick={() => { setDriverQuickSearch(''); driverSearchRef.current?.focus() }} title="Clear search"
                         className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">

@@ -1,7 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, AlertCircle, Search, Calendar, FilterX, FileDown, ShieldCheck, ArrowRightLeft,
+  AlertTriangle,
+  AlertCircle,
+  Calendar,
+  FilterX,
+  FileDown,
+  ShieldCheck,
+  ArrowRightLeft,
 } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { OrderNumber } from '../components/orders/OrderQuickView'
@@ -10,6 +17,8 @@ import {
   scanCurrencyIssues, limitsFor, DEFAULT_CURRENCY_LIMITS,
 } from '../lib/currencyCheck'
 import { orderTouchesInactive } from '../lib/contactVisibility'
+import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 const fmt = (v, c) => `${Number(v || 0).toLocaleString(undefined, {
   minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c}`
@@ -43,6 +52,39 @@ export default function CurrencyCheckPage() {
   // A currency slip from three months ago is still wrong today.
   useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
 
+  /* Orders record WHO raised them as a user id. The names live in
+     user_accounts — a dozen rows — so they are fetched once and mapped here
+     rather than joined onto every order. */
+  const [userNames, setUserNames] = useState(() => new Map())
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase.from('user_accounts').select('id, username')
+      if (!cancelled) setUserNames(new Map((data ?? []).map(u => [u.id, u.username])))
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  /* What to show in "Order created by": where the order came from and who
+     keyed it — "Call center\Suhair". The two together answer the question the
+     column is really asked, which is "who do I go and speak to about this?"
+
+     An order raised before the user was recorded has no name, so the source
+     stands alone in muted italics, labelled as such on hover — nobody should
+     read "Call center" as the name of a person. */
+  const createdByOf = (r) => {
+    /* The name stored on the order wins: it is what was true when the order
+       was taken, and it still reads correctly if that account has since been
+       renamed or deleted. The id is the fallback for orders raised before the
+       name was recorded (fix137). */
+    const name   = r.createdByName || (r.createdById ? userNames.get(r.createdById) : null)
+    const source = r.source || null
+    if (source && name) return { text: `${source}\\${name}`, exact: true }
+    if (name)           return { text: name, exact: true }
+    if (source)         return { text: source, exact: false }
+    return { text: '—', exact: false }
+  }
+
   const [search,   setSearch]   = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
@@ -61,10 +103,33 @@ export default function CurrencyCheckPage() {
       if (dateFrom && r.date && r.date < dateFrom) return false
       if (dateTo   && r.date && r.date > dateTo)   return false
       if (!q) return true
-      return [r.orderNumber, r.label, r.ref, customerName(r.customer)]
+      return [r.orderNumber, r.label, r.ref, r.by, createdByOf(r).text, customerName(r.customer)]
         .some(v => String(v ?? '').toLowerCase().includes(q))
     })
   }, [all, search, kind, dateFrom, dateTo])
+
+  /* What each column sorts BY — not always what it prints. Amount sorts by the
+     figure (and by its ABSOLUTE size, since that is what makes a number look
+     wrong), severity by how bad it is rather than alphabetically, so one click
+     brings the errors to the top. */
+  const sortValue = useCallback((r, key) => {
+    switch (key) {
+      case 'severity': return r.severity === 'error' ? 2 : 1
+      case 'order':    return r.orderNumber || ''
+      case 'date':     return r.date || ''
+      case 'customer': return customerName(r.customer).toLowerCase()
+      case 'raised':   return createdByOf(r).text.toLowerCase()
+      case 'what':     return `${r.label} ${r.ref || ''}`.toLowerCase()
+      case 'by':       return (r.by || '').toLowerCase()
+      case 'amount':   return Math.abs(Number(r.amount) || 0)
+      case 'suggests': return (r.suggests || '').toLowerCase()
+      case 'why':      return (r.note || '').toLowerCase()
+      default:         return ''
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userNames])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const visible = useMemo(() => sortRows(rows), [rows, sortRows])
 
   const counts = useMemo(() => ({
     error:   all.filter(r => r.severity === 'error').length,
@@ -73,10 +138,10 @@ export default function CurrencyCheckPage() {
   }), [all])
 
   function exportCsv() {
-    const head = ['Order', 'Date', 'Customer', 'What', 'Reference', 'Amount', 'Currency', 'Looks like', 'Note']
+    const head = ['Order', 'Date', 'Customer', 'Order created by', 'What', 'Reference', 'Collected by', 'Amount', 'Currency', 'Looks like', 'Note']
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
     const body = rows.map(r => [
-      r.orderNumber, r.date, customerName(r.customer), r.label, r.ref,
+      r.orderNumber, r.date, customerName(r.customer), createdByOf(r).text, r.label, r.ref, r.by || '',
       r.amount, r.currency, r.suggests, r.note,
     ].map(esc).join(','))
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(','), ...body].join('\r\n')],
@@ -91,7 +156,7 @@ export default function CurrencyCheckPage() {
   const busy = !ordersFullyLoaded || !!loading?.orders
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       <DataLoadingOverlay
         open={busy}
         title="Checking currencies"
@@ -110,9 +175,12 @@ export default function CurrencyCheckPage() {
           <span className="text-[11px] text-slate-500">amounts that look like the wrong currency</span>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search order, customer or line…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search order, customer or line…"
+            className="input pl-9"
+          />
         </div>
         <div className="flex items-center gap-1.5">
           <Calendar className="w-3.5 h-3.5 text-slate-500" />
@@ -165,34 +233,43 @@ export default function CurrencyCheckPage() {
       </div>
 
       {/* The list */}
-      <div className="card overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-surface-border bg-surface-hover/30">
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-surface-border bg-surface-hover/30">
           <span className="text-xs text-slate-400">
             {rows.length} line{rows.length === 1 ? '' : 's'} to look at
             {counts.orders > 0 && <span className="text-slate-500"> · across {counts.orders} order{counts.orders === 1 ? '' : 's'}</span>}
           </span>
         </div>
-        <div className="overflow-x-auto">
+        {/* The table scrolls inside the card so its header can stay put: this
+            list runs to hundreds of lines across a whole history, and the
+            column you are reading is otherwise long gone off the top. */}
+        <div className="overflow-auto flex-1 min-h-0">
           <table className="w-full text-sm min-w-[860px]">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-surface-card">
               <tr className="border-b border-surface-border">
-                {['', 'Order #', 'Date', 'Customer', 'What', 'Amount', 'Looks like', 'Why'].map((h, i) => (
-                  <th key={i} className="text-left px-3 py-2.5 text-slate-500 text-[11px] font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
+                {[
+                  ['', 'severity'], ['Order #', 'order'], ['Date', 'date'],
+                  ['Customer', 'customer'], ['Order created by', 'raised'],
+                  ['What', 'what'], ['Collected by', 'by'], ['Amount', 'amount'],
+                  ['Looks like', 'suggests'], ['Why', 'why'],
+                ].map(([label, key]) => (
+                  <SortTh key={key} label={label} sortKey={key} sort={sort} onSort={cycle}
+                    className="text-[11px] uppercase tracking-wider text-slate-500 whitespace-nowrap py-2.5" />
                 ))}
               </tr>
             </thead>
             <tbody>
               {busy ? (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500 text-xs">Checking…</td></tr>
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500 text-xs">Checking…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center">
+                <tr><td colSpan={10} className="px-4 py-12 text-center">
                   <ShieldCheck className="w-8 h-8 mx-auto text-green-400/70" />
                   <p className="mt-2 text-sm text-slate-300">Every amount looks plausible.</p>
                   <p className="mt-1 text-xs text-slate-500">
                     Nothing falls outside the limits set in App Settings.
                   </p>
                 </td></tr>
-              ) : rows.map((r, i) => (
+              ) : visible.map((r, i) => (
                 <tr key={`${r.orderId}-${r.kind}-${i}`} className="border-b border-surface-border/50 hover:bg-surface-hover/30">
                   <td className="px-3 py-2">
                     {r.severity === 'error'
@@ -205,9 +282,29 @@ export default function CurrencyCheckPage() {
                   </td>
                   <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{r.date || '—'}</td>
                   <td className="px-3 py-2 text-slate-300 text-xs max-w-[12rem] truncate">{customerName(r.customer)}</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    {(() => {
+                      const who = createdByOf(r)
+                      return (
+                        <span className={who.exact ? 'text-slate-300' : 'text-slate-500 italic'}
+                          title={who.exact
+                            ? 'Where the order came from, and the user who raised it'
+                            : 'No user was recorded on this order — showing only where it came from'}>
+                          {who.text}
+                        </span>
+                      )
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-slate-300 text-xs">
                     {r.label}
                     {r.ref && <span className="block text-[11px] text-slate-500 truncate max-w-[14rem]">{r.ref}</span>}
+                  </td>
+                  {/* Only a payment has a collector; everything else is a figure
+                      on the order rather than money someone handed over. */}
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    {r.by
+                      ? <span className="text-slate-300">{r.by}</span>
+                      : <span className="text-slate-600">—</span>}
                   </td>
                   <td className={`px-3 py-2 tabular-nums text-xs font-semibold whitespace-nowrap ${
                     r.severity === 'error' ? 'text-red-300' : 'text-amber-300'}`}>

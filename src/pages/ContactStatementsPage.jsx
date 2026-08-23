@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { BookOpenText, CalendarDays, ChevronRight, FilterX, ReceiptText, Search, UsersRound, WalletCards } from 'lucide-react'
+import { BookOpenText, CalendarDays, ChevronRight, FilterX, ReceiptText, UsersRound, WalletCards } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
+import SearchField from '../components/ui/SearchField'
 
 const TYPE_LABELS = { customer: 'Customer', partner: 'Partner', supplier: 'Supplier' }
 
@@ -235,7 +236,12 @@ export default function ContactStatementsPage() {
         <section className="card min-h-0 flex flex-col overflow-hidden">
           <div className="p-4 border-b border-surface-border space-y-3">
             <div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-200">Contacts</span><span className="text-xs text-slate-500">{visibleContacts.length}</span></div>
-            <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" /><input className="input pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Name or account number…" /></div>
+            <div className="relative"><SearchField
+                                        value={search}
+                                        onChange={e => setSearch(e.target.value)}
+                                        placeholder="Name or account number…"
+                                        className="input pl-9"
+                                      /></div>
             <select className="input" value={type} onChange={e => setType(e.target.value)}><option value="all">All contact types</option><option value="customer">Customers</option><option value="partner">Partners</option><option value="supplier">Suppliers</option></select>
           </div>
           <div className="overflow-y-auto p-2 flex-1">

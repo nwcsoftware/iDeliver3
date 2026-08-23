@@ -9,6 +9,12 @@ if (!supabaseUrl || !supabaseAnon) {
   )
 }
 
+/* The project's own address and publishable key. Exported because one upload
+   path talks to the storage endpoint directly (XHR) to report progress on a
+   large file — something the client's fetch-based upload cannot do. */
+export const SUPABASE_URL      = supabaseUrl  || 'https://placeholder.supabase.co'
+export const SUPABASE_ANON_KEY = supabaseAnon || 'placeholder'
+
 export const supabase = createClient(
   supabaseUrl  || 'https://placeholder.supabase.co',
   supabaseAnon || 'placeholder',

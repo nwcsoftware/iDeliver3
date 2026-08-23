@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { X, Check, Search, MapPin } from 'lucide-react'
+import { X, Check, MapPin } from 'lucide-react'
+import SearchField from '../ui/SearchField'
 import 'leaflet/dist/leaflet.css'   // bundle locally so the map renders even offline
 
 /* Lazy-load leaflet / react-leaflet the same way TrackingPage does. */
@@ -109,9 +110,12 @@ export default function MapPicker({ open, initial, onCancel, onConfirm }) {
         {/* Search */}
         <form onSubmit={runSearch} className="px-4 py-3 border-b border-surface-border flex-shrink-0 flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input className="input pl-9" placeholder="Search a place or address…"
-              value={query} onChange={e => setQuery(e.target.value)} />
+            <SearchField
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search a place or address…"
+              className="input pl-9"
+            />
           </div>
           <button type="submit" className="btn-ghost px-3 border border-surface-border" disabled={searching}>
             {searching ? 'Searching…' : 'Search'}

@@ -1,15 +1,39 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Phone, Mail, MapPin, Building, UserCheck, Handshake, ChevronRight, KeyRound, Copy, Eye, EyeOff, CreditCard, UserPlus, Package, ClipboardList, Trash2, CalendarCheck,
+  Plus,
+  Edit2,
+  Power,
+  X,
+  Check,
+  AlertCircle,
+  Phone,
+  Mail,
+  MapPin,
+  Building,
+  UserCheck,
+  Handshake,
+  ChevronRight,
+  KeyRound,
+  Copy,
+  Eye,
+  EyeOff,
+  CreditCard,
+  UserPlus,
+  Package,
+  ClipboardList,
+  Trash2,
+  CalendarCheck,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
-import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
+import {
+  ensureTrialSubscription, TRIAL_DAYS, reviewSubscriptionAfterTypeChange, RATE_CURRENCY,
+} from '../lib/subscriptions'
+import { syncLoginRole } from '../lib/contactLogin'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES, normalizeOptions } from '../components/contacts/ContactFormFields'
 import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
@@ -19,6 +43,7 @@ import ContactPartnerPackages from '../components/contacts/ContactPartnerPackage
 import ContactPartnerOrders from '../components/contacts/ContactPartnerOrders'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount } from '../lib/subAccounts'
+import SearchField from '../components/ui/SearchField'
 
 /* ── type config ─────────────────────────────────────────── */
 
@@ -105,6 +130,7 @@ export default function ContactsPage({ type }) {
   const [editingPw,    setEditingPw]    = useState(false) // true once Reset is pressed (new pw is visible)
   const [newPassword,  setNewPassword]  = useState('')   // confirmation shown after a reset
   const [credError,    setCredError]    = useState('')
+  const [notice,       setNotice]       = useState('')   // side-effects of a save, worth saying out loud
 
   const PW_MIN = 12
 
@@ -295,6 +321,22 @@ export default function ContactsPage({ type }) {
       setNewPassword(pwd)            // confirm what was set (copyable, shown once)
       setPwInput(''); setShowPw(false); setEditingPw(false)
       if (username) { setUsernameInput(username); setForm(f => ({ ...f, username })) }
+
+      /* The login exists now, so the free period starts now. Issued once: a
+         later password reset finds a subscription already on file and leaves
+         it alone, rather than handing out another ninety days. */
+      const types = Array.isArray(modal.contact_types) && modal.contact_types.length
+        ? modal.contact_types
+        : (modal.contact_type ? [modal.contact_type] : [])
+      const trial = await ensureTrialSubscription(modal.id, types, {
+        companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+      })
+      if (trial.created) {
+        setNotice(`Login created — a free ${TRIAL_DAYS}-day subscription starts today. `
+          + 'Renewals are entered by the super admin under Settings → Subscriptions.')
+      } else if (trial.error) {
+        console.warn('Could not issue the free subscription:', trial.error)
+      }
     } catch (e) {
       const msg = e?.message || String(e)
       setCredError(
@@ -428,18 +470,43 @@ export default function ContactsPage({ type }) {
       })
     }
 
-    /* A supplier or partner can't sign in without a subscription, so a new one
-       gets the free introductory period automatically. It is a no-op for every
-       other contact type, and for anyone who already has a subscription — so a
-       customer later tagged as a partner picks one up, but nobody gets two. */
-    const trial = await ensureTrialSubscription(contactId, selectedTypes, {
-      companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+    /* No trial here any more. A subscription exists to let somebody sign in,
+       and at this point nobody can: the login is created separately, and that
+       is where the free period now begins (fix136). */
+
+    /* The login's role follows the contact's roles. They are separate records —
+       the portal reads the login — so a partner retagged as a supplier would
+       otherwise keep signing in as a partner, without the supplier pages. */
+    const roleSync = await syncLoginRole(contactId, selectedTypes, {
+      actorId: currentUser?.user_id || null,
     })
-    if (trial.error) {
-      // The contact is saved; the missing subscription is not worth undoing it
-      // over. The super admin can enter one on the Subscriptions page.
-      console.warn('Could not issue the free subscription:', trial.error)
-    }
+    if (roleSync.error) console.warn('Could not update the login role:', roleSync.error)
+
+    /* A partner promoted to supplier is billed at the supplier rate. The
+       difference for whatever is left of their period is added to the
+       subscription and it goes unpaid, which closes their portal until the
+       money is confirmed — checked here AND at every sign-in, so neither the
+       party nor the admin who made the change can leave it unsettled. */
+    const rolesChanged = modal !== 'add'
+      && JSON.stringify([...(modal.contact_types || [])].sort()) !== JSON.stringify([...selectedTypes].sort())
+    const review = rolesChanged
+      ? await reviewSubscriptionAfterTypeChange(contactId, { userId: currentUser?.user_id || null })
+      : { changed: false, none: false, error: null }
+    if (review.error) console.warn('Could not review the subscription:', review.error)
+
+    setNotice([
+      roleSync.changed
+        ? `Their login now signs in as ${roleSync.to} (was ${roleSync.from}). They will see the change the next time the app starts.`
+        : '',
+      review.changed
+        ? `Subscription upgraded: ${review.from.toFixed(2)} → ${review.to.toFixed(2)} ${RATE_CURRENCY}/month. `
+          + `${review.due.toFixed(2)} ${RATE_CURRENCY} is due for the remaining ${review.days} day${review.days === 1 ? '' : 's'}, `
+          + 'and their portal stays closed until the super admin confirms the payment on Settings → Subscriptions.'
+        : '',
+      review.none
+        ? 'This contact now needs a subscription and holds none — they cannot sign in until the super admin creates one.'
+        : '',
+    ].filter(Boolean).join(' '))
 
     // Saved successfully → close immediately, then refresh the list in the background.
     setSaving(false); closeModal()
@@ -560,6 +627,18 @@ export default function ContactsPage({ type }) {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
+      {/* Something the save did on its own — currently the login role following
+          the contact's roles. Dismissible; it is news, not an error. */}
+      {notice && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-brand-500/10 border border-brand-500/30 rounded-lg">
+          <KeyRound className="w-4 h-4 text-brand-300 flex-shrink-0 mt-0.5" />
+          <p className="text-brand-200 text-xs leading-relaxed flex-1">{notice}</p>
+          <button onClick={() => setNotice('')} className="text-slate-400 hover:text-slate-200">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -573,9 +652,12 @@ export default function ContactsPage({ type }) {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder={`Search ${title.toLowerCase()}…`}
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={`Search ${title.toLowerCase()}…`}
+            className="input pl-9"
+          />
         </div>
 
         {/* Active / inactive / all — the super admin alone. A retired contact is

@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Plus, Search, Edit2, Power, X, Check, AlertCircle, Trash2, FileText,
+  Plus,
+  Edit2,
+  Power,
+  X,
+  Check,
+  AlertCircle,
+  Trash2,
+  FileText,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import SearchField from '../components/ui/SearchField'
 
 const STATUSES = ['pending', 'confirmed', 'cancelled']
 
@@ -228,9 +236,12 @@ export default function PurchaseInvoicesPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search invoice # or supplier…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search invoice # or supplier…"
+            className="input pl-9"
+          />
         </div>
 
         <div className="flex items-center gap-1">

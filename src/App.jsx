@@ -33,6 +33,7 @@ import ContactsPage          from './pages/ContactsPage'
 import UserAccountsPage       from './pages/UserAccountsPage'
 import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
+import CustomerThemePage     from './pages/CustomerThemePage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
 import PartyStatementPage     from './pages/PartyStatementPage'
 import CurrencyCheckPage      from './pages/CurrencyCheckPage'
@@ -145,6 +146,7 @@ function AppShell() {
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />
                 <Route path="/settings/shop-categories" element={<ShopCategoriesPage />} />
                 <Route path="/settings/header-background" element={<HeaderBackgroundPage />} />
+                <Route path="/settings/customer-theme"    element={<CustomerThemePage />} />
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
                 <Route path="/settings/software-subscriptions" element={<SoftwareSubscriptionsPage />} />
                 <Route path="/settings/change-requests" element={<ChangeRequestsPage />} />

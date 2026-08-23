@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Search, ClipboardList, X, FileDown } from 'lucide-react'
+import { ClipboardList, X, FileDown } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { productIsStocked } from '../lib/productCode'
+import SearchField from '../components/ui/SearchField'
 
 function fmtPrice(value, currency) {
   const n = Number(value) || 0
@@ -112,15 +113,11 @@ export default function PriceListPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className={`input pl-9 ${search ? 'pr-9' : ''}`} placeholder="Search code, description, unit…"
-            value={search} onChange={e => setSearch(e.target.value)} />
-          {search && (
-            <button type="button" onClick={() => setSearch('')} title="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search code, description, unit…"
+          />
         </div>
 
         <button className="btn-primary ml-auto" onClick={exportPDF} disabled={visible.length === 0}>

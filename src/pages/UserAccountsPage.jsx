@@ -1,14 +1,40 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  UserCog, UserPlus, Search, Shield, X, Loader, AlertCircle,
-  KeyRound, Power, PowerOff, Pencil, Eye, EyeOff, Copy, Check, RefreshCw, Wand2,
-  Monitor, Smartphone,
+  UserCog,
+  UserPlus,
+  Shield,
+  X,
+  Loader,
+  AlertCircle,
+  KeyRound,
+  Power,
+  PowerOff,
+  Pencil,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  RefreshCw,
+  Wand2,
+  Monitor,
+  Smartphone,
+  Trash2,
+  ShieldAlert,
+  FileSearch,
+  ArrowUpAZ,
+  ArrowDownZA,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
+import {
+  scanUserReferences, summariseReferences, deleteUserAccount, tableLabel, columnLabel,
+} from '../lib/userDeletion'
 import { useAuth } from '../context/AuthContext'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
+import SearchField from '../components/ui/SearchField'
 
 const PW_MIN = 8
 
@@ -56,6 +82,20 @@ const roleLabel = Object.fromEntries(ASSIGNABLE_ROLES.map(r => [r.value, r.label
 // is blocked with a warning; deactivated accounts don't count (and are hidden).
 const ROLE_LIMITS = { partner: 20, supplier: 20, call_center: 6 }
 
+/* One filter chip. `cls` lets a chip wear the colour of what it filters —
+   green for online, the status colours for statuses — so the bar reads as the
+   list does. */
+function FilterChip({ on, onClick, children, cls = '' }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`px-2.5 py-1.5 rounded-lg font-medium border transition-colors ${
+        on ? (cls || 'bg-brand-500/15 text-brand-300 border-brand-500/30')
+           : 'text-slate-400 border-surface-border hover:bg-surface-hover'}`}>
+      {children}
+    </button>
+  )
+}
+
 const STATUS_STYLES = {
   active:    'bg-green-500/10 text-green-400 border-green-500/30',
   inactive:  'bg-slate-500/10 text-slate-400 border-slate-500/30',
@@ -83,6 +123,20 @@ export default function UserAccountsPage() {
   const { currentUser, hasRole, onlineUserIds, onlineSessions } = useAuth()
   const isAdmin = hasRole('super_admin', 'admin')
   const onlineSet = new Set((onlineUserIds ?? []).map(String))
+
+  /* Filters and sorting for the list. Sorting cycles A→Z, Z→A, then back to
+     the natural order the query returned — the third state matters, because
+     "how it normally comes" is itself a view and there is otherwise no way
+     back to it without reloading the page. */
+  const [roleFilter,   setRoleFilter]   = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [onlineFilter, setOnlineFilter] = useState('all')   // all | online | offline
+  const [sort, setSort] = useState({ key: null, dir: null }) // dir: 'asc' | 'desc' | null
+
+  const cycleSort = (key) => setSort(s => (
+    s.key !== key ? { key, dir: 'asc' }
+      : s.dir === 'asc' ? { key, dir: 'desc' }
+      : { key: null, dir: null }))
   const isSuperAdmin = hasRole('super_admin')
 
   // Live devices per user (one entry per signed-in client), for the super
@@ -222,12 +276,22 @@ export default function UserAccountsPage() {
     )
   }
 
-  // Regular admins never see deactivated users; the super admin sees everyone
-  // (of every role) and can reactivate any of them.
-  const visibleUsers = isSuperAdmin ? users : users.filter(u => u.status === 'active')
+  /* Who this viewer may see at all. Two rules, and everything else on the page
+     — the filters, their counts, the presence tally, the rows — is built from
+     this one list, so none of them can disagree with it:
+
+       · a super-admin account is invisible to anyone who isn't one. The query
+         already asks the server to leave those rows out; this repeats it here
+         so a future fallback query, or a cached response, cannot quietly put
+         them back on the screen.
+       · a plain admin sees only active accounts; the super admin sees every
+         account of every role, and can reactivate any of them. */
+  const visibleUsers = isSuperAdmin
+    ? users
+    : users.filter(u => u.role !== 'super_admin' && u.status === 'active')
 
   const q = search.trim().toLowerCase()
-  const filtered = visibleUsers.filter(u =>
+  const searched = visibleUsers.filter(u =>
     !q ||
     u.username?.toLowerCase().includes(q) ||
     u.email?.toLowerCase().includes(q) ||
@@ -235,6 +299,53 @@ export default function UserAccountsPage() {
     roleLabel[u.role]?.toLowerCase().includes(q) ||
     (isSuperAdmin && u.last_login_device?.toLowerCase().includes(q))
   )
+
+  const matchesFilters = (u) => {
+    if (roleFilter   !== 'all' && u.role   !== roleFilter)   return false
+    if (statusFilter !== 'all' && u.status !== statusFilter) return false
+    if (onlineFilter !== 'all') {
+      const on = onlineSet.has(String(u.id))
+      if (onlineFilter === 'online'  && !on) return false
+      if (onlineFilter === 'offline' &&  on) return false
+    }
+    return true
+  }
+
+  /* What each sortable column sorts BY — not always what it displays: Online
+     sorts by whether they are, Last Login by the moment rather than the
+     formatted date, so "Never" lands at one end instead of under N. */
+  const sortValue = (u, key) => {
+    switch (key) {
+      case 'username': return (u.username || '').toLowerCase()
+      case 'email':    return (u.email || '').toLowerCase()
+      case 'mobile':   return (u.mobile || '').replace(/\D/g, '')
+      case 'role':     return (roleLabel[u.role] || u.role || '').toLowerCase()
+      case 'status':   return (u.status || '').toLowerCase()
+      case 'online':   return onlineSet.has(String(u.id)) ? 1 : 0
+      case 'device':   return (u.last_login_device || '').toLowerCase()
+      case 'last':     return u.last_login_at ? new Date(u.last_login_at).getTime() : 0
+      default:         return ''
+    }
+  }
+
+  const filtered = (() => {
+    const rows = searched.filter(matchesFilters)
+    if (!sort.key || !sort.dir) return rows              // the natural order
+    const dir = sort.dir === 'asc' ? 1 : -1
+    return rows.slice().sort((a, b) => {
+      const va = sortValue(a, sort.key)
+      const vb = sortValue(b, sort.key)
+      if (va === vb) return (a.username || '').localeCompare(b.username || '')
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
+      return String(va).localeCompare(String(vb)) * dir
+    })
+  })()
+
+  // The roles actually present, so the filter never offers an empty one.
+  const rolesPresent = [...new Set(visibleUsers.map(u => u.role))]
+    .sort((a, b) => (roleLabel[a] || a).localeCompare(roleLabel[b] || b))
+  const onlineCount = visibleUsers.filter(u => onlineSet.has(String(u.id))).length
+  const anyFilter = roleFilter !== 'all' || statusFilter !== 'all' || onlineFilter !== 'all' || !!sort.key || !!q
 
   // Count active accounts for a role, optionally excluding one user (the row
   // being edited). Used to enforce the per-role caps in ROLE_LIMITS.
@@ -287,6 +398,20 @@ export default function UserAccountsPage() {
         p_status:     form.status,
         p_contact_id: form.contact_id || null,
       })
+
+      /* A supplier or partner account is what a subscription is FOR, so the
+         free period starts the moment the account exists. `ensureTrialSubscription`
+         issues one only for a 2nd party that is subject to a subscription, and
+         only if they have none already. */
+      if (!e && form.contact_id) {
+        const { data: c } = await supabase.from('contacts')
+          .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
+        const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
+        const trial = await ensureTrialSubscription(form.contact_id, types, {
+          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
+        })
+        if (trial.error) console.warn('Could not issue the free subscription:', trial.error)
+      }
       rpcError = e
     } else {
       const { error: e } = await supabase.rpc('admin_update_user', {
@@ -326,6 +451,33 @@ export default function UserAccountsPage() {
     fetchUsers()
   }
 
+  /* ── delete for good (super admin only) ───────────────────
+     Never a single click: the account's footprint is read first and shown, and
+     the username has to be typed back. A user's id is stamped across the
+     database, and the office should agree to what happens to those records —
+     their own go with them, their name on other people's work is cleared —
+     before any of it happens. */
+  const [purge, setPurge] = useState(null)
+  // { user, phase: 'scanning'|'review'|'working'|'done', rows, report, typed, error }
+
+  async function openPurge(u) {
+    setPurge({ user: u, phase: 'scanning', rows: [], report: [], typed: '', error: '' })
+    const { rows, error } = await scanUserReferences(u.id, { actorId: currentUser.user_id })
+    setPurge(p => (p && p.user.id === u.id
+      ? { ...p, phase: error ? 'review' : 'review', rows, error: error || '' }
+      : p))
+  }
+
+  async function confirmPurge() {
+    const u = purge?.user
+    if (!u) return
+    setPurge(p => ({ ...p, phase: 'working', error: '' }))
+    const { report, error } = await deleteUserAccount(u.id, { actorId: currentUser.user_id })
+    if (error) { setPurge(p => ({ ...p, phase: 'review', error })); return }
+    setPurge(p => ({ ...p, phase: 'done', report }))
+    fetchUsers()
+  }
+
   /* ── activate / deactivate ───────────────────────────────── */
   async function toggleStatus(u) {
     const next = u.status === 'active' ? 'inactive' : 'active'
@@ -341,7 +493,7 @@ export default function UserAccountsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -349,13 +501,67 @@ export default function UserAccountsPage() {
           <h2 className="text-base font-semibold text-slate-100">User Accounts</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search users…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search users…"
+            className="input pl-9"
+          />
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd}>
           <UserPlus className="w-4 h-4" /> New User
         </button>
+      </div>
+
+      {/* Filters. Only the roles and statuses actually present are offered —
+          a filter that can only ever return nothing is just a dead end. */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span className="text-slate-500 uppercase tracking-wider text-[10px]">Role</span>
+        <div className="flex items-center gap-1 flex-wrap">
+          <FilterChip on={roleFilter === 'all'} onClick={() => setRoleFilter('all')}>
+            All <span className="opacity-60">{visibleUsers.length}</span>
+          </FilterChip>
+          {rolesPresent.map(r => (
+            <FilterChip key={r} on={roleFilter === r} onClick={() => setRoleFilter(r)}>
+              {roleLabel[r] || r}{' '}
+              <span className="opacity-60">{visibleUsers.filter(u => u.role === r).length}</span>
+            </FilterChip>
+          ))}
+        </div>
+
+        <span className="text-slate-500 uppercase tracking-wider text-[10px] ml-2">Status</span>
+        <div className="flex items-center gap-1 flex-wrap">
+          <FilterChip on={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>All</FilterChip>
+          {['active', 'inactive', 'suspended', 'pending']
+            .filter(st => visibleUsers.some(u => u.status === st))
+            .map(st => (
+              <FilterChip key={st} on={statusFilter === st} onClick={() => setStatusFilter(st)}
+                cls={STATUS_STYLES[st]}>
+                <span className="capitalize">{st}</span>{' '}
+                <span className="opacity-60">{visibleUsers.filter(u => u.status === st).length}</span>
+              </FilterChip>
+            ))}
+        </div>
+
+        <span className="text-slate-500 uppercase tracking-wider text-[10px] ml-2">Presence</span>
+        <div className="flex items-center gap-1">
+          <FilterChip on={onlineFilter === 'all'} onClick={() => setOnlineFilter('all')}>All</FilterChip>
+          <FilterChip on={onlineFilter === 'online'} onClick={() => setOnlineFilter('online')}
+            cls="bg-green-500/10 text-green-300 border-green-500/30">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 mr-1.5 align-middle" />
+            Online <span className="opacity-60">{onlineCount}</span>
+          </FilterChip>
+          <FilterChip on={onlineFilter === 'offline'} onClick={() => setOnlineFilter('offline')}>
+            Offline <span className="opacity-60">{visibleUsers.length - onlineCount}</span>
+          </FilterChip>
+        </div>
+
+        {anyFilter && (
+          <button onClick={() => { setRoleFilter('all'); setStatusFilter('all'); setOnlineFilter('all'); setSort({ key: null, dir: null }); setSearch('') }}
+            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-surface-border text-slate-400 hover:text-slate-200">
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}
       </div>
 
       {error && (
@@ -365,14 +571,36 @@ export default function UserAccountsPage() {
         </div>
       )}
 
-      {/* List */}
-      <div className="card overflow-hidden">
+      {/* List. The table scrolls inside the card so its header can stay put:
+          on a long list the column you are reading is otherwise off the top of
+          the screen by the time you reach the rows you came for. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-y-auto flex-1 min-h-0">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-card">
             <tr className="border-b border-surface-border">
-              {['Username', 'Email', 'Mobile', 'Role', 'Status', 'Online',
-                ...(isSuperAdmin ? ['Device'] : []), 'Last Login', ''].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
+              {[
+                ['Username', 'username'], ['Email', 'email'], ['Mobile', 'mobile'],
+                ['Role', 'role'], ['Status', 'status'], ['Online', 'online'],
+                ...(isSuperAdmin ? [['Device', 'device']] : []),
+                ['Last Login', 'last'], ['', null],
+              ].map(([label, key]) => (
+                <th key={label || 'actions'}
+                  className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider bg-surface-card">
+                  {key ? (
+                    <button onClick={() => cycleSort(key)}
+                      title={sort.key === key
+                        ? (sort.dir === 'asc' ? 'Sorted A→Z — click for Z→A' : 'Sorted Z→A — click to clear')
+                        : `Sort by ${label}`}
+                      className={`inline-flex items-center gap-1 uppercase tracking-wider transition-colors ${
+                        sort.key === key ? 'text-brand-300' : 'hover:text-slate-300'}`}>
+                      {label}
+                      {sort.key === key
+                        ? (sort.dir === 'asc' ? <ArrowUpAZ className="w-3.5 h-3.5" /> : <ArrowDownZA className="w-3.5 h-3.5" />)
+                        : <ChevronsUpDown className="w-3 h-3 opacity-40" />}
+                    </button>
+                  ) : label}
+                </th>
               ))}
             </tr>
           </thead>
@@ -474,6 +702,18 @@ export default function UserAccountsPage() {
                           ? <Loader className="w-4 h-4 animate-spin" />
                           : (u.status === 'active' ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />)}
                       </button>
+                      {/* Permanent removal — the super admin's alone, and never
+                          on themselves or another super admin. */}
+                      {isSuperAdmin && (
+                        <button onClick={() => openPurge(u)}
+                          disabled={isSelf || u.role === 'super_admin' || busyId === u.id}
+                          title={isSelf ? 'You cannot delete your own account'
+                            : u.role === 'super_admin' ? 'A super admin account cannot be deleted'
+                            : 'Delete this account for good'}
+                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -481,7 +721,157 @@ export default function UserAccountsPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
+
+      {/* ── Delete a user for good ─────────────────────────────── */}
+      {purge && (() => {
+        const sum = summariseReferences(purge.rows)
+        const typedOk = purge.typed.trim().toLowerCase() === purge.user.username.toLowerCase()
+        return (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+            <div className="card w-full max-w-xl flex flex-col max-h-[90vh]">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-red-400" />
+                  {purge.phase === 'done' ? 'Account deleted' : `Delete ${purge.user.username} for good`}
+                </h3>
+                <button onClick={() => setPurge(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+              </div>
+
+              <div className="p-5 space-y-4 overflow-y-auto">
+                {purge.phase === 'scanning' && (
+                  <p className="flex items-center gap-2 text-sm text-slate-300">
+                    <Loader className="w-4 h-4 animate-spin" /> Reading what this account is attached to…
+                  </p>
+                )}
+
+                {purge.phase === 'review' && (
+                  <>
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      {sum.clean
+                        ? <>This account has left no trace in any other record. Deleting it removes the account and nothing else.</>
+                        : <>This account appears in <span className="text-slate-100 font-semibold">{sum.tables}</span> table{sum.tables === 1 ? '' : 's'}. Their own records go with them; their name on other people’s work is cleared, and that work is kept.</>}
+                    </p>
+
+                    {!sum.clean && (
+                      <div className="rounded-lg border border-surface-border overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-surface-hover/40 border-b border-surface-border">
+                              {['Where', 'As', 'Rows', 'On delete'].map(h => (
+                                <th key={h} className="text-left px-3 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-medium">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {purge.rows.map((r, i) => (
+                              <tr key={i} className="border-b border-surface-border/50 last:border-0">
+                                <td className="px-3 py-2 text-slate-200 text-xs">{tableLabel(r.table_name)}</td>
+                                <td className="px-3 py-2 text-slate-400 text-xs">{columnLabel(r.column_name)}</td>
+                                <td className="px-3 py-2 text-slate-300 text-xs tabular-nums">{Number(r.rows_found).toLocaleString()}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${
+                                    r.kind === 'own'
+                                      ? 'bg-red-500/10 text-red-300 border-red-500/30'
+                                      : r.kind === 'blocking'
+                                        ? 'bg-rose-500/15 text-rose-200 border-rose-400/40'
+                                        : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+                                    {r.kind === 'own' ? 'deleted with the account'
+                                      : r.kind === 'blocking' ? 'blocks the delete'
+                                      : 'name cleared, record kept'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {sum.blocking.length > 0 && (
+                      <div className="rounded-lg border border-rose-400/40 bg-rose-500/10 p-3">
+                        <p className="text-xs text-rose-100 leading-relaxed">
+                          This account cannot be deleted. {sum.blockingRows.toLocaleString()} record
+                          {sum.blockingRows === 1 ? '' : 's'} in{' '}
+                          {sum.blocking.map(r => tableLabel(r.table_name)).join(', ')} record who acted on them in a
+                          column that cannot be emptied — removing the name would mean deleting the record itself,
+                          and that record is real work. Deactivate the account instead, or ask for those rows to be
+                          reassigned first.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-2">
+                      <p className="text-xs text-red-200 leading-relaxed">
+                        This cannot be undone. {sum.ownRows > 0 && <>{sum.ownRows.toLocaleString()} of their own record{sum.ownRows === 1 ? '' : 's'} will be deleted. </>}
+                        {sum.auditRows > 0 && <>{sum.auditRows.toLocaleString()} record{sum.auditRows === 1 ? '' : 's'} will lose the name of who acted on them. </>}
+                        If you only want to stop them signing in, deactivate the account instead.
+                      </p>
+                      <label className="block">
+                        <span className="text-[11px] text-slate-400">
+                          Type <span className="font-mono text-slate-200">{purge.user.username}</span> to confirm
+                        </span>
+                        <input className="input mt-1 font-mono" value={purge.typed} autoFocus
+                          onChange={e => setPurge(p => ({ ...p, typed: e.target.value }))} />
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {purge.phase === 'working' && (
+                  <p className="flex items-center gap-2 text-sm text-slate-300">
+                    <Loader className="w-4 h-4 animate-spin" /> Deleting…
+                  </p>
+                )}
+
+                {purge.phase === 'done' && (
+                  <>
+                    <p className="text-sm text-slate-300">
+                      <span className="text-slate-100 font-semibold">{purge.user.username}</span> has been deleted.
+                      Here is what changed:
+                    </p>
+                    <div className="rounded-lg border border-surface-border overflow-hidden">
+                      <table className="w-full text-sm">
+                        <tbody>
+                          {purge.report.map((r, i) => (
+                            <tr key={i} className="border-b border-surface-border/50 last:border-0">
+                              <td className="px-3 py-2 text-slate-200 text-xs">{tableLabel(r.table_name)}</td>
+                              <td className="px-3 py-2 text-slate-400 text-xs">{columnLabel(r.column_name)}</td>
+                              <td className="px-3 py-2 text-slate-300 text-xs tabular-nums">{Number(r.rows_affected).toLocaleString()}</td>
+                              <td className="px-3 py-2 text-[11px] text-slate-400">{r.action === 'deleted' ? 'deleted' : 'name cleared'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+
+                {purge.error && (
+                  <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
+                    <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-red-300 text-xs leading-relaxed">{purge.error}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
+                <button onClick={() => setPurge(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">
+                  {purge.phase === 'done' ? 'Close' : 'Cancel'}
+                </button>
+                {purge.phase === 'review' && (
+                  <button onClick={confirmPurge} disabled={!typedOk || sum.blocking.length > 0}
+                    title={sum.blocking.length > 0 ? 'Blocked — see above' : undefined}
+                    className="px-4 py-2 text-sm rounded-lg bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25 disabled:opacity-40 disabled:cursor-not-allowed">
+                    Delete permanently
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── Add / Edit modal ──────────────────────────────────── */}
       {modal && (

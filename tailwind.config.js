@@ -31,34 +31,42 @@ module.exports = {
              fresh 500 #DC9200 · accent 500 #F4A300
            The page ground (#FFF8EF) and the shadow rgba values in
            CustomerMobileApp.jsx follow whichever palette is active. */
+        /* Resolved through CSS variables so a scheduled theme can repaint the
+           whole customer app at runtime (src/lib/customerThemes.js) without a
+           single component knowing a theme exists. The defaults live in
+           index.css and reproduce "Pomegranate & Olive" exactly, so an app
+           with no theme scheduled looks precisely as it always has. */
         shop: {
-          50:  '#FFF8EF',   // cream ground
-          100: '#FDEBE4',   // warm tint for cards / chips
-          200: '#F6CFC4',
-          300: '#EDA396',
-          400: '#DC6A5C',
-          500: '#C1272D',
-          600: '#B3122B',   // primary
-          700: '#8E0F22',
-          800: '#6B0B19',
-          900: '#4A0711',
+          50:  'rgb(var(--shop-50)  / <alpha-value>)',
+          100: 'rgb(var(--shop-100) / <alpha-value>)',
+          200: 'rgb(var(--shop-200) / <alpha-value>)',
+          300: 'rgb(var(--shop-300) / <alpha-value>)',
+          400: 'rgb(var(--shop-400) / <alpha-value>)',
+          500: 'rgb(var(--shop-500) / <alpha-value>)',
+          600: 'rgb(var(--shop-600) / <alpha-value>)',
+          700: 'rgb(var(--shop-700) / <alpha-value>)',
+          800: 'rgb(var(--shop-800) / <alpha-value>)',
+          900: 'rgb(var(--shop-900) / <alpha-value>)',
         },
         fresh: {
-          50:  '#F3F5EC',
-          100: '#E4E9D6',
-          200: '#C9D3AD',
-          300: '#A8B77F',
-          400: '#859B57',
-          500: '#6B8043',
-          600: '#5A6E3A',   // olive — stock, confirmations
-          700: '#45542C',
-          800: '#333F21',
-          900: '#232C17',
+          50:  'rgb(var(--fresh-50)  / <alpha-value>)',
+          100: 'rgb(var(--fresh-100) / <alpha-value>)',
+          200: 'rgb(var(--fresh-200) / <alpha-value>)',
+          300: 'rgb(var(--fresh-300) / <alpha-value>)',
+          400: 'rgb(var(--fresh-400) / <alpha-value>)',
+          500: 'rgb(var(--fresh-500) / <alpha-value>)',
+          600: 'rgb(var(--fresh-600) / <alpha-value>)',
+          700: 'rgb(var(--fresh-700) / <alpha-value>)',
+          800: 'rgb(var(--fresh-800) / <alpha-value>)',
+          900: 'rgb(var(--fresh-900) / <alpha-value>)',
         },
+        // The customer app's page ground — the cream (or Ramadan indigo-tinted
+        // cream, or…) behind every screen.
+        ground: 'rgb(var(--app-ground) / <alpha-value>)',
         accent: {
-          400: '#EFCB5C',
-          500: '#E4B429',   // souk gold
-          600: '#C2951A',
+          400: 'rgb(var(--accent-400) / <alpha-value>)',
+          500: 'rgb(var(--accent-500) / <alpha-value>)',
+          600: 'rgb(var(--accent-600) / <alpha-value>)',
         },
         surface: {
           DEFAULT: '#0f172a',

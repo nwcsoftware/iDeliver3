@@ -3,6 +3,41 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Customer-app palette ────────────────────────────────────────────
+     The customer app's role colours live here as "r g b" triplets so a
+     scheduled theme (src/lib/customerThemes.js) can repaint the whole app by
+     setting these on the root element. These defaults ARE the shipped
+     "Pomegranate & Olive" palette, so an app with nothing scheduled looks
+     exactly as it always has. The office console never reads them. */
+  :root {
+    --shop-50: 255 248 239;
+    --shop-100: 253 235 228;
+    --shop-200: 246 207 196;
+    --shop-300: 237 163 150;
+    --shop-400: 220 106 92;
+    --shop-500: 193 39 45;
+    --shop-600: 179 18 43;
+    --shop-700: 142 15 34;
+    --shop-800: 107 11 25;
+    --shop-900: 74 7 17;
+    --fresh-50: 243 245 236;
+    --fresh-100: 228 233 214;
+    --fresh-200: 201 211 173;
+    --fresh-300: 168 183 127;
+    --fresh-400: 133 155 87;
+    --fresh-500: 107 128 67;
+    --fresh-600: 90 110 58;
+    --fresh-700: 69 84 44;
+    --fresh-800: 51 63 33;
+    --fresh-900: 35 44 23;
+    --accent-400: 239 203 92;
+    --accent-500: 228 180 41;
+    --accent-600: 194 149 26;
+    --app-ground: 255 248 239;
+  }
+}
+
+@layer base {
   * {
     @apply border-surface-border;
   }

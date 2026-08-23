@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, Receipt, FilterX, FileDown, HandCoins, X, Loader, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Receipt, FilterX, FileDown, HandCoins, X, Loader, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import SearchField from '../components/ui/SearchField'
 
 /* Business types a supplier/shop can have (mirrors the Suppliers form). */
 const SHOP_TYPES = ['supermarket', 'grocery', 'bakery', 'restaurant', 'sweets', 'flowers', 'other']
@@ -286,9 +287,14 @@ export default function RetailInvoicesPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search order #, code, shop, type, ref…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search order #, code, shop, type, ref…"
+            className="input pl-9"
+            type
+            ref
+          />
         </div>
 
         {hasActiveFilters && (

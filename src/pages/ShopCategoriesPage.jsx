@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Tags, Plus, Trash2, Loader, AlertCircle, Shield, RotateCcw, Search } from 'lucide-react'
+import { Tags, Plus, Trash2, Loader, AlertCircle, Shield, RotateCcw } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import {
   fetchShopCategories, addShopCategory, deleteShopCategory, restoreDefaultShopCategories,
 } from '../lib/shopCategories'
+import SearchField from '../components/ui/SearchField'
 
 /* Settings → Shop Categories (super admin).
 
@@ -79,9 +80,12 @@ export default function ShopCategoriesPage() {
           <h2 className="text-base font-semibold text-slate-100">Shop Categories</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search categories…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search categories…"
+            className="input pl-9"
+          />
         </div>
         <button onClick={restore} disabled={busy}
           className="btn-ghost px-3 py-2 text-sm border border-surface-border text-slate-300 ml-auto disabled:opacity-60"

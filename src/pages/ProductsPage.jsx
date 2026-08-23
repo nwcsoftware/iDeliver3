@@ -1,15 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Plus, Search, Edit2, Power, X, Check, AlertCircle,
-  Tag, DollarSign, Package, Barcode, Circle, Loader2, RefreshCw, Wrench, Upload, Image as ImageIcon,
+  Plus,
+  Edit2,
+  Power,
+  X,
+  Check,
+  AlertCircle,
+  Tag,
+  DollarSign,
+  Package,
+  Barcode,
+  Circle,
+  Loader2,
+  RefreshCw,
+  Wrench,
+  Upload,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
+import { itemOptions, legacyMirror, choiceGroups } from '../lib/shopOptions'
 import { useApp } from '../context/AppContext'
 import {
   generateProductCode, insertProductWithUniqueCode,
   productKind, codePrefix, codeMatchesPrefix, kindFlags, isStockedKind,
   PRODUCT_KINDS, PRODUCT_CODE_PREFIXES,
 } from '../lib/productCode'
+import SearchField from '../components/ui/SearchField'
 
 const UNITS = ['pcs', 'kg', 'g', 'liter', 'ml', 'box', 'bag', 'meter', 'pair', 'set']
 
@@ -40,12 +57,12 @@ const EMPTY_FORM = {
   is_retail: true, is_returnable: false, is_service: false, is_advertisement: false,
   category_id: '',
   // Presentation in the customer app, mirroring the supplier's shop item form:
-  // up to MAX_IMAGES photos (first = cover), optional colours and sizes.
-  images: [], colors: [], sizes: [], is_displayed: false,
+  // up to MAX_IMAGES photos (first = cover), and the options the catalog item
+  // is sold in — named by the office, each value able to run out (fix131).
+  images: [], options: [], combos: [], is_displayed: false,
 }
 
 const MAX_IMAGES = 3
-const MAX_COLORS = 8
 
 export default function ProductsPage() {
   const { COMPANY_ID } = useApp()
@@ -57,7 +74,6 @@ export default function ProductsPage() {
   const [filter,      setFilter]      = useState('active')   // 'active' | 'inactive' | 'all'
   const [modal,       setModal]       = useState(null)        // null | 'add' | product row
   const [form,        setForm]        = useState(EMPTY_FORM)
-  const [sizeInput,   setSizeInput]   = useState('')   // size being typed
   const [saving,      setSaving]      = useState(false)
   const [error,       setError]       = useState('')
   const [toggling,    setToggling]    = useState(null)
@@ -152,8 +168,9 @@ export default function ProductsPage() {
       // Tolerate rows saved before fix116 (single image_url, no variants).
       images: Array.isArray(p.images) && p.images.length ? p.images.filter(Boolean).slice(0, MAX_IMAGES)
             : (p.image_url ? [p.image_url] : []),
-      colors: Array.isArray(p.colors) ? p.colors : [],
-      sizes:  Array.isArray(p.sizes)  ? p.sizes  : [],
+      // Reads the new columns, and pre-fix131 colour/size rows just the same.
+      options: itemOptions(p),
+      combos:  Array.isArray(p.combos) ? p.combos : [],
     })
     setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName(''); setSizeInput('')
   }
@@ -184,28 +201,6 @@ export default function ProductsPage() {
   // The first photo is the cover shown on the customer app's card.
   const makeCover = i => setForm(f => (i === 0 ? f : { ...f, images: [f.images[i], ...f.images.filter((_, idx) => idx !== i)] }))
 
-  const addColor    = ()          => setForm(f => (f.colors.length >= MAX_COLORS ? f : { ...f, colors: [...f.colors, { name: '', image: null }] }))
-  const setColor    = (i, patch)  => setForm(f => ({ ...f, colors: f.colors.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) }))
-  const removeColor = i           => setForm(f => ({ ...f, colors: f.colors.filter((_, idx) => idx !== i) }))
-  function onPickColorImage(i, e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) { setError('Please choose an image file.'); return }
-    if (file.size > 400 * 1024) { setError('Colour photo must be under 400 KB.'); return }
-    const reader = new FileReader()
-    reader.onload = () => { setColor(i, { image: String(reader.result || '') }); setError('') }
-    reader.readAsDataURL(file)
-  }
-
-  function addSize() {
-    const v = sizeInput.trim()
-    if (!v) return
-    setForm(f => (f.sizes.some(x => x.toLowerCase() === v.toLowerCase()) ? f : { ...f, sizes: [...f.sizes, v] }))
-    setSizeInput('')
-  }
-  const removeSize = v => setForm(f => ({ ...f, sizes: f.sizes.filter(x => x !== v) }))
-
   /* Create a new product category inline and select it for this product. */
   async function createCategory() {
     const name = newCatName.trim()
@@ -226,6 +221,43 @@ export default function ProductsPage() {
   async function handleSave() {
     if (saving) return                                   // guard against double-clicks
     if (!form.name.trim()) return setError('Product name is required.')
+
+    const cleanOptions = form.options
+      .map(g => {
+        const kind = g.kind === 'extra' ? 'extra' : 'choice'
+        return {
+          label: g.label.trim() || 'Options',
+          kind,
+          style: g.style === 'swatch' ? 'swatch' : 'chip',
+          values: g.values
+            .filter(v => v.name.trim())
+            .map(v => ({
+              name: v.name.trim(),
+              image: v.image || null,
+              sold_out: !!v.sold_out,
+              // Only an extra charges anything; a size is part of the price.
+              price_delta: kind === 'extra' ? (Number(v.price_delta) || 0) : 0,
+            })),
+        }
+      })
+      .filter(g => g.values.length > 0)
+
+    /* Two options with the same name would be one option to the customer app,
+       which keys every choice by its label — the second would silently
+       overwrite the first in the cart. */
+    const optionLabels = cleanOptions.map(g => g.label.toLowerCase())
+    const dupeLabel = optionLabels.find((l, i) => optionLabels.indexOf(l) !== i)
+    if (dupeLabel) return setError(`Two options are both called “${dupeLabel}”. Give each one its own name.`)
+
+    const mirror = legacyMirror(cleanOptions)
+
+    /* Combinations naming an option or value that no longer exists are dropped:
+       a rule about a size the catalog has deleted would sit in the row forever,
+       invisible and occasionally wrong. */
+    const byLabel = new Map(choiceGroups(cleanOptions).map(g => [g.label, new Set(g.values.map(v => v.name))]))
+    const cleanCombos = (form.combos || []).filter(c =>
+      c?.picks && Object.keys(c.picks).length > 0
+      && Object.entries(c.picks).every(([label, v]) => byLabel.get(label)?.has(v)))
     const kind = productKind(form)
     setSaving(true)
     setError('')
@@ -251,8 +283,12 @@ export default function ProductsPage() {
       images:           form.images,
       // Cover mirrored into the original single-image column.
       image_url:        form.images[0] || null,
-      colors:           form.colors.filter(c => c.name?.trim()).map(c => ({ name: c.name.trim(), image: c.image || null })),
-      sizes:            form.sizes,
+      options:          cleanOptions,
+      combos:           cleanCombos,
+      // Mirrored into the old two columns so anything still reading them — and
+      // an install without fix131 — keeps seeing the choices on offer.
+      colors:           mirror.colors,
+      sizes:            mirror.sizes,
       // Whether customers see it in the 3asari3 shop (fix115).
       is_displayed:     !!form.is_displayed,
     }
@@ -272,6 +308,21 @@ export default function ProductsPage() {
       const res = await supabase.from('products').update(payload).eq('id', modal.id)
       err = res.error
       if (!err) setProgress({ state: 'done', text: `Saved ${modal.code}` })
+    }
+
+    /* fix131 may not have been run yet. PostgREST reports the missing column by
+       name; drop it and save the rest rather than blocking the catalog — the
+       product keeps its colours and sizes through the legacy columns. */
+    for (const col of ['options', 'combos']) {
+      if (!err || !new RegExp(`(could not find|column).*['"\`]?${col}['"\`]?`, 'i').test(err.message || '')) continue
+      delete payload[col]
+      const retry = modal === 'add'
+        ? await insertProductWithUniqueCode(
+            { ...payload, code: form.code?.trim().toUpperCase() || null }, kind,
+            { onProgress: text => setProgress({ state: 'busy', text }) })
+        : await supabase.from('products').update(payload).eq('id', modal.id)
+      err = retry.error
+      if (!err) setError('Product saved, but its options could not be stored — run supabase-fix131.sql.')
     }
 
     if (err) {
@@ -315,9 +366,12 @@ export default function ProductsPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search by name, code or barcode…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name, code or barcode…"
+            className="input pl-9"
+          />
         </div>
 
         <div className="flex items-center gap-1">
@@ -609,68 +663,16 @@ export default function ProductsPage() {
                 </p>
               </div>
 
-              {/* Colours (optional) */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="label">Colours <span className="text-slate-600 normal-case">(optional)</span></label>
-                  {form.colors.length < MAX_COLORS && (
-                    <button type="button" onClick={addColor}
-                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
-                      <Plus className="w-3 h-3" /> Add colour
-                    </button>
-                  )}
-                </div>
-                {form.colors.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">No colours — the product is sold as-is.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {form.colors.map((c, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <label className="w-12 h-12 flex-shrink-0 rounded-md border border-surface-border bg-surface-hover overflow-hidden cursor-pointer flex items-center justify-center"
-                          title="Colour photo (optional)">
-                          {c.image
-                            ? <img src={c.image} alt="" className="w-full h-full object-cover" />
-                            : <ImageIcon className="w-4 h-4 text-slate-600" />}
-                          <input type="file" accept="image/*" className="hidden" onChange={e => onPickColorImage(i, e)} />
-                        </label>
-                        <input className="input flex-1" value={c.name} placeholder="e.g. Black, Red, Navy Blue"
-                          onChange={e => setColor(i, { name: e.target.value })} />
-                        <button type="button" onClick={() => removeColor(i)} title="Remove colour"
-                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <p className="text-[10px] text-slate-500">A colour photo is optional (max 400 KB) — customers see it as a swatch.</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Sizes (optional) */}
-              <div>
-                <label className="label">Sizes <span className="text-slate-600 normal-case">(optional)</span></label>
-                {form.sizes.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {form.sizes.map(v => (
-                      <span key={v} className="inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 bg-brand-500/15 text-brand-200 border border-brand-500/30">
-                        {v}
-                        <button type="button" onClick={() => removeSize(v)} title={"Remove " + v}
-                          className="text-brand-300/70 hover:text-brand-100"><X className="w-3 h-3" /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <input className="input flex-1" value={sizeInput} placeholder="e.g. 20 L or XL — press Enter to add"
-                    onChange={e => setSizeInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSize() } }} />
-                  <button type="button" onClick={addSize} disabled={!sizeInput.trim()}
-                    className="btn-ghost px-3 py-2 text-xs border border-surface-border disabled:opacity-40">Add</button>
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Add each size the product comes in. Customers must pick one before adding it to their cart.
-                </p>
-              </div>
+              {/* Options, sold-out values and the combinations grid — the same
+                  editor the supplier's My Shop uses, so a 3asari3 product and a
+                  partner's product offer the customer exactly the same things. */}
+              <ItemOptionsEditor
+                options={form.options}
+                combos={form.combos}
+                currency={form.currency}
+                onChange={({ options, combos }) => setForm(f => ({ ...f, options, combos }))}
+                onError={setError}
+              />
 
               {/* Customer-app visibility */}
               <label className="flex items-start gap-2.5 cursor-pointer select-none">

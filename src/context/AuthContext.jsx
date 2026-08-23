@@ -111,6 +111,33 @@ export function AuthProvider({ children }) {
           // Basic expiry check: 12-hour sessions
           const age = Date.now() - new Date(session.logged_in_at).getTime()
           if (age < 12 * 60 * 60 * 1000) {
+            /* The cached session is a copy of the account as it was at sign-in.
+               An admin can change the role since — a partner retagged as a
+               supplier — and the portal reads the role, so a stale copy shows
+               the wrong label and the wrong pages until the session expires.
+               Re-read the account and take its word for role, link and status.
+               A failed lookup keeps the cached session: a network blip must not
+               sign anybody out. */
+            try {
+              const { data: fresh } = await supabase
+                .from('user_accounts')
+                .select('role, status, contact_id, must_change_password')
+                .eq('id', session.user_id)
+                .maybeSingle()
+              if (cancelled) return
+              if (fresh) {
+                if (fresh.status !== 'active') {       // suspended/deactivated since
+                  localStorage.removeItem(SESSION_KEY)
+                  setLoading(false)
+                  return
+                }
+                session.role                 = fresh.role
+                session.contact_id           = fresh.contact_id ?? session.contact_id
+                session.must_change_password = fresh.must_change_password
+                localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+              }
+            } catch { /* keep the cached session */ }
+
             // Re-check the 2nd party's subscription on every app start, so an
             // expired or deactivated one ends the session instead of riding on
             // a still-valid cached login.
@@ -185,9 +212,9 @@ export function AuthProvider({ children }) {
     // in while one is paid, activated and in date (supabase-fix110.sql). The
     // check errs on the side of letting them in if the lookup itself fails.
     if (isSecondParty) {
-      const { allowed, reason, row } = await checkSubscriptionAccess(user.contact_id)
-      if (!allowed) {
-        return { success: false, error: accessDeniedMessage(reason, row) }
+      const gate = await checkSubscriptionAccess(user.contact_id)
+      if (!gate.allowed) {
+        return { success: false, error: accessDeniedMessage(gate.reason, gate.row, gate) }
       }
     }
 

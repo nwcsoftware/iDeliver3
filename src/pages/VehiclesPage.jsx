@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Car, Edit2, X, Check, AlertCircle, History, Power } from 'lucide-react'
+import { Plus, Car, Edit2, X, Check, AlertCircle, History, Power } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { formatMobile } from '../lib/phone'
 import { generateVehicleAccountNumber, generateVehicleCode, formatAccountNumber } from '../lib/accountNumber'
+import SearchField from '../components/ui/SearchField'
 
 const STATUSES = ['active', 'in_maintenance', 'retired', 'sold']
 const STATUS_STYLE = {
@@ -258,9 +259,12 @@ export default function VehiclesPage() {
           </div>
         </div>
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search code, make, model, plate…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search code, make, model, plate…"
+            className="input pl-9"
+          />
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd}>
           <Plus className="w-4 h-4" /> New Vehicle

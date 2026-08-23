@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow,
-  ArrowRightLeft,
+  ArrowRightLeft, Palette,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -22,13 +22,13 @@ import MessagesIndicator from '../messages/MessagesIndicator'
    Open groups are remembered per user on this device, and the group holding the
    current page opens itself. */
 
-const pinnedNav = [
+export const pinnedNav = [
   { to: '/',           icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/deliveries', icon: Package,         label: 'Orders'    },
   { to: '/tracking',   icon: MapPin,          label: 'Tracking'  },
 ]
 
-const navGroups = [
+export const navGroups = [
   {
     key: 'orders', label: 'Orders & Delivery', icon: PackageCheck,
     items: [
@@ -105,6 +105,8 @@ const navGroups = [
       { to: '/settings/driver-collections',  icon: Truck,         label: 'Driver App (Collect)' },
       { to: '/settings/shop-categories',     icon: Tags,          label: 'Shop Categories' },
       { to: '/settings/header-background',   icon: ImageIcon,     label: 'Header Background' },
+      // The customer app's seasonal look: colours + a background movie, by date.
+      { to: '/settings/customer-theme',      icon: Palette,       label: 'Customer App Theme' },
       { to: '/settings/messages',            icon: Megaphone,     label: 'Broadcast Messages' },
       { to: '/settings/delete-order',        icon: PackageX,      label: 'Delete Order' },
       { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },

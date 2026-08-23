@@ -1,7 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Boxes, Search, AlertCircle, Loader, Plus, X, History, TrendingDown, Package,
-  ArrowDownRight, ArrowUpRight, Trash2, Calendar, Coins, Filter,
+  Boxes,
+  AlertCircle,
+  Loader,
+  Plus,
+  X,
+  History,
+  TrendingDown,
+  Package,
+  ArrowDownRight,
+  ArrowUpRight,
+  Trash2,
+  Calendar,
+  Coins,
+  Filter,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -10,6 +22,7 @@ import {
   MOVEMENT_TYPES, movementLabel, fetchProductMovements, summarise, stockValue,
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
 } from '../lib/productStock'
+import SearchField from '../components/ui/SearchField'
 
 const num = n => Number(n) || 0
 const fmtQty = n => Number(num(n).toFixed(2)).toLocaleString()
@@ -157,9 +170,12 @@ export default function ProductInventoryPage() {
           <span className="text-[11px] text-slate-500">3asari3 products</span>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search product, code or category…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search product, code or category…"
+            className="input pl-9"
+          />
         </div>
         <button onClick={() => setOnlyLow(v => !v)}
           className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-medium border transition-colors ${

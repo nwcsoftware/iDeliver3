@@ -1,7 +1,20 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Plus, Search, Phone, Mail, CreditCard, Edit2, Trash2, Power, X, Check,
-  AlertCircle, ChevronRight, KeyRound, Copy, Eye, EyeOff,
+  Plus,
+  Phone,
+  Mail,
+  CreditCard,
+  Edit2,
+  Trash2,
+  Power,
+  X,
+  Check,
+  AlertCircle,
+  ChevronRight,
+  KeyRound,
+  Copy,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -9,6 +22,7 @@ import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, formatAccountNumber, insertContactWithUniqueCode } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
+import SearchField from '../components/ui/SearchField'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 
@@ -461,8 +475,12 @@ export default function DriversPage() {
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search drivers…" value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search drivers…"
+            className="input pl-9"
+          />
         </div>
 
         <div className="flex items-center gap-1">

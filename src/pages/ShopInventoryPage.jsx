@@ -7,6 +7,9 @@ import ShopWorkingHours from '../components/ShopWorkingHours'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import { fetchShopCategoryNames } from '../lib/shopCategories'
+import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
+import { itemOptions, inStockValues, legacyMirror, choiceGroups } from '../lib/shopOptions'
+import SearchField from '../components/ui/SearchField'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
@@ -14,14 +17,13 @@ const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 // admin-managed product_categories lookup — suppliers can't invent new ones.
 // Up to MAX_IMAGES photos per item, stored as data URLs in `images`.
 const MAX_IMAGES = 3
-// Optional variants (fix106): colours carry an optional swatch photo, sizes are
-// free-form labels (35.5, XL…). Empty lists = item has no variants.
-const MAX_COLORS = 8
+/* Options (fix129): the shop names them — Size, Color, Flavor, Weight — and
+   each value can be marked sold out on its own, so 43 can be finished while 44
+   is still on the shelf. Empty list = the item is sold as it is. */
 const EMPTY = {
   name: '', description: '', price: '', currency: 'USD', images: [], stock_qty: '',
-  categories: [], colors: [], sizes: [], is_displayed: true, is_made_to_order: false,
+  categories: [], options: [], combos: [], is_displayed: true, is_made_to_order: false,
 }
-
 /* Per-partner/supplier shop inventory. Owners see and manage ONLY their own items
    (scoped by owner_contact_id) and choose which ones appear in the customer app. */
 export default function ShopInventoryPage({ partyContactId = null }) {
@@ -48,7 +50,6 @@ export default function ShopInventoryPage({ partyContactId = null }) {
   const [catOptions, setCatOptions] = useState([])
   const [catQuery,   setCatQuery]   = useState('')   // search inside the add-category box
   const [catFocus,   setCatFocus]   = useState(false)
-  const [sizeInput,  setSizeInput]  = useState('')   // size being typed
 
   useEffect(() => {
     ;(async () => {
@@ -108,7 +109,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
     setCatQuery('')
   }
 
-  function openAdd()  { setForm(EMPTY); setFormErr(''); setCatQuery(''); setSizeInput(''); setModal('add') }
+  function openAdd()  { setForm(EMPTY); setFormErr(''); setCatQuery(''); setModal('add') }
   function openEdit(it) {
     setForm({
       name: it.name ?? '', description: it.description ?? '',
@@ -116,10 +117,11 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       images: itemImages(it), stock_qty: it.stock_qty ?? '',
       categories: itemCategories(it), is_displayed: !!it.is_displayed,
       is_made_to_order: !!it.is_made_to_order,
-      colors: Array.isArray(it.colors) ? it.colors : [],
-      sizes:  Array.isArray(it.sizes)  ? it.sizes  : [],
+      // Reads the new columns, and old colour/size rows just the same.
+      options: itemOptions(it),
+      combos:  Array.isArray(it.combos) ? it.combos : [],
     })
-    setFormErr(''); setCatQuery(''); setSizeInput(''); setModal(it)
+    setFormErr(''); setCatQuery(''); setModal(it)
   }
   function closeModal() { setModal(null); setForm(EMPTY); setFormErr('') }
 
@@ -146,39 +148,6 @@ export default function ShopInventoryPage({ partyContactId = null }) {
     }
   }
 
-  /* ── variants ─────────────────────────────────────────────── */
-
-  function addColor() {
-    setForm(f => (f.colors.length >= MAX_COLORS ? f : { ...f, colors: [...f.colors, { name: '', image: null }] }))
-  }
-  function setColor(i, patch) {
-    setForm(f => ({ ...f, colors: f.colors.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) }))
-  }
-  function removeColor(i) {
-    setForm(f => ({ ...f, colors: f.colors.filter((_, idx) => idx !== i) }))
-  }
-  // Small swatch photo for a colour, stored as a data URL like the item photos.
-  function onPickColorImage(i, e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) { setFormErr('Please choose an image file.'); return }
-    if (file.size > 400 * 1024) { setFormErr('Colour photo must be under 400 KB.'); return }
-    const reader = new FileReader()
-    reader.onload = () => { setColor(i, { image: String(reader.result || '') }); setFormErr('') }
-    reader.readAsDataURL(file)
-  }
-
-  function addSize() {
-    const s = sizeInput.trim()
-    if (!s) return
-    setForm(f => (f.sizes.some(x => x.toLowerCase() === s.toLowerCase()) ? f : { ...f, sizes: [...f.sizes, s] }))
-    setSizeInput('')
-  }
-  function removeSize(s) {
-    setForm(f => ({ ...f, sizes: f.sizes.filter(x => x !== s) }))
-  }
-
   function removeImage(i) {
     setForm(f => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }))
   }
@@ -191,6 +160,47 @@ export default function ShopInventoryPage({ partyContactId = null }) {
     if (!ownerId) { setFormErr('Your login isn’t linked to a shop contact.'); return }
     if (!form.name.trim()) { setFormErr('Item name is required.'); return }
     setSaving(true); setFormErr('')
+
+    const cleanOptions = form.options
+      .map(g => {
+        const kind = g.kind === 'extra' ? 'extra' : 'choice'
+        return {
+          label: g.label.trim() || 'Options',
+          kind,
+          style: g.style === 'swatch' ? 'swatch' : 'chip',
+          values: g.values
+            .filter(v => v.name.trim())
+            .map(v => ({
+              name: v.name.trim(),
+              image: v.image || null,
+              sold_out: !!v.sold_out,
+              // Only an extra charges anything; a size is part of the price.
+              price_delta: kind === 'extra' ? (Number(v.price_delta) || 0) : 0,
+            })),
+        }
+      })
+      .filter(g => g.values.length > 0)
+
+    /* Two options with the same name would be one option to the customer app,
+       which keys every choice by its label — the second would silently
+       overwrite the first in the cart. */
+    const labels = cleanOptions.map(g => g.label.toLowerCase())
+    const dupe = labels.find((l, i) => labels.indexOf(l) !== i)
+    if (dupe) {
+      setSaving(false)
+      setFormErr(`Two options are both called “${dupe}”. Give each one its own name.`)
+      return
+    }
+    const mirror = legacyMirror(cleanOptions)
+
+    /* Combinations that name an option or a value that no longer exists are
+       dropped: a rule about a size the shop has deleted would sit in the row
+       forever, invisible and occasionally wrong. */
+    const byLabel = new Map(choiceGroups(cleanOptions).map(g => [g.label, new Set(g.values.map(v => v.name))]))
+    const cleanCombos = (form.combos || []).filter(c =>
+      c?.picks && Object.keys(c.picks).length > 0
+      && Object.entries(c.picks).every(([label, v]) => byLabel.get(label)?.has(v)))
+
     const payload = {
       owner_contact_id: ownerId,
       company_id:       currentUser?.company_id ?? null,
@@ -206,9 +216,15 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       // Kept in sync with the first tag so anything still reading the old
       // single-value column keeps working.
       category:         form.categories[0] || null,
-      // Variants — colours need a name to be usable; blank rows are dropped.
-      colors:           form.colors.filter(c => c.name?.trim()).map(c => ({ name: c.name.trim(), image: c.image || null })),
-      sizes:            form.sizes,
+      // Options — blank rows and unnamed groups are dropped; an option with no
+      // values would be a question the customer cannot answer.
+      options:          cleanOptions,
+      // Per-combination exceptions: black comes in 43, white doesn't (fix130).
+      combos:           cleanCombos,
+      // Mirrored into the old two columns so anything still reading them — and
+      // an install without fix129 — keeps seeing the choices on offer.
+      colors:           mirror.colors,
+      sizes:            mirror.sizes,
       is_displayed:     !!form.is_displayed,
       // Food & co: prepared on request, so it carries no stock (fix114).
       is_made_to_order: !!form.is_made_to_order,
@@ -227,7 +243,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
 
     let res = await send(payload)
     const degraded = []
-    for (const col of ['images', 'categories', 'colors', 'sizes', 'is_made_to_order']) {
+    for (const col of ['images', 'categories', 'options', 'combos', 'colors', 'sizes', 'is_made_to_order']) {
       if (!res.error || !missingColumn(res.error.message, col)) continue
       degraded.push(col)
       delete payload[col]                     // retry without the missing column
@@ -244,7 +260,7 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       return
     }
     if (degraded.length) {
-      const fixes = { images: 'fix105 (extra photos)', categories: 'fix103 (category tags)', colors: 'fix106 (colours)', sizes: 'fix106 (sizes)', is_made_to_order: 'fix114 (prepared on request)' }
+      const fixes = { images: 'fix105 (extra photos)', categories: 'fix103 (category tags)', options: 'fix129 (named options)', combos: 'fix130 (combinations)', colors: 'fix106 (colours)', sizes: 'fix106 (sizes)', is_made_to_order: 'fix114 (prepared on request)' }
       setError(`Item saved, but ${degraded.map(c => fixes[c]).join(' and ')} could not be stored — run the matching supabase migration.`)
     }
     closeModal(); fetchItems()
@@ -278,8 +294,12 @@ export default function ShopInventoryPage({ partyContactId = null }) {
           <h2 className="text-base font-semibold text-slate-100">My Shop Inventory</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search items…"
+            className="input pl-9"
+          />
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd} disabled={!ownerId}>
           <Plus className="w-4 h-4" /> Add Item
@@ -339,6 +359,35 @@ export default function ShopInventoryPage({ partyContactId = null }) {
                     <div className="min-w-0">
                       <p className="text-slate-100 font-medium truncate">{it.name}</p>
                       {it.description && <p className="text-slate-500 text-xs truncate max-w-[16rem]">{it.description}</p>}
+                      {/* What this product offers, and what of it is finished —
+                          visible without opening each item in turn. */}
+                      {itemOptions(it).length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                          {itemOptions(it).map(g => {
+                            const open = inStockValues(g).length
+                            const gone = g.values.length - open
+                            return (
+                              <span key={g.label}
+                                title={g.values.map(v => v.name + (v.sold_out ? ' (sold out)' : '')).join(', ')}
+                                className={`text-[10px] rounded px-1.5 py-0.5 border ${
+                                  g.kind === 'extra'
+                                    ? 'bg-violet-500/10 text-violet-300 border-violet-500/30'
+                                    : open === 0
+                                      ? 'bg-red-500/10 text-red-300 border-red-500/30'
+                                      : 'bg-surface-hover text-slate-400 border-surface-border'}`}>
+                                {g.label}: {open}
+                                {gone > 0 && <span className="text-red-300/80"> (−{gone})</span>}
+                              </span>
+                            )
+                          })}
+                          {(it.combos?.length ?? 0) > 0 && (
+                            <span title="Some combinations are sold out or not sold"
+                              className="text-[10px] rounded px-1.5 py-0.5 border bg-amber-500/10 text-amber-300 border-amber-500/30">
+                              {it.combos.length} combination{it.combos.length === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </td>
@@ -508,74 +557,16 @@ export default function ShopInventoryPage({ partyContactId = null }) {
                   shown in the customer app.
                 </p>
               </div>
-              {/* ── Colours (optional) ─────────────────────────── */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="label">Colours <span className="text-slate-600 normal-case">(optional)</span></label>
-                  {form.colors.length < MAX_COLORS && (
-                    <button type="button" onClick={addColor}
-                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
-                      <Plus className="w-3 h-3" /> Add colour
-                    </button>
-                  )}
-                </div>
-                {form.colors.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">No colours — the item is sold as-is.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {form.colors.map((c, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <label className="w-12 h-12 flex-shrink-0 rounded-md border border-surface-border bg-surface-hover overflow-hidden cursor-pointer flex items-center justify-center"
-                          title="Colour photo (optional)">
-                          {c.image
-                            ? <img src={c.image} alt="" className="w-full h-full object-cover" />
-                            : <ImageIcon className="w-4 h-4 text-slate-600" />}
-                          <input type="file" accept="image/*" className="hidden" onChange={e => onPickColorImage(i, e)} />
-                        </label>
-                        <input className="input flex-1" value={c.name} placeholder="e.g. Black, Red, Navy Blue"
-                          onChange={e => setColor(i, { name: e.target.value })} />
-                        {c.image && (
-                          <button type="button" onClick={() => setColor(i, { image: null })} title="Remove colour photo"
-                            className="btn-ghost p-1.5 text-slate-500 hover:text-slate-300 text-[11px]">clear</button>
-                        )}
-                        <button type="button" onClick={() => removeColor(i)} title="Remove colour"
-                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <p className="text-[10px] text-slate-500">
-                      A colour photo is optional (max 400 KB) — customers see it as a swatch tile.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* ── Sizes (optional) ───────────────────────────── */}
-              <div>
-                <label className="label">Sizes <span className="text-slate-600 normal-case">(optional)</span></label>
-                {form.sizes.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {form.sizes.map(s => (
-                      <span key={s} className="inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 bg-brand-500/15 text-brand-200 border border-brand-500/30">
-                        {s}
-                        <button type="button" onClick={() => removeSize(s)} title={`Remove ${s}`}
-                          className="text-brand-300/70 hover:text-brand-100"><X className="w-3 h-3" /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <input className="input flex-1" value={sizeInput} placeholder="e.g. 42 or XL — press Enter to add"
-                    onChange={e => setSizeInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSize() } }} />
-                  <button type="button" onClick={addSize} disabled={!sizeInput.trim()}
-                    className="btn-ghost px-3 py-2 text-xs border border-surface-border disabled:opacity-40">Add</button>
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Add each size the item comes in. Customers must pick one before adding to their cart.
-                </p>
-              </div>
+              {/* Options, sold-out values and the combinations grid — the same
+                  editor the office Products catalog uses, so both sides of the
+                  shop offer the customer exactly the same things. */}
+              <ItemOptionsEditor
+                options={form.options}
+                combos={form.combos}
+                currency={form.currency}
+                onChange={({ options, combos }) => setForm(f => ({ ...f, options, combos }))}
+                onError={setFormErr}
+              />
 
               <label className="flex items-start gap-2.5 cursor-pointer select-none">
                 <input type="checkbox" className="w-4 h-4 accent-emerald-500 mt-0.5" checked={form.is_made_to_order}

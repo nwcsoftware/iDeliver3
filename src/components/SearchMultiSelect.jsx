@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react'
-import { ChevronDown, Search, CheckCircle2, Circle, X } from 'lucide-react'
+import { ChevronDown, CheckCircle2, Circle, X } from 'lucide-react'
+import SearchField from './ui/SearchField'
 
 /**
  * A filter dropdown that combines a search box with multi-selection, for lists
@@ -58,11 +59,14 @@ export default function SearchMultiSelect({
         <div className={`absolute z-50 mt-1 ${width} min-w-[13rem] rounded-lg border border-surface-border bg-surface-card shadow-xl p-1`}>
           {/* Search — filters the list without clearing the current selection */}
           <div className="relative p-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-            <input ref={searchRef} className={`input pl-7 py-1.5 text-xs ${query ? 'pr-7' : ''}`}
-              placeholder={searchPlaceholder} value={query}
+            <SearchField
+              value={query}
               onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Escape') close() }} />
+              placeholder={searchPlaceholder}
+              className={`input pl-7 py-1.5 text-xs ${query ? 'pr-7' : ''}`}
+              onKeyDown={e => { if (e.key === 'Escape') close() }}
+              ref={searchRef}
+            />
             {query && (
               <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus() }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Search, HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard, Calendar, Trash2 } from 'lucide-react'
+import { HandCoins, FilterX, FileDown, CheckCircle2, Banknote, X, AlertCircle, History, ChevronRight, ChevronDown, Lock, Unlock, Handshake, Store, CreditCard, Calendar, Trash2 } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderOfficeCollectedByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import SearchField from '../components/ui/SearchField'
 
 /* Cash is reconciled per currency. Adding a new currency (it must exist in the
    DB currency_type enum) only needs to be listed here — zero-value currencies
@@ -822,9 +823,12 @@ export default function DriverDuesPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search order #, recipient, account, driver…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search order #, recipient, account, driver…"
+            className="input pl-9"
+          />
         </div>
 
         {hasActiveFilters && (

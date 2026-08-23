@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { OrderNumber } from '../components/orders/OrderQuickView'
-import { Search, BookText, FilterX, FileDown } from 'lucide-react'
+import { BookText, FilterX, FileDown } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import SearchField from '../components/ui/SearchField'
 
 const EMPTY_FILTERS = {
   transaction_type: '',
@@ -186,9 +187,13 @@ export default function AccountTransactionsPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search order #, account #, customer, ref, description…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search order #, account #, customer, ref, description…"
+            className="input pl-9"
+            ref
+          />
         </div>
 
         {hasActiveFilters && (

@@ -1,8 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  ClipboardPen, Plus, Search, X, Loader, AlertCircle, Pencil, Trash2, Shield,
-  Send, CheckCircle2, Ban, PlayCircle, Flag, Undo2, DollarSign, Package,
-  FileText, Upload, Download, Paperclip, MessageSquare, History, CalendarCheck,
+  ClipboardPen,
+  Plus,
+  X,
+  Loader,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  Shield,
+  Send,
+  CheckCircle2,
+  Ban,
+  PlayCircle,
+  Flag,
+  Undo2,
+  DollarSign,
+  Package,
+  FileText,
+  Upload,
+  Download,
+  Paperclip,
+  MessageSquare,
+  History,
+  CalendarCheck,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
@@ -12,6 +32,7 @@ import {
   fetchChangeRequests, saveChangeRequest, patchChangeRequest, deleteChangeRequest, isMissingTable,
   fetchQuoteHistory, logQuoteEvent, QUOTE_ACTIONS, isMissingQuoteLedger,
 } from '../lib/changeRequests'
+import SearchField from '../components/ui/SearchField'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const typeLabel  = Object.fromEntries(REQUEST_TYPES.map(t => [t.value, t.label]))
@@ -385,9 +406,12 @@ export default function ChangeRequestsPage() {
           <h2 className="text-base font-semibold text-slate-100">Change Requests</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search number, title, requester…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search number, title, requester…"
+            className="input pl-9"
+          />
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd}>
           <Plus className="w-4 h-4" /> New request

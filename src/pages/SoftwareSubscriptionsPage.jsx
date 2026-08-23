@@ -1,8 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AppWindow, Plus, Search, X, Shield, AlertCircle, Pencil, Trash2, Loader,
-  CheckCircle2, Circle, Wallet, CalendarClock, RefreshCw, Receipt, Power, PowerOff,
-  FileText, Download,
+  AppWindow,
+  Plus,
+  X,
+  Shield,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  Loader,
+  CheckCircle2,
+  Circle,
+  Wallet,
+  CalendarClock,
+  RefreshCw,
+  Receipt,
+  Power,
+  PowerOff,
+  FileText,
+  Download,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
@@ -13,6 +28,7 @@ import {
   fetchSoftwareSubscriptions, saveSoftwareSubscription, deleteSoftwareSubscription,
   savePayment, deletePayment, installHint,
 } from '../lib/softwareSubscriptions'
+import SearchField from '../components/ui/SearchField'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const STATUS_FILTERS = [
@@ -237,9 +253,12 @@ export default function SoftwareSubscriptionsPage() {
           <h2 className="text-base font-semibold text-slate-100">Software Subscriptions</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Search software, vendor or description…"
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search software, vendor or description…"
+            className="input pl-9"
+          />
         </div>
         {isSuperAdmin && (
           <button className="btn-primary ml-auto" onClick={openAdd}>

@@ -4,6 +4,8 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency, orderCollectedByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
+import { OrderNumber, useOrderQuickView } from '../components/orders/OrderQuickView'
 
 /* Daily Collection — every recorded payment (payment_collections) with the order
    it belongs to. Shows the delivery date, order number, amount, driver, source,
@@ -14,18 +16,6 @@ import { useAuth } from '../context/AuthContext'
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 
-// Full order shape for the order-details popup.
-const DETAIL_SELECT = `
-  *,
-  customer:contacts!customer_id(first_name, last_name, company_name, mobile, account_number),
-  driver:contacts!driver_id(first_name, last_name, mobile),
-  zone:delivery_zones(name),
-  order_items(quantity, unit_price, line_total, currency, is_deleted, product:products(name, code)),
-  delivery_packages(tracking_number, package_price, currency, paid, provider:contacts!provider_id(company_name, first_name, last_name)),
-  order_services(service_fees, service_fees_currency, provider:contacts!provider_id(company_name, first_name, last_name)),
-  retail_goods_invoices(shop_name, invoice_reference, invoice_value, currency, exclude_calculation),
-  payment_collections(amount, currency, collected_at, collected_by_name, collection_group)
-`
 
 function fmtMoney(value, currency) {
   const n = Number(value) || 0
@@ -87,6 +77,30 @@ function orderMismatch(o) {
   return false
 }
 
+/* What the warning actually says, in words and figures.
+
+   "Payment ≠ order total" tells the reader there is a problem but not what to
+   do about it. This names the gap per currency and which way it runs, because
+   money still to collect and money collected twice are two different jobs. */
+function mismatchNote(o) {
+  if (!o) return ''
+  const total     = orderTotalsByCurrency(o)
+  const collected = orderCollectedByCurrency(o)
+  const curs = [...new Set([...Object.keys(total), ...Object.keys(collected)])].sort()
+  const lines = []
+  for (const c of curs) {
+    const t = round2(total[c] || 0)
+    const p = round2(collected[c] || 0)
+    if (t === p) continue
+    const gap = round2(Math.abs(t - p))
+    lines.push(`${c}: order ${fmtMoney(t, c)}, collected ${fmtMoney(p, c)} — `
+      + (p < t ? `${fmtMoney(gap, c)} still to collect` : `${fmtMoney(gap, c)} collected over the total`))
+  }
+  if (lines.length === 0) return ''
+  return 'What was collected does not match this order’s total.\n' + lines.join('\n')
+    + '\n\nOpen the order number to see every line and payment on it.'
+}
+
 export default function DailyCollectionPage() {
   const { COMPANY_ID, loadFullOrderHistory } = useApp()
   // The startup fetch only covers the last few days; this page reads
@@ -103,11 +117,6 @@ export default function DailyCollectionPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
 
-  // Order-details popup.
-  const [detailOpen,    setDetailOpen]    = useState(false)
-  const [detail,        setDetail]        = useState(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailErr,     setDetailErr]     = useState('')
 
   const fetchCollections = useCallback(async () => {
     if (!isSuperAdmin) { setLoading(false); return }
@@ -126,6 +135,7 @@ export default function DailyCollectionPage() {
       const o = orderMap.get(p.order_id) || null
       const deliveryDate = (o?.closed_at || o?.scheduled_date || p.collected_at || '').slice(0, 10)
       const mismatch = orderMismatch(o)
+      const mismatchWhy = mismatch ? mismatchNote(o) : ''
       return {
         id: p.id,
         orderId:      p.order_id,
@@ -138,6 +148,7 @@ export default function DailyCollectionPage() {
         collectedBy:  p.collected_by_name || '—',
         group:        p.collection_group || '—',
         mismatch,
+        mismatchWhy,
         orderTotal:     o ? fmtCurMap(orderTotalsByCurrency(o))   : '—',
         orderCollected: o ? fmtCurMap(orderCollectedByCurrency(o)): '—',
       }
@@ -172,17 +183,6 @@ export default function DailyCollectionPage() {
   const hasFilters = search || dateFrom || dateTo
   function clearFilters() { setSearch(''); setDateFrom(''); setDateTo('') }
 
-  /* ── order details popup ─────────────────────────────────── */
-  async function openDetail(orderId) {
-    if (!orderId) return
-    setDetail(null); setDetailErr(''); setDetailLoading(true); setDetailOpen(true)
-    const { data, error: err } = await supabase.from('delivery_orders').select(DETAIL_SELECT).eq('id', orderId).single()
-    setDetailLoading(false)
-    if (err) { setDetailErr(err.message); return }
-    setDetail(data)
-  }
-  function closeDetail() { setDetailOpen(false); setDetail(null); setDetailErr('') }
-
   /* ── access gate ─────────────────────────────────────────── */
   if (!isSuperAdmin) {
     return (
@@ -194,8 +194,30 @@ export default function DailyCollectionPage() {
     )
   }
 
+  /* What each column sorts BY — not always what it prints. The amount sorts by
+     the figure rather than "USD 12.50", and the date by the day itself, so the
+     order is the one a person means rather than the one the alphabet gives. */
+  const sortValue = useCallback((r, key) => {
+    switch (key) {
+      case 'date':    return r.deliveryDate || ''
+      case 'order':   return r.orderNumber === '—' ? '' : (r.orderNumber || '')
+      case 'amount':  return Number(r.amount) || 0
+      case 'driver':  return (r.driver || '').toLowerCase()
+      case 'source':  return (r.source || '').toLowerCase()
+      case 'by':      return (r.collectedBy || '').toLowerCase()
+      case 'group':   return (r.group || '').toLowerCase()
+      // The flag is called `mismatch` on the row: a collection that does not
+      // agree with the order's own total.
+      case 'warning': return r.mismatch ? 1 : 0
+      default:        return ''
+    }
+  }, [])
+  const { open: openQuickView } = useOrderQuickView()
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const visible = sortRows(filtered)
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       {/* ── header ─────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         <div className="w-8 h-8 rounded-lg border flex items-center justify-center bg-green-600/20 border-green-600/30">
@@ -251,37 +273,38 @@ export default function DailyCollectionPage() {
       )}
 
       {/* ── table ──────────────────────────────────────────── */}
-      <div className="card overflow-x-auto">
+      {/* The table scrolls inside the card so its header can stay put: on a
+          day with hundreds of collections the column you are reading is
+          otherwise off the top of the screen by the time you reach the rows. */}
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-surface-hover/40">
-              <th className="px-3 py-2 font-medium">Delivery date</th>
-              <th className="px-3 py-2 font-medium">Order #</th>
-              <th className="px-3 py-2 font-medium text-right">Collected amount</th>
-              <th className="px-3 py-2 font-medium">Driver</th>
-              <th className="px-3 py-2 font-medium">Source</th>
-              <th className="px-3 py-2 font-medium">Collected by</th>
-              <th className="px-3 py-2 font-medium">Collection group</th>
-              <th className="px-3 py-2 font-medium text-center">Warning</th>
+          <thead className="sticky top-0 z-10 bg-surface-card">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <SortTh label="Delivery date"    sortKey="date"    sort={sort} onSort={cycle} />
+              <SortTh label="Order #"          sortKey="order"   sort={sort} onSort={cycle} />
+              <SortTh label="Collected amount" sortKey="amount"  sort={sort} onSort={cycle} align="right" />
+              <SortTh label="Driver"           sortKey="driver"  sort={sort} onSort={cycle} />
+              <SortTh label="Order Source"     sortKey="source"  sort={sort} onSort={cycle} />
+              <SortTh label="Collected by"     sortKey="by"      sort={sort} onSort={cycle} />
+              <SortTh label="Collection group" sortKey="group"   sort={sort} onSort={cycle} />
+              <SortTh label="Warning"          sortKey="warning" sort={sort} onSort={cycle} align="center" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
+            ) : visible.length === 0 ? (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">No collections match these filters.</td></tr>
-            ) : filtered.map(r => (
+            ) : visible.map(r => (
               <tr key={r.id} className="border-t border-surface-border/40 hover:bg-surface-hover/30">
                 <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
                   {r.deliveryDate ? <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-600" />{r.deliveryDate}</span> : '—'}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
-                  {r.orderNumber === '—' ? <span className="text-slate-600">—</span> : (
-                    <button type="button" onClick={() => openDetail(r.orderId)}
-                      className="font-mono text-brand-400 hover:text-brand-300 hover:underline" title="View full order">
-                      {r.orderNumber}
-                    </button>
-                  )}
+                  {r.orderNumber === '—'
+                    ? <span className="text-slate-600">—</span>
+                    : <OrderNumber value={r.orderNumber} id={r.orderId} className="text-xs" />}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-green-300 whitespace-nowrap">{fmtMoney(r.amount, r.currency)}</td>
                 <td className="px-3 py-2 text-slate-300">{r.driver}</td>
@@ -298,8 +321,24 @@ export default function DailyCollectionPage() {
                 </td>
                 <td className="px-3 py-2 text-center">
                   {r.mismatch ? (
-                    <AlertTriangle className="w-4 h-4 text-red-400 animate-pulse inline-block"
-                      title={`Payment ≠ order total — Total ${r.orderTotal} · Collected ${r.orderCollected}`} />
+                    /* Hovering explains the gap; clicking opens the order it is
+                       about — the same quick view the order number opens, since
+                       "what is wrong here?" is answered by the order itself.
+
+                       The tooltip sits on the BUTTON, not on the icon: `title`
+                       on an <svg> is not a tooltip — SVG needs a <title> child
+                       — so hovering the icon alone said nothing at all. */
+                    <button type="button"
+                      onClick={() => r.orderId && openQuickView(r.orderId)}
+                      disabled={!r.orderId}
+                      title={`${r.mismatchWhy || 'What was collected does not match this order’s total.'}`
+                        + (r.orderId ? `
+
+Click to open the order.` : '')}
+                      className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 disabled:cursor-help disabled:hover:text-red-400">
+                      <AlertTriangle className="w-4 h-4 animate-pulse" />
+                      <span className="text-[10px] font-medium uppercase tracking-wide underline decoration-dotted underline-offset-2">check</span>
+                    </button>
                   ) : (
                     <span className="text-slate-700">—</span>
                   )}
@@ -321,147 +360,9 @@ export default function DailyCollectionPage() {
             </tfoot>
           )}
         </table>
-      </div>
-
-      {/* ── order details popup ─────────────────────────────── */}
-      {detailOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={closeDetail}>
-          <div className="card w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-3 border-b border-surface-border">
-              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                <Banknote className="w-4 h-4 text-brand-400" />
-                Order {detail?.order_number ?? ''}
-              </h3>
-              <button onClick={closeDetail} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4">
-              {detailLoading ? (
-                <p className="text-center text-slate-500 text-sm py-6">Loading order…</p>
-              ) : detailErr ? (
-                <div className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-px" /><span>{detailErr}</span>
-                </div>
-              ) : detail ? (
-                <OrderDetail order={detail} />
-              ) : null}
-            </div>
-          </div>
         </div>
-      )}
-    </div>
-  )
-}
-
-/* Read-only summary of a full order for the popup. */
-function OrderDetail({ order: o }) {
-  const items    = (o.order_items ?? []).filter(i => !i.is_deleted)
-  const packages = o.delivery_packages ?? []
-  const services = o.order_services ?? []
-  const invoices = o.retail_goods_invoices ?? []
-  const payments = o.payment_collections ?? []
-  const total     = orderTotalsByCurrency(o)
-  const collected = orderCollectedByCurrency(o)
-
-  const Field = ({ label, value }) => (
-    <div className="flex justify-between gap-3 text-xs py-0.5">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-slate-200 text-right">{value ?? '—'}</span>
-    </div>
-  )
-  const Section = ({ title, children }) => (
-    <div className="rounded-lg border border-surface-border p-3 space-y-1">
-      <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">{title}</p>
-      {children}
-    </div>
-  )
-
-  return (
-    <>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <Section title="Order">
-          <Field label="Number" value={o.order_number} />
-          <Field label="Status" value={o.status} />
-          <Field label="Delivery status" value={o.delivery_status} />
-          <Field label="Source" value={o.order_source} />
-          <Field label="Confirmed" value={o.order_confirmed ? 'Yes' : 'No'} />
-          <Field label="Closed" value={o.isclosed ? 'Yes' : 'No'} />
-          <Field label="Scheduled" value={o.scheduled_date ? String(o.scheduled_date).slice(0, 10) : '—'} />
-          <Field label="Closed at" value={o.closed_at ? String(o.closed_at).slice(0, 10) : '—'} />
-        </Section>
-        <Section title="Parties">
-          <Field label="Customer" value={personName(o.customer)} />
-          {o.customer?.account_number && <Field label="Account" value={o.customer.account_number} />}
-          <Field label="Recipient" value={o.recipient_name} />
-          <Field label="Recipient mobile" value={o.recipient_mobile} />
-          <Field label="Driver" value={driverName(o.driver)} />
-          <Field label="Zone" value={o.zone?.name} />
-          <Field label="Delivery address" value={o.delivery_address} />
-        </Section>
       </div>
 
-      <Section title="Amounts">
-        <Field label="Order total" value={fmtCurMap(total)} />
-        <Field label="Collected" value={fmtCurMap(collected)} />
-        <Field label="Delivery fee" value={o.delivery_fee ? fmtMoney(o.delivery_fee, o.currency || 'USD') : '—'} />
-      </Section>
-
-      {packages.length > 0 && (
-        <Section title={`Delivery packages (${packages.length})`}>
-          {packages.map((p, i) => (
-            <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-              <span className="text-slate-400 truncate">{p.tracking_number || '—'} · {personName(p.provider)}{p.paid ? ' · paid' : ''}</span>
-              <span className="text-slate-200 whitespace-nowrap">{fmtMoney(p.package_price, p.currency || 'USD')}</span>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {invoices.length > 0 && (
-        <Section title={`Retail invoices (${invoices.length})`}>
-          {invoices.map((r, i) => (
-            <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-              <span className="text-slate-400 truncate">{r.shop_name || 'Invoice'}{r.invoice_reference ? ` · ${r.invoice_reference}` : ''}{r.exclude_calculation ? ' · excluded' : ''}</span>
-              <span className="text-slate-200 whitespace-nowrap">{fmtMoney(r.invoice_value, r.currency || 'USD')}</span>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {services.length > 0 && (
-        <Section title={`Order services (${services.length})`}>
-          {services.map((s, i) => (
-            <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-              <span className="text-slate-400 truncate">{personName(s.provider)}</span>
-              <span className="text-slate-200 whitespace-nowrap">{fmtMoney(s.service_fees, s.service_fees_currency || 'USD')}</span>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {items.length > 0 && (
-        <Section title={`Items (${items.length})`}>
-          {items.map((it, i) => (
-            <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-              <span className="text-slate-400 truncate">{it.product?.name || 'Item'} × {it.quantity}</span>
-              <span className="text-slate-200 whitespace-nowrap">{fmtMoney(it.line_total, it.currency || 'USD')}</span>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {payments.length > 0 && (
-        <Section title={`Payments (${payments.length})`}>
-          {payments.map((p, i) => (
-            <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-              <span className="text-slate-400 truncate">
-                {(p.collected_at || '').slice(0, 10)} · {p.collected_by_name || '—'}{p.collection_group ? ` · ${p.collection_group}` : ''}
-              </span>
-              <span className="text-green-300 whitespace-nowrap">{fmtMoney(p.amount, p.currency || 'USD')}</span>
-            </div>
-          ))}
-        </Section>
-      )}
-    </>
+    </div>
   )
 }

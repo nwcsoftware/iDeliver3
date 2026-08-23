@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, RotateCcw, X, Check, Truck, Circle, Package } from 'lucide-react'
+import { RotateCcw, X, Check, Truck, Circle, Package } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import SearchField from '../components/ui/SearchField'
 
 const daysSince = iso => {
   if (!iso) return 0
@@ -154,15 +155,11 @@ export default function ReturnableItemsPage() {
         </div>
 
         <div className="relative flex-1 max-w-sm ml-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className={`input pl-9 ${search ? 'pr-9' : ''}`} placeholder="Search product, order #, recipient, driver…"
-            value={search} onChange={e => setSearch(e.target.value)} />
-          {search && (
-            <button type="button" onClick={() => setSearch('')} title="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+          <SearchField
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search product, order #, recipient, driver…"
+          />
         </div>
 
         <button type="button" onClick={() => setShowReturned(s => !s)} aria-pressed={showReturned}

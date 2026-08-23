@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { todayStr, daysUntilDate } from './subscriptions'
+import { SUPPLIER_SUBSCRIPTION, CURRENCY } from './billing'
 
 /* The subscription agreement a supplier / partner accepts before the portal
    opens for them (supabase-fix128.sql).
@@ -17,16 +18,18 @@ import { todayStr, daysUntilDate } from './subscriptions'
 
 export const AGREEMENT_VERSION = 'v1'
 
-/* The published plans. Change a price here and you are changing what NEW
-   signatures record; anyone who already agreed keeps the figures they saw. */
-export const SUBSCRIPTION_PLANS = [
-  { key: 'basic',   name: 'Basic',   price: 10, blurb: 'Your shop, your orders and your statement.' },
-  { key: 'pro',     name: 'Pro',     price: 18, blurb: 'Everything in Basic, with the wider shop listing.' },
-  { key: 'pro_max', name: 'Pro Max', price: 25, blurb: 'Everything in Pro, with priority placement and support.' },
-]
-export const PLAN_CURRENCY = 'USD'
-export const DEFAULT_PLAN  = 'basic'
-export const TRIAL_PLAN_DAYS = 90
+/* The published plans ARE the supplier plans from the commercial model — one
+   definition, so what a supplier signs is what the software charges and what
+   the licence document states. Changing a price there changes what NEW
+   signatures record; anyone who already agreed keeps the figures they saw.
+
+   This agreement is a SUPPLIER agreement. A partner is a seat on the annual
+   package (ten included, USD 10 a year beyond), not a monthly subscriber, and
+   is never shown these plans. */
+export const SUBSCRIPTION_PLANS = SUPPLIER_SUBSCRIPTION.plans
+export const PLAN_CURRENCY = CURRENCY
+export const DEFAULT_PLAN  = SUPPLIER_SUBSCRIPTION.defaultPlan
+export const TRIAL_PLAN_DAYS = SUPPLIER_SUBSCRIPTION.trialDays
 
 export const planByKey = (key) =>
   SUBSCRIPTION_PLANS.find(p => p.key === key) || SUBSCRIPTION_PLANS[0]
