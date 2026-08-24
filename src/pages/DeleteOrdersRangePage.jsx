@@ -123,7 +123,6 @@ export default function DeleteOrdersRangePage() {
             <CalendarRange className="w-4 h-4 text-red-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Delete Orders by Date</h1>
             <p className="text-xs text-slate-500 mt-0.5">Permanently remove selected orders (and all their data) scheduled in a date range</p>
           </div>
         </div>

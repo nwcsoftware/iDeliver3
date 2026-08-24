@@ -808,21 +808,8 @@ export default function DriverDuesPage() {
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-brand-600/20 border border-brand-600/30 flex items-center justify-center">
-            <HandCoins className="w-4 h-4 text-brand-400" />
-          </div>
-          <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Driver Settlements</h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {tab === 'collect'
-                ? `${visible.length} of ${allRows.length} dues shown`
-                : `${visibleSettlements.length} settlement${visibleSettlements.length === 1 ? '' : 's'}`}
-            </p>
-          </div>
-        </div>
-
-        <div className="relative flex-1 max-w-sm ml-2">
+        {/* No page icon or row count here: the header already names the page. */}
+        <div className="relative flex-1 max-w-sm">
           <SearchField
             value={search}
             onChange={e => setSearch(e.target.value)}

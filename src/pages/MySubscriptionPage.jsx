@@ -57,7 +57,6 @@ export default function MySubscriptionPage({ partyContactId = null }) {
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
       <div className="flex items-center gap-2">
         <CreditCard className="w-5 h-5 text-brand-400" />
-        <h2 className="text-base font-semibold text-slate-100">My Subscription</h2>
       </div>
 
       {loading ? (

@@ -112,7 +112,6 @@ export default function CashierBoxResetPage() {
             <Wallet className="w-4 h-4 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Reset Cashier Box</h1>
             <p className="text-xs text-slate-500 mt-0.5">Hide the Daily Cashier Box movements up to a chosen date — orders, payments &amp; driver settlements are never touched</p>
           </div>
         </div>

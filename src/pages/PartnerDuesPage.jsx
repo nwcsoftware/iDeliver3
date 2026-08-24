@@ -264,7 +264,6 @@ export default function PartnerDuesPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Handshake className="w-5 h-5 text-purple-400" />
-          <h1 className="text-lg font-semibold text-slate-100">Partner Dues</h1>
           <span className="text-xs text-slate-500">· {filtered.length} partner{filtered.length === 1 ? '' : 's'}</span>
         </div>
       </div>

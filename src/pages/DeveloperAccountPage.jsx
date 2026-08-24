@@ -81,7 +81,6 @@ export default function DeveloperAccountPage() {
             <ShieldCheck className="w-4 h-4 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Developer Account</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               Change the super-admin username and password. Signed in as{' '}
               <span className="text-slate-300 font-medium">{currentUser?.username}</span>.

@@ -181,7 +181,6 @@ export default function AccountTransactionsPage() {
             <BookText className="w-4 h-4 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Account Transactions</h1>
             <p className="text-xs text-slate-500 mt-0.5">{visible.length} of {rows.length} shown</p>
           </div>
         </div>

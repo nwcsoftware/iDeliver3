@@ -422,7 +422,6 @@ export default function CashierBoxPage() {
             <Wallet className="w-5 h-5 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-100">Daily Cashier Box</h1>
             <p className="text-xs text-slate-500">Money in &amp; out for closed orders</p>
           </div>
         </div>

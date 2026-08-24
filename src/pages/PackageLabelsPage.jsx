@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Tags,
   Printer,
   FileDown,
   AlertCircle,
   Calendar,
   CheckSquare,
   Square,
-  Package,
+  PackageOpen,
+  SearchX,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { jsPDF } from 'jspdf'
@@ -313,18 +313,7 @@ export default function PackageLabelsPage() {
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
       {/* ── Toolbar (not printed) ───────────────────────────── */}
       <div className="print:hidden space-y-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Tags className="w-5 h-5 text-brand-400" />
-            <h2 className="text-base font-semibold text-slate-100">Package Labels</h2>
-          </div>
-          <div className="flex items-end gap-2">
-            <div>
-              <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Delivery date</label>
-              <input type="date" className="input py-1.5 text-xs w-40" value={date}
-                onChange={e => setDate(e.target.value)} />
-            </div>
-          </div>
+        <div className="flex items-end gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
             <SearchField
               value={search}
@@ -332,6 +321,11 @@ export default function PackageLabelsPage() {
               placeholder="Search order, reference, recipient…"
               className="input pl-9"
             />
+          </div>
+          <div>
+            <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Delivery date</label>
+            <input type="date" className="input py-1.5 text-xs w-40" value={date}
+              onChange={e => setDate(e.target.value)} />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={savePdf} disabled={labels.length === 0}
@@ -373,8 +367,22 @@ export default function PackageLabelsPage() {
               {loading ? (
                 <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
               ) : shown.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">
-                  {rows.length === 0 ? 'No packages scheduled for this date.' : 'No packages match your search.'}
+                /* Nothing to print. An icon says so at a glance — an empty
+                   table alone reads like the page is still loading. */
+                <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                  {rows.length === 0 ? (
+                    <>
+                      <PackageOpen className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                      <div>No packages scheduled for this date.</div>
+                      <div className="text-xs text-slate-600 mt-1">Pick another delivery date to find labels to print.</div>
+                    </>
+                  ) : (
+                    <>
+                      <SearchX className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                      <div>No packages match your search.</div>
+                      <div className="text-xs text-slate-600 mt-1">Clear the search box to see all {rows.length} package{rows.length === 1 ? '' : 's'} on this date.</div>
+                    </>
+                  )}
                 </td></tr>
               ) : shown.map(r => {
                 const on = picked.has(r.id)

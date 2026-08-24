@@ -176,7 +176,6 @@ export default function HeaderBackgroundPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <ImageIcon className="w-5 h-5 text-brand-400" />
-          <h2 className="text-base font-semibold text-slate-100">Header Background</h2>
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd}>
           <Plus className="w-4 h-4" /> New background

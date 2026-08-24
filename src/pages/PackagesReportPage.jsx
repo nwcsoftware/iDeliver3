@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { OrderNumber } from '../components/orders/OrderQuickView'
-import { Package, Search, FilterX, AlertCircle, Calendar, X } from 'lucide-react'
+import { FilterX, AlertCircle, Calendar, X } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { fetchOrdersByIds } from '../lib/packageOrders'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
+import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
+import SearchField from '../components/ui/SearchField'
 
 /* Packages report — every delivery package across all orders, with its reference,
    reception (recipient) name, order number, delivery date, delivery address and
@@ -48,6 +50,10 @@ export default function PackagesReportPage() {
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
+  // What the load is doing right now, so the overlay can say it. Packages come
+  // first, then their orders in chunks of 200 — that second leg is the long
+  // one, so it reports a real done/total rather than an endless spinner.
+  const [progress, setProgress] = useState({ packages: null, ordersDone: 0, ordersTotal: 0 })
 
   const [search,      setSearch]      = useState('')
   const [partnerId,   setPartnerId]   = useState('')   // filter by provider
@@ -58,20 +64,25 @@ export default function PackagesReportPage() {
   // What we have already handed to partners (partner_payouts, fix82) — the
   // third figure the balance needs. Packages alone only say what was owed.
   const [payouts, setPayouts] = useState([])
+  const [payoutsLoaded, setPayoutsLoaded] = useState(false)
 
   useEffect(() => {
     let alive = true
+    setPayoutsLoaded(false)
     ;(async () => {
       let q = supabase.from('partner_payouts').select('partner_id, amount, currency, paid_at')
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
       const { data } = await q
-      if (alive && data) setPayouts(data)
+      if (!alive) return
+      if (data) setPayouts(data)
+      setPayoutsLoaded(true)
     })()
     return () => { alive = false }
   }, [COMPANY_ID])
 
   const fetchPackages = useCallback(async () => {
     setLoading(true); setError('')
+    setProgress({ packages: null, ordersDone: 0, ordersTotal: 0 })
     // Two-step load + client-side join: PostgREST can't always embed
     // delivery_packages → orders, so we fetch the orders separately by id.
     const { data: pkgs, error: err } = await fetchAllRows(() => {
@@ -86,8 +97,11 @@ export default function PackagesReportPage() {
       return q
     })
     if (err) { setError(err.message); setRows([]); setLoading(false); return }
+    setProgress(p => ({ ...p, packages: pkgs?.length ?? 0 }))
 
-    const orderMap = await fetchOrdersByIds([...new Set((pkgs ?? []).map(p => p.order_id).filter(Boolean))])
+    const orderIds = [...new Set((pkgs ?? []).map(p => p.order_id).filter(Boolean))]
+    const orderMap = await fetchOrdersByIds(orderIds, (done, total) =>
+      setProgress(p => ({ ...p, ordersDone: done, ordersTotal: total })))
     setRows((pkgs ?? []).map(p => ({ ...p, order: orderMap.get(p.order_id) || null })))
     setLoading(false)
   }, [COMPANY_ID])
@@ -206,19 +220,30 @@ export default function PackagesReportPage() {
     setSearch(''); setPartnerId(''); setRecipient(''); setDateFrom(''); setDateTo('')
   }
 
+  /* This page reads every package ever shipped and then every order behind
+     them, so the first paint can be several seconds of nothing. Say what is
+     happening instead of leaving the screen looking stuck. */
+  const busy = loading || !payoutsLoaded
+  const loadSteps = [
+    { label: 'Reading packages', done: progress.packages !== null,
+      hint: progress.packages !== null ? `${progress.packages.toLocaleString()} packages` : undefined },
+    { label: 'Matching their orders',
+      done: progress.packages !== null && !loading,
+      hint: progress.ordersTotal
+        ? `${progress.ordersDone.toLocaleString()} / ${progress.ordersTotal.toLocaleString()} orders`
+        : undefined },
+    { label: 'Reading payments to partners', done: payoutsLoaded },
+    { label: 'Building the report', done: !busy },
+  ]
+
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
-      {/* ── header ─────────────────────────────────────────── */}
-      <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg border flex items-center justify-center bg-brand-600/20 border-brand-600/30">
-          <Package className="w-4 h-4 text-brand-400" />
-        </div>
-        <div>
-          <h1 className="text-base font-semibold text-slate-100 leading-none">Packages</h1>
-          <p className="text-xs text-slate-500 mt-0.5">{sorted.length} package{sorted.length === 1 ? '' : 's'}</p>
-        </div>
-      </div>
-
+      <DataLoadingOverlay
+        open={busy}
+        title="Gathering packages"
+        subtitle="Reading every package on record and the orders behind them…"
+        steps={loadSteps}
+      />
       {error && (
         <div className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-px" /><span>{error}</span>
@@ -229,10 +254,16 @@ export default function PackagesReportPage() {
       <div className="card p-3 flex items-end gap-3 flex-wrap">
         <div className="flex-1 min-w-[200px]">
           <label className="label">Search</label>
+          {/* The shared box: magnifier on the left, and a clear × on the right
+              the moment anything is typed — a stale word here is how the report
+              comes to look empty for no visible reason. */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input className="input py-1.5 text-xs pl-8" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Reference, order #, reception, address, partner or code…" />
+            <SearchField
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Reference, order #, reception, address, partner or code…"
+              className="input py-1.5 text-xs pl-9"
+            />
           </div>
         </div>
         <div className="min-w-[220px]">
@@ -285,9 +316,17 @@ export default function PackagesReportPage() {
       </div>
 
       {/* ── totals ─────────────────────────────────────────── */}
-      {totalCurs.length > 0 && (
-        <div className="card p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
+      <div className="card p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="rounded-lg border border-surface-border p-3 space-y-1">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+            {onlyDelivered ? 'Total delivered packages' : 'Total packages'}
+          </div>
+          <div className="tabular-nums text-base font-semibold text-brand-300">
+            {filtered.length.toLocaleString()}
+          </div>
+        </div>
+        {totalCurs.length > 0 && (
+          [
             { key: 'total',   label: 'Total packages price', cls: 'text-brand-300' },
             { key: 'paid',    label: 'Total paid directly',  cls: 'text-green-400' },
             { key: 'paidOut', label: 'Paid to partner',      cls: 'text-teal-300' },
@@ -299,9 +338,9 @@ export default function PackagesReportPage() {
                 <div key={c} className={`tabular-nums text-base font-semibold ${row.cls}`}>{fmtMoney(totals[c][row.key], c)}</div>
               ))}
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
 
       {/* ── table ──────────────────────────────────────────── */}
       {/* The table scrolls inside the card so its header can stay put — this
@@ -321,7 +360,7 @@ export default function PackagesReportPage() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {busy ? (
               <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
             ) : sorted.length === 0 ? (
               <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">No packages match these filters.</td></tr>
@@ -355,24 +394,6 @@ export default function PackagesReportPage() {
               )
             })}
           </tbody>
-          {totalCurs.length > 0 && (
-            <tfoot>
-              {[
-                { key: 'total',   label: 'Total',       cls: 'text-brand-300',  border: 'border-t border-surface-border' },
-                { key: 'paid',    label: 'Paid directly', cls: 'text-green-400', border: 'border-t border-surface-border/40' },
-                { key: 'balance', label: 'Balance due', cls: 'text-amber-400',  border: 'border-t border-surface-border/40' },
-              ].map(row => (
-                <tr key={row.key} className={`${row.border} bg-surface-hover/30`}>
-                  <td colSpan={6} className="px-3 py-2 text-right text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{row.label}</td>
-                  <td className="px-3 py-2 text-right">
-                    {totalCurs.map(c => (
-                      <div key={c} className={`tabular-nums font-semibold whitespace-nowrap ${row.cls}`}>{fmtMoney(totals[c][row.key], c)}</div>
-                    ))}
-                  </td>
-                </tr>
-              ))}
-            </tfoot>
-          )}
         </table>
         </div>
       </div>

@@ -181,9 +181,6 @@ export default function PartyStatementPage({ partyContactId = null }) {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Wallet className="w-5 h-5 text-brand-400" />
-          <h2 className="text-base font-semibold text-slate-100">
-            {isOffice ? 'Supplier & Partner Statements' : 'My Statement'}
-          </h2>
         </div>
 
         {isOffice && (

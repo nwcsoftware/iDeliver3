@@ -227,7 +227,6 @@ export default function ContactStatementsPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-9 h-9 rounded-lg bg-brand-600/20 border border-brand-600/30 flex items-center justify-center"><BookOpenText className="w-5 h-5 text-brand-400" /></div>
         <div>
-          <h1 className="text-base font-semibold text-slate-100 leading-none">Contact Account Statements</h1>
           <p className="text-xs text-slate-500 mt-1">Select a customer, partner, or supplier to review their account activity.</p>
         </div>
       </div>

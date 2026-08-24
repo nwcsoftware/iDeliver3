@@ -196,7 +196,6 @@ export default function CompanyPage() {
             <Building2 className="w-5 h-5 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-slate-100">Company Profile</h1>
             <p className="text-xs text-slate-500">Manage company information and branches</p>
           </div>
         </div>

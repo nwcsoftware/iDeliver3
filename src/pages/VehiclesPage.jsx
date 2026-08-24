@@ -254,7 +254,6 @@ export default function VehiclesPage() {
             <Car className="w-4 h-4 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Vehicles</h1>
             <p className="text-xs text-slate-500 mt-0.5">{vehicles.length} total</p>
           </div>
         </div>

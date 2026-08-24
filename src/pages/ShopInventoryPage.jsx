@@ -291,7 +291,6 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Store className="w-5 h-5 text-emerald-400" />
-          <h2 className="text-base font-semibold text-slate-100">My Shop Inventory</h2>
         </div>
         <div className="relative flex-1 max-w-sm">
           <SearchField

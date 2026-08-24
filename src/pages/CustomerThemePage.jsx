@@ -163,7 +163,6 @@ export default function CustomerThemePage() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Palette className="w-5 h-5 text-brand-400" />
-          <h2 className="text-base font-semibold text-slate-100">Customer App Theme</h2>
           <span className="text-[11px] text-slate-500">colours and a background movie, by date</span>
         </div>
         <button className="btn-primary ml-auto" onClick={openAdd}>

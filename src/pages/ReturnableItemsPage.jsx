@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { RotateCcw, X, Check, Truck, Circle, Package } from 'lucide-react'
+import { X, Check, Truck, Circle, Package, ChevronDown, ChevronRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -16,6 +16,10 @@ const fmtQty  = n => { const v = Number(n) || 0; return Number.isInteger(v) ? St
 const lineTotal = it => Math.max(0, (Number(it.quantity) || 0) * (Number(it.unit_price) || 0) - (Number(it.discount) || 0))
 const fmtMoney = (amount, currency = 'USD') => `${currency || 'USD'} ${Number(amount || 0).toFixed(2)}`
 
+// Whether the stock summary is expanded — remembered per device, so someone
+// who works mostly in the list below isn't folding it away every visit.
+const SUMMARY_KEY = 'ideliver:returnablesSummaryOpen'
+
 export default function ReturnableItemsPage() {
   const { COMPANY_ID } = useApp()
   const { currentUser } = useAuth()
@@ -28,6 +32,14 @@ export default function ReturnableItemsPage() {
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
   const [showReturned, setShowReturned] = useState(false)
+  const [summaryOpen,  setSummaryOpen]  = useState(() => {
+    try { return localStorage.getItem(SUMMARY_KEY) !== '0' } catch { return true }
+  })
+  const toggleSummary = () => setSummaryOpen(o => {
+    const next = !o
+    try { localStorage.setItem(SUMMARY_KEY, next ? '1' : '0') } catch { /* private mode — just don't remember */ }
+    return next
+  })
   const [busyId,   setBusyId]   = useState(null)
   const [orderModal, setOrderModal] = useState(null)
   const [orderItems, setOrderItems] = useState([])
@@ -75,8 +87,6 @@ export default function ReturnableItemsPage() {
     for (const r of rows) if (!r.is_returned) m[r.product_id] = (m[r.product_id] || 0) + (Number(r.quantity) || 0)
     return m
   }, [rows])
-
-  const totalOut = Object.values(outByProduct).reduce((s, n) => s + n, 0)
 
   /* What each column sorts BY. "Days out" sorts by the number of days, not by
      the words beside it, so the longest-outstanding item comes to the top in
@@ -166,17 +176,9 @@ export default function ReturnableItemsPage() {
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-amber-600/20 border border-amber-600/30 flex items-center justify-center">
-            <RotateCcw className="w-4 h-4 text-amber-400" />
-          </div>
-          <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Returnable Items</h1>
-            <p className="text-xs text-slate-500 mt-0.5">{fmtQty(totalOut)} out · {visible.length} record{visible.length === 1 ? '' : 's'}</p>
-          </div>
-        </div>
-
-        <div className="relative flex-1 max-w-sm ml-2">
+        {/* No page icon or running count here: the header already names the
+            page, and the stock summary below gives the out/in-store figures. */}
+        <div className="relative flex-1 max-w-sm">
           <SearchField
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -194,10 +196,21 @@ export default function ReturnableItemsPage() {
         </button>
       </div>
 
-      {/* Per-product summary: out vs available in store */}
-      <div className="card p-4">
-        <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-3">Stock summary</p>
-        {products.length === 0 ? (
+      {/* Per-product summary: out vs available in store.
+          It folds away on click — with a dozen returnable products it can eat
+          half the screen, and the list below is what the page is for. */}
+      <div className="card p-4 flex-shrink-0">
+        <button type="button" onClick={toggleSummary} aria-expanded={summaryOpen}
+          className={`flex w-full items-center gap-1.5 text-left text-[11px] uppercase tracking-wider font-semibold text-slate-500 hover:text-slate-300 transition-colors ${summaryOpen ? 'mb-3' : ''}`}>
+          {summaryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          Stock summary
+          {!summaryOpen && products.length > 0 && (
+            <span className="ml-1.5 normal-case tracking-normal text-slate-600">
+              {products.length} product{products.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </button>
+        {!summaryOpen ? null : products.length === 0 ? (
           <p className="text-xs text-slate-600">No returnable products yet. Mark a product as “Returnable” in Products.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

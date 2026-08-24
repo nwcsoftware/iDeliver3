@@ -646,7 +646,6 @@ export default function ContactsPage({ type }) {
             <Icon className={`w-4 h-4 ${color}`} />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">{title}</h1>
             <p className="text-xs text-slate-500 mt-0.5">{contacts.length} total</p>
           </div>
         </div>

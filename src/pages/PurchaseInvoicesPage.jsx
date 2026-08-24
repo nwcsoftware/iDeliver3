@@ -230,7 +230,6 @@ export default function PurchaseInvoicesPage() {
             <FileText className="w-4 h-4 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-slate-100 leading-none">Purchase Invoices</h1>
             <p className="text-xs text-slate-500 mt-0.5">{invoices.length} total</p>
           </div>
         </div>
