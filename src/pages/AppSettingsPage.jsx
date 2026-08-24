@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
+import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
@@ -328,6 +329,58 @@ export default function AppSettingsPage() {
             </p>
           </div>
         )}
+
+        {/* ── Currency check period ─────────────────────────────────────── */}
+        {canSetLimits && (() => {
+          const current = appSettings.currencyCheckPeriod || DEFAULT_PERIOD
+          const range = periodRange(current)
+          return (
+            <div className="card p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                  <CalendarRange className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-100">Currency check period</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    How far back the <span className="text-slate-300">Currency Check</span> page reads. It used to
+                    pull the entire order history before it could show anything — a wait that grows every month,
+                    for a question that is nearly always about recent work. A shorter period opens faster; a
+                    longer one catches a slip found late.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {PERIODS.map(p => {
+                  const on = current === p.key
+                  const r = periodRange(p.key)
+                  return (
+                    <button key={p.key} type="button"
+                      onClick={() => updateAppSettings({ currencyCheckPeriod: p.key })}
+                      className={`text-left rounded-lg border p-3 transition-colors ${
+                        on ? 'border-brand-500/50 bg-brand-500/5' : 'border-surface-border hover:bg-surface-hover/40'}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-100">{p.label}</span>
+                        {on && <CheckCircle2 className="w-3.5 h-3.5 text-brand-300 ml-auto" />}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{p.note}</p>
+                      <p className="text-[11px] text-slate-400 mt-1 tabular-nums">
+                        {r.from} → {r.to} · {r.days} day{r.days === 1 ? '' : 's'}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <p className="text-[11px] text-slate-500">
+                Currently reading <span className="text-slate-300">{periodByKey(current).label.toLowerCase()}</span> —
+                {' '}{range.from} to {range.to}. Company-wide and immediate: it decides what “checked” means, so
+                everyone looks at the same window. The page can still be narrowed by hand with its own date boxes.
+              </p>
+            </div>
+          )
+        })()}
 
         {/* ── Currency limits ───────────────────────────────────────────── */}
         {canSetLimits && (

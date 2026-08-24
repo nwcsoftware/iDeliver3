@@ -17,6 +17,8 @@ import {
   scanCurrencyIssues, limitsFor, DEFAULT_CURRENCY_LIMITS,
 } from '../lib/currencyCheck'
 import { orderTouchesInactive } from '../lib/contactVisibility'
+import { periodRange, DEFAULT_PERIOD } from '../lib/currencyCheckPeriod'
+import { fetchOrdersForPeriod } from '../lib/currencyCheckData'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -37,7 +39,7 @@ const customerName = (c) => (c?.company_name?.trim()
    Nothing here is corrected automatically: the page reports, the operator
    decides. Opening the order number gives the full picture before touching it. */
 export default function CurrencyCheckPage() {
-  const { orders, loading, loadFullOrderHistory, ordersFullyLoaded, inactiveContactIds, appSettings } = useApp()
+  const { inactiveContactIds, appSettings, COMPANY_ID } = useApp()
   const { hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
 
@@ -49,8 +51,29 @@ export default function CurrencyCheckPage() {
   const usdMax = limitsFor('USD', limits).max
   const lbpMin = limitsFor('LBP', limits).min
 
-  // A currency slip from three months ago is still wrong today.
-  useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
+  /* The window to check, from App Settings. The page used to call
+     loadFullOrderHistory() and wait for every order ever taken — thousands of
+     rows with all their money lines embedded — to flag a handful of amounts.
+     Now it fetches the chosen period itself: the setting decides the cost, and
+     the page is honest about what it looked at. */
+  const period = useMemo(
+    () => periodRange(appSettings?.currencyCheckPeriod || DEFAULT_PERIOD),
+    [appSettings?.currencyCheckPeriod])
+
+  const [periodOrders, setPeriodOrders] = useState(null)   // null = still loading
+  const [loadError,    setLoadError]    = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setPeriodOrders(null); setLoadError('')
+    ;(async () => {
+      const { orders: rows, error } = await fetchOrdersForPeriod(period, COMPANY_ID)
+      if (cancelled) return
+      setPeriodOrders(rows)
+      setLoadError(error || '')
+    })()
+    return () => { cancelled = true }
+  }, [period, COMPANY_ID])
 
   /* Orders record WHO raised them as a user id. The names live in
      user_accounts — a dozen rows — so they are fetched once and mapped here
@@ -86,13 +109,16 @@ export default function CurrencyCheckPage() {
   }
 
   const [search,   setSearch]   = useState('')
+  // Empty = the whole period. The boxes narrow what was loaded; they cannot
+  // reach outside it, which is why the period is stated on screen.
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
   const [kind,     setKind]     = useState('')      // '' | 'error' | 'warning'
 
-  const visibleOrders = useMemo(
-    () => (isSuperAdmin ? orders : orders.filter(o => !orderTouchesInactive(o, inactiveContactIds))),
-    [orders, inactiveContactIds, isSuperAdmin])
+  const visibleOrders = useMemo(() => {
+    const src = periodOrders ?? []
+    return isSuperAdmin ? src : src.filter(o => !orderTouchesInactive(o, inactiveContactIds))
+  }, [periodOrders, inactiveContactIds, isSuperAdmin])
 
   const all = useMemo(() => scanCurrencyIssues(visibleOrders, limits), [visibleOrders, limits])
 
@@ -153,16 +179,17 @@ export default function CurrencyCheckPage() {
     URL.revokeObjectURL(url)
   }
 
-  const busy = !ordersFullyLoaded || !!loading?.orders
+  const busy = periodOrders === null
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       <DataLoadingOverlay
         open={busy}
         title="Checking currencies"
-        subtitle="Reading every amount on every order…"
+        subtitle={`Reading every amount on every order from ${period.from} to ${period.to}…`}
         steps={[
-          { label: 'Loading order history', done: !busy, hint: `${orders.length.toLocaleString()} orders` },
+          { label: `Loading ${period.label.toLowerCase()}`, done: !busy,
+            hint: `${(periodOrders?.length ?? 0).toLocaleString()} orders` },
           { label: 'Checking each amount', done: !busy },
         ]}
       />
@@ -173,6 +200,13 @@ export default function CurrencyCheckPage() {
           <ArrowRightLeft className="w-5 h-5 text-amber-400" />
           <h2 className="text-base font-semibold text-slate-100">Currency Check</h2>
           <span className="text-[11px] text-slate-500">amounts that look like the wrong currency</span>
+          {/* The window is a setting, so the page states it rather than leaving
+              the reader to assume it covers everything. */}
+          <span className="text-[11px] px-2 py-0.5 rounded border border-surface-border text-slate-400 whitespace-nowrap"
+            title={`Set in Settings → App Settings → Currency check period (${period.from} → ${period.to})`}>
+            {period.label} · {period.days} day{period.days === 1 ? '' : 's'}
+            {periodOrders ? ` · ${periodOrders.length.toLocaleString()} orders` : ''}
+          </span>
         </div>
         <div className="relative flex-1 max-w-sm">
           <SearchField
@@ -199,6 +233,15 @@ export default function CurrencyCheckPage() {
           <FileDown className="w-3.5 h-3.5" /> CSV
         </button>
       </div>
+
+      {loadError && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
+          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+          <p className="text-red-300 text-xs leading-relaxed">
+            {loadError} — the list below may be incomplete.
+          </p>
+        </div>
+      )}
 
       {/* The two rules, stated — the page should explain itself. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

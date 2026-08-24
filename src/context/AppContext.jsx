@@ -80,6 +80,9 @@ const DEFAULT_APP_SETTINGS = {
      magnitude apart. 0 (or blank) switches that side off, so a currency can be
      bounded on one side only, which is the usual case: LBP has a floor, USD a
      ceiling. Global, because it is an operational rule rather than a taste. */
+  /* How far back the Currency Check reads — 'week' | 'month' | 'last2'.
+     Company-wide, like the limits themselves: it decides what "checked" means. */
+  currencyCheckPeriod: 'month',
   currencyLimits: {
     USD: { min: 0,     max: 2000 },
     LBP: { min: 50000, max: 0 },
@@ -99,7 +102,7 @@ function readAppSettings() {
 // server-side (app_global_settings) and mirrored down to every client in
 // realtime, overriding the local copy. All other keys stay per-device.
 const GLOBAL_SETTINGS_ID  = 'global'
-const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments', 'currencyLimits']
+const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments', 'currencyLimits', 'currencyCheckPeriod']
 
 // Normalize a contact row into a driver-shaped object for UI consumption
 function normalizeDriver(c) {

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>iDeliver III — Delivery Business Feasibility Study</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { font: 11px/1.5 "Segoe UI",Inter,system-ui,sans-serif;
+         color: #0f172a; margin: 0;  }
+  .en { direction: ltr; unicode-bidi: isolate; }
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -0.4px; }
+  h2 { font-size: 15px; margin: 0 0 3px; border-bottom: 2px solid #2563eb; padding-bottom: 4px; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; text-transform: uppercase; letter-spacing: .5px; }
+  p { margin: 6px 0; }
+  .muted { color: #64748b; }
+  .lead { font-size: 12px; }
+  .rule { height: 3px; background: #2563eb; margin: 8px 0 14px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 4px; }
+  .kpi { border: 1px solid #e2e8f0; border-radius: 7px; padding: 8px 10px; }
+  .kpi .n { font-size: 17px; font-weight: 700;  }
+  .kpi .l { font-size: 8.5px; text-transform: uppercase; letter-spacing: .5px; color: #64748b; }
+  .kpi .s { font-size: 9px; color: #64748b; margin-top: 1px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 5px 7px; text-align: left; }
+  th { background: #f8fafc; font-size: 8.5px; text-transform: uppercase; letter-spacing: .4px; color: #64748b; }
+  td.n, th.n { text-align: right; direction: ltr; font-variant-numeric: tabular-nums; }
+  .chart { width: 100%; height: auto; display: block; margin: 6px 0 2px; }
+  .chart-inline { display: inline-block; vertical-align: middle; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .good { color: #16a34a; } .warn { color: #d97706; } .bad { color: #dc2626; }
+  .legend { font-size: 9.5px; color: #64748b; }
+  .legend span { display: inline-block; margin-right: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .foot { margin-top: 10px; font-size: 8.5px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+  .verdict { border-left: 4px solid #16a34a; background: #f0fdf4; padding: 10px 12px; border-radius: 0 7px 7px 0; }
+  .caution { border-left: 4px solid #d97706; background: #fffbeb; padding: 10px 12px; border-radius: 0 7px 7px 0; }
+  ol { margin: 6px 0 0 16px; padding: 0; }
+</style></head><body>
+
+<section class="page">
+  <p class="muted" style="font-size:9.5px;letter-spacing:1.2px"><span class="en">3asari3 · iDeliver III</span></p>
+  <h1>Delivery Business — Feasibility Study</h1>
+  <p class="lead muted">Trading from 01/07/2026 to 23/08/2026 · 54 days of operation<br>
+  Every figure read directly from the operating database on 23/08/2026.</p>
+  <div class="rule"></div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="l">Orders delivered</div><div class="n">6,235</div><div class="s">of 6,301 raised · 98.95%</div></div>
+    <div class="kpi"><div class="l">Our revenue</div><div class="n">USD 33,784.85</div><div class="s">USD 625.65 per day</div></div>
+    <div class="kpi"><div class="l">Revenue per order</div><div class="n">USD 5.36</div><div class="s">3,552 orders / month</div></div>
+    <div class="kpi"><div class="l">Cash collected</div><div class="n">USD 107,878.73</div><div class="s">93.94% of what was charged</div></div>
+  </div>
+
+  <h3>The finding</h3>
+  <div class="verdict">
+    <p style="margin:0"><b>The operation is viable on its own revenue.</b> In 54 days it moved 6,301 orders — 116.69 a day — and kept <b>USD 33,784.85</b> of the USD 114,842.37 it handled. That is <b>USD 19,044.65 a month</b>, or USD 228,360.56 annualised at the current run-rate, against a platform cost of USD 600 a year: the software is <b>0.26%</b> of revenue.</p>
+    <p style="margin:6px 0 0">The business breaks even while the all-in cost of making a delivery stays under <b>USD 5.36</b>. At 13 active drivers each completing about 8.88 deliveries a day, that is the number to manage.</p>
+  </div>
+
+  <h3>Orders per day</h3>
+  <svg viewBox="0 0 700 190" class="chart" dir="ltr">
+    <line x1="46" x2="690" y1="164.0" y2="164.0" stroke="#e2e8f0"/>
+      <text x="40" y="167.0" text-anchor="end" font-size="9" fill="#64748b">0</text><line x1="46" x2="690" y1="88.0" y2="88.0" stroke="#e2e8f0"/>
+      <text x="40" y="91.0" text-anchor="end" font-size="9" fill="#64748b">98</text><line x1="46" x2="690" y1="12.0" y2="12.0" stroke="#e2e8f0"/>
+      <text x="40" y="15.0" text-anchor="end" font-size="9" fill="#64748b">195</text>
+    <path d="M46.0,72.0 L58.2,97.0 L70.3,85.3 L82.5,52.5 L94.6,87.6 L106.8,84.5 L118.9,75.9 L131.1,68.9 L143.2,77.5 L155.4,80.6 L167.5,51.0 L179.7,88.4 L191.8,71.2 L204.0,91.5 L216.1,89.2 L228.3,71.2 L240.4,69.7 L252.6,68.9 L264.7,103.2 L276.9,65.0 L289.0,86.1 L301.2,82.2 L313.3,44.0 L325.5,45.5 L337.6,67.3 L349.8,89.2 L361.9,89.2 L374.1,90.7 L386.2,70.5 L398.4,31.5 L410.5,87.6 L422.7,75.1 L434.8,91.5 L447.0,89.9 L459.1,61.9 L471.3,58.8 L483.4,12.0 L495.6,77.5 L507.7,67.3 L519.9,75.1 L532.0,65.8 L544.2,56.4 L556.3,53.3 L568.5,62.7 L580.6,46.3 L592.8,99.3 L604.9,68.9 L617.1,77.5 L629.2,79.0 L641.4,52.5 L653.5,66.6 L665.7,75.1 L677.8,70.5 L690.0,126.6 L690.0,164 L46,164 Z" fill="#2563eb" fill-opacity="0.12"/>
+    <path d="M46.0,72.0 L58.2,97.0 L70.3,85.3 L82.5,52.5 L94.6,87.6 L106.8,84.5 L118.9,75.9 L131.1,68.9 L143.2,77.5 L155.4,80.6 L167.5,51.0 L179.7,88.4 L191.8,71.2 L204.0,91.5 L216.1,89.2 L228.3,71.2 L240.4,69.7 L252.6,68.9 L264.7,103.2 L276.9,65.0 L289.0,86.1 L301.2,82.2 L313.3,44.0 L325.5,45.5 L337.6,67.3 L349.8,89.2 L361.9,89.2 L374.1,90.7 L386.2,70.5 L398.4,31.5 L410.5,87.6 L422.7,75.1 L434.8,91.5 L447.0,89.9 L459.1,61.9 L471.3,58.8 L483.4,12.0 L495.6,77.5 L507.7,67.3 L519.9,75.1 L532.0,65.8 L544.2,56.4 L556.3,53.3 L568.5,62.7 L580.6,46.3 L592.8,99.3 L604.9,68.9 L617.1,77.5 L629.2,79.0 L641.4,52.5 L653.5,66.6 L665.7,75.1 L677.8,70.5 L690.0,126.6" fill="none" stroke="#2563eb" stroke-width="1.6"/>
+    <path d="M46.0,72.0 L58.2,84.5 L70.3,84.8 L82.5,76.7 L94.6,78.9 L106.8,79.8 L118.9,79.3 L131.1,78.8 L143.2,76.0 L155.4,75.4 L167.5,75.1 L179.7,75.2 L191.8,73.4 L204.0,75.6 L216.1,78.5 L228.3,77.6 L240.4,76.0 L252.6,78.6 L264.7,80.7 L276.9,79.8 L289.0,79.0 L301.2,78.0 L313.3,74.1 L325.5,70.7 L337.6,70.5 L349.8,68.5 L361.9,71.9 L374.1,72.6 L386.2,70.9 L398.4,69.1 L410.5,75.1 L422.7,76.3 L434.8,76.6 L447.0,76.7 L459.1,72.6 L471.3,70.9 L483.4,68.1 L495.6,66.7 L507.7,65.6 L519.9,63.2 L532.0,59.8 L544.2,59.0 L556.3,58.2 L568.5,65.5 L580.6,61.0 L592.8,65.6 L604.9,64.7 L617.1,66.3 L629.2,69.6 L641.4,69.5 L653.5,70.0 L665.7,74.1 L677.8,70.0 L690.0,78.3" fill="none" stroke="#0f172a" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.75"/>
+    <text x="46.0" y="182" text-anchor="middle" font-size="8" fill="#64748b">01/07</text><text x="118.9" y="182" text-anchor="middle" font-size="8" fill="#64748b">07/07</text><text x="191.8" y="182" text-anchor="middle" font-size="8" fill="#64748b">13/07</text><text x="264.7" y="182" text-anchor="middle" font-size="8" fill="#64748b">19/07</text><text x="337.6" y="182" text-anchor="middle" font-size="8" fill="#64748b">25/07</text><text x="410.5" y="182" text-anchor="middle" font-size="8" fill="#64748b">31/07</text><text x="483.4" y="182" text-anchor="middle" font-size="8" fill="#64748b">06/08</text><text x="556.3" y="182" text-anchor="middle" font-size="8" fill="#64748b">12/08</text><text x="629.2" y="182" text-anchor="middle" font-size="8" fill="#64748b">18/08</text><text x="690.0" y="182" text-anchor="middle" font-size="8" fill="#64748b">23/08</text>
+  </svg>
+  <p class="legend"><span><i class="dot" style="background:#2563eb"></i>Orders raised</span>
+    <span><i class="dot" style="background:#0f172a"></i>7-day average</span></p>
+
+  <div class="two" style="margin-top:12px">
+    <div>
+      <h3>Where the work comes from</h3>
+      <svg viewBox="0 0 340 74" class="chart" dir="ltr">
+    <text x="0" y="17" font-size="10" fill="#0f172a">Call centre</text>
+        <rect x="168" y="7" width="80.0" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="17" text-anchor="end" font-size="10" fill="#64748b">6,041</text><text x="0" y="39" font-size="10" fill="#0f172a">Partner</text>
+        <rect x="168" y="29" width="3.0" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="336" y="39" text-anchor="end" font-size="10" fill="#64748b">230</text><text x="0" y="61" font-size="10" fill="#0f172a">Customer app</text>
+        <rect x="168" y="51" width="2.0" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="61" text-anchor="end" font-size="10" fill="#64748b">30</text>
+  </svg>
+      <p class="muted" style="font-size:9.5px">The call centre still raises 95.87% of all orders. The customer app and the partner portal together account for 4.13% — the growth room.</p>
+    </div>
+    <div>
+      <h3>Month on month</h3>
+      <table>
+        <thead><tr><th>Month</th><th class="n">Days</th><th class="n">Orders</th><th class="n">Orders/day</th><th class="n">Revenue/day</th></tr></thead>
+        <tbody><tr><td class="n">2026-07</td><td class="n">31</td><td class="n">3,527</td>
+          <td class="n">113.77</td><td class="n">611.67</td></tr><tr><td class="n">2026-08</td><td class="n">23</td><td class="n">2,774</td>
+          <td class="n">120.61</td><td class="n">637.46</td></tr></tbody>
+      </table>
+      <p class="muted" style="font-size:9.5px">August is running <b><b class="good">6.01%</b></b> ahead of July on orders per day and <b><b class="good">4.22%</b></b> ahead on revenue per day, on 23 days of trading.</p>
+    </div>
+  </div>
+
+  <div class="foot">Prepared for 3asari3 · Figures in USD; LBP converted at 89,500 LBP/USD (stated assumption).</div>
+</section>
+
+<section class="page">
+  <h2>Volume, revenue and what the business actually keeps</h2>
+
+  <h3>Revenue per day (USD equivalent)</h3>
+  <svg viewBox="0 0 700 190" class="chart" dir="ltr">
+    <line x1="46" x2="690" y1="164.0" y2="164.0" stroke="#e2e8f0"/>
+      <text x="40" y="167.0" text-anchor="end" font-size="9" fill="#64748b">0</text><line x1="46" x2="690" y1="88.0" y2="88.0" stroke="#e2e8f0"/>
+      <text x="40" y="91.0" text-anchor="end" font-size="9" fill="#64748b">296</text><line x1="46" x2="690" y1="12.0" y2="12.0" stroke="#e2e8f0"/>
+      <text x="40" y="15.0" text-anchor="end" font-size="9" fill="#64748b">593</text>
+    <path d="M46.0,87.9 L58.2,108.6 L70.3,79.9 L82.5,53.0 L94.6,112.7 L106.8,63.0 L118.9,84.3 L131.1,34.8 L143.2,95.8 L155.4,99.6 L167.5,44.0 L179.7,97.3 L191.8,66.8 L204.0,109.6 L216.1,85.8 L228.3,50.2 L240.4,59.1 L252.6,75.5 L264.7,69.9 L276.9,89.6 L289.0,84.3 L301.2,86.4 L313.3,12.5 L325.5,57.9 L337.6,76.3 L349.8,101.9 L361.9,99.7 L374.1,97.4 L386.2,63.8 L398.4,12.0 L410.5,62.9 L422.7,42.3 L434.8,111.7 L447.0,28.0 L459.1,46.9 L471.3,17.8 L483.4,12.1 L495.6,89.1 L507.7,85.6 L519.9,81.3 L532.0,59.3 L544.2,71.0 L556.3,44.4 L568.5,93.8 L580.6,45.4 L592.8,117.6 L604.9,107.6 L617.1,76.9 L629.2,90.3 L641.4,20.4 L653.5,65.6 L665.7,55.1 L677.8,100.4 L690.0,146.6 L690.0,164 L46,164 Z" fill="#16a34a" fill-opacity="0.12"/>
+    <path d="M46.0,87.9 L58.2,108.6 L70.3,79.9 L82.5,53.0 L94.6,112.7 L106.8,63.0 L118.9,84.3 L131.1,34.8 L143.2,95.8 L155.4,99.6 L167.5,44.0 L179.7,97.3 L191.8,66.8 L204.0,109.6 L216.1,85.8 L228.3,50.2 L240.4,59.1 L252.6,75.5 L264.7,69.9 L276.9,89.6 L289.0,84.3 L301.2,86.4 L313.3,12.5 L325.5,57.9 L337.6,76.3 L349.8,101.9 L361.9,99.7 L374.1,97.4 L386.2,63.8 L398.4,12.0 L410.5,62.9 L422.7,42.3 L434.8,111.7 L447.0,28.0 L459.1,46.9 L471.3,17.8 L483.4,12.1 L495.6,89.1 L507.7,85.6 L519.9,81.3 L532.0,59.3 L544.2,71.0 L556.3,44.4 L568.5,93.8 L580.6,45.4 L592.8,117.6 L604.9,107.6 L617.1,76.9 L629.2,90.3 L641.4,20.4 L653.5,65.6 L665.7,55.1 L677.8,100.4 L690.0,146.6" fill="none" stroke="#16a34a" stroke-width="1.6"/>
+    <path d="M46.0,87.9 L58.2,98.2 L70.3,92.1 L82.5,82.3 L94.6,88.4 L106.8,84.2 L118.9,84.2 L131.1,76.6 L143.2,74.8 L155.4,77.6 L167.5,76.3 L179.7,74.1 L191.8,74.7 L204.0,78.3 L216.1,85.6 L228.3,79.1 L240.4,73.3 L252.6,77.8 L264.7,73.9 L276.9,77.1 L289.0,73.5 L301.2,73.6 L313.3,68.2 L325.5,68.0 L337.6,68.1 L349.8,72.7 L361.9,74.1 L374.1,76.0 L386.2,72.8 L398.4,72.7 L410.5,73.4 L422.7,68.6 L434.8,70.0 L447.0,59.7 L459.1,52.5 L471.3,45.9 L483.4,46.0 L495.6,49.7 L507.7,55.9 L519.9,51.6 L532.0,56.0 L544.2,59.5 L556.3,63.2 L568.5,74.9 L580.6,68.7 L592.8,73.2 L604.9,77.0 L617.1,79.5 L629.2,82.3 L641.4,78.9 L653.5,74.8 L665.7,76.2 L677.8,73.8 L690.0,79.3" fill="none" stroke="#0f172a" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.75"/>
+    <text x="46.0" y="182" text-anchor="middle" font-size="8" fill="#64748b">01/07</text><text x="118.9" y="182" text-anchor="middle" font-size="8" fill="#64748b">07/07</text><text x="191.8" y="182" text-anchor="middle" font-size="8" fill="#64748b">13/07</text><text x="264.7" y="182" text-anchor="middle" font-size="8" fill="#64748b">19/07</text><text x="337.6" y="182" text-anchor="middle" font-size="8" fill="#64748b">25/07</text><text x="410.5" y="182" text-anchor="middle" font-size="8" fill="#64748b">31/07</text><text x="483.4" y="182" text-anchor="middle" font-size="8" fill="#64748b">06/08</text><text x="556.3" y="182" text-anchor="middle" font-size="8" fill="#64748b">12/08</text><text x="629.2" y="182" text-anchor="middle" font-size="8" fill="#64748b">18/08</text><text x="690.0" y="182" text-anchor="middle" font-size="8" fill="#64748b">23/08</text>
+  </svg>
+  <p class="legend"><span><i class="dot" style="background:#16a34a"></i>Delivery fees + commission earned that day</span>
+    <span><i class="dot" style="background:#0f172a"></i>7-day average</span></p>
+
+  <h3>Money handled versus money kept</h3>
+  <svg viewBox="0 0 700 96" class="chart" dir="ltr">
+    <text x="0" y="17" font-size="10" fill="#0f172a">Goods & packages handled</text>
+        <rect x="168" y="7" width="332.1" height="13" rx="2.5" fill="#94a3b8" fill-opacity="0.85"/>
+        <text x="696" y="17" text-anchor="end" font-size="10" fill="#64748b">81,436</text><text x="0" y="39" font-size="10" fill="#0f172a">Delivery fees charged</text>
+        <rect x="168" y="29" width="136.3" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="696" y="39" text-anchor="end" font-size="10" fill="#64748b">33,407</text><text x="0" y="61" font-size="10" fill="#0f172a">Cash collected</text>
+        <rect x="168" y="51" width="440.0" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="61" text-anchor="end" font-size="10" fill="#64748b">107,879</text><text x="0" y="83" font-size="10" fill="#0f172a">Our revenue kept</text>
+        <rect x="168" y="73" width="137.8" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="696" y="83" text-anchor="end" font-size="10" fill="#64748b">33,785</text>
+  </svg>
+  <p class="muted">Most of what the business touches is not its own. Goods and packages worth <b>USD 81,435.71</b> passed through in 54 days; the delivery fees on top of them — <b>USD 33,406.66</b> — are what the business earns for moving them, together with USD 216.85 of shop commission and USD 161.34 of advertising. Reading the handled figure as turnover would overstate the business by <b>3.40×</b>.</p>
+
+  <table>
+    <thead><tr><th>Revenue line</th><th class="n">USD</th><th class="n">Share</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Delivery fees</td><td class="n">33,406.66</td><td class="n">98.88%</td><td class="muted">Charged per order for the delivery itself</td></tr>
+      <tr><td>Shop commission</td><td class="n">216.85</td><td class="n">0.64%</td><td class="muted">Earned on goods bought on a customer's behalf</td></tr>
+      <tr><td>Advertising</td><td class="n">161.34</td><td class="n">0.48%</td><td class="muted">Story placements sold to partners</td></tr>
+      <tr><td><b>Total</b></td><td class="n"><b>33,784.85</b></td><td class="n"><b>100.00%</b></td><td class="muted">USD 5.36 per order</td></tr>
+    </tbody>
+  </table>
+
+  <div class="caution">
+    <p style="margin:0"><b>One line is not being collected.</b> Of USD 216.85 of commission earned on procurement invoices, only <b>USD 3.41</b> — 1.57% — has been marked collected. It is small against fees today, but it is the line that grows with the shop module, and an uncollected commission is indistinguishable from one that was never charged.</p>
+  </div>
+
+  <h3>Fee coverage</h3>
+  <p>6,044 of 6,301 orders carry a delivery fee. The remaining <b>257</b> (4.08%) went out with none — free deliveries, waived charges, or a fee left blank at entry. At the average of USD 5.36 that is <b>USD 1,377.52</b> of foregone revenue over 54 days.</p>
+
+  <div class="foot">Revenue counts what the business keeps. Goods, packages and shop invoices are customers’ money in transit and are excluded.</div>
+</section>
+
+<section class="page">
+  <h2>Cash, collection and the customer base</h2>
+
+  <div class="two">
+    <div>
+      <h3>Who holds the money</h3>
+      <p style="text-align:center;margin:10px 0">
+        <svg viewBox="0 0 150 150" width="150" height="150" class="chart-inline" dir="ltr"><path d="M75.0,13.0 A62,62 0 1 1 66.2,13.6" fill="none" stroke="#2563eb" stroke-width="26"/><path d="M66.2,13.6 A62,62 0 0 1 75.0,13.0" fill="none" stroke="#16a34a" stroke-width="26"/></svg>
+      </p>
+      <p class="legend" style="text-align:center">
+        <span><i class="dot" style="background:#2563eb"></i>Drivers 97.74%</span>
+        <span><i class="dot" style="background:#16a34a"></i>Office 2.26%</span></p>
+      <p class="muted">Drivers collected <b>USD 105,437.57</b> of the USD 107,878.73 taken in — about <b>USD 150.20 per driver per day</b> in hand. That is the single largest operational risk in the model, and the reason the driver-dues and cashier-box controls exist.</p>
+    </div>
+    <div>
+      <h3>Collection performance</h3>
+      <table>
+        <thead><tr><th>Measure</th><th class="n">USD</th></tr></thead>
+        <tbody>
+          <tr><td>Charged (goods + fees)</td><td class="n">114,842.37</td></tr>
+          <tr><td>Collected</td><td class="n">107,878.73</td></tr>
+          <tr><td>Collection rate</td><td class="n"><b class="good">93.94%</b></td></tr>
+          <tr><td>Outstanding</td><td class="n">6,963.64</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">A 93.94% collection rate on cash-on-delivery is the number that makes this business fundable: the working-capital cycle is days, not months, and there is no receivables book to speak of beyond the credit customers.</p>
+    </div>
+  </div>
+
+  <h3>The customer base</h3>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Customers served</div><div class="n">1,278</div><div class="s">4.93 orders each</div></div>
+    <div class="kpi"><div class="l">Came back</div><div class="n">49.77%</div><div class="s">636 of 1,278</div></div>
+    <div class="kpi"><div class="l">Orders from repeats</div><div class="n">89.81%</div><div class="s">5,659 orders</div></div>
+    <div class="kpi"><div class="l">Top-10 concentration</div><div class="n">25.38%</div><div class="s">of all orders</div></div>
+  </div>
+  <p><b>Half the customers came back, and they bring nine orders in ten.</b> A delivery business lives or dies on that ratio: acquiring 1,278 customers is a cost paid once, and 89.81% of the volume since has come from customers already won. The counterweight is concentration — the ten largest accounts alone are 25.38% of orders, so losing two or three of them would be felt immediately.</p>
+
+  <div class="two" style="margin-top:8px">
+    <div><h3>Busiest accounts</h3>
+      <svg viewBox="0 0 340 140" class="chart" dir="ltr">
+    <text x="0" y="17" font-size="10" fill="#0f172a">PTN-000011</text>
+        <rect x="168" y="7" width="80.0" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="17" text-anchor="end" font-size="10" fill="#64748b">398</text><text x="0" y="39" font-size="10" fill="#0f172a">PTN-000057</text>
+        <rect x="168" y="29" width="51.7" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="39" text-anchor="end" font-size="10" fill="#64748b">257</text><text x="0" y="61" font-size="10" fill="#0f172a">CST-000588</text>
+        <rect x="168" y="51" width="37.2" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="61" text-anchor="end" font-size="10" fill="#64748b">185</text><text x="0" y="83" font-size="10" fill="#0f172a">CST-000055</text>
+        <rect x="168" y="73" width="29.5" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="83" text-anchor="end" font-size="10" fill="#64748b">147</text><text x="0" y="105" font-size="10" fill="#0f172a">CST-000062</text>
+        <rect x="168" y="95" width="29.3" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="105" text-anchor="end" font-size="10" fill="#64748b">146</text><text x="0" y="127" font-size="10" fill="#0f172a">PTN-000007</text>
+        <rect x="168" y="117" width="25.7" height="13" rx="2.5" fill="#2563eb" fill-opacity="0.85"/>
+        <text x="336" y="127" text-anchor="end" font-size="10" fill="#64748b">128</text>
+  </svg></div>
+    <div><h3>Busiest partners (packages)</h3>
+      <svg viewBox="0 0 340 140" class="chart" dir="ltr">
+    <text x="0" y="17" font-size="10" fill="#0f172a">PTN-000011</text>
+        <rect x="168" y="7" width="80.0" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="17" text-anchor="end" font-size="10" fill="#64748b">399</text><text x="0" y="39" font-size="10" fill="#0f172a">PTN-000007</text>
+        <rect x="168" y="29" width="25.7" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="39" text-anchor="end" font-size="10" fill="#64748b">128</text><text x="0" y="61" font-size="10" fill="#0f172a">PTN-000023</text>
+        <rect x="168" y="51" width="9.4" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="61" text-anchor="end" font-size="10" fill="#64748b">47</text><text x="0" y="83" font-size="10" fill="#0f172a">PTN-000013</text>
+        <rect x="168" y="73" width="8.4" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="83" text-anchor="end" font-size="10" fill="#64748b">42</text><text x="0" y="105" font-size="10" fill="#0f172a">PTN-000009</text>
+        <rect x="168" y="95" width="7.4" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="105" text-anchor="end" font-size="10" fill="#64748b">37</text><text x="0" y="127" font-size="10" fill="#0f172a">PTN-000022</text>
+        <rect x="168" y="117" width="6.0" height="13" rx="2.5" fill="#d97706" fill-opacity="0.85"/>
+        <text x="336" y="127" text-anchor="end" font-size="10" fill="#64748b">30</text>
+  </svg></div>
+  </div>
+
+  <div class="foot">65 partners handed us 938 packages in the period.</div>
+</section>
+
+<section class="page">
+  <h2>Capacity, cost and the break-even</h2>
+
+  <h3>Fleet</h3>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Drivers used</div><div class="n">13</div><div class="s">of 15 on file</div></div>
+    <div class="kpi"><div class="l">Deliveries / driver / day</div><div class="n">8.88</div><div class="s">across 54 days</div></div>
+    <div class="kpi"><div class="l">Revenue / driver / day</div><div class="n">USD 48.13</div><div class="s">before driver cost</div></div>
+    <div class="kpi"><div class="l">Cash / driver / day</div><div class="n">USD 150.20</div><div class="s">held before settlement</div></div>
+  </div>
+  <svg viewBox="0 0 700 184" class="chart" dir="ltr">
+    <text x="0" y="17" font-size="10" fill="#0f172a">Ahmad Bader</text>
+        <rect x="168" y="7" width="440.0" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="17" text-anchor="end" font-size="10" fill="#64748b">748</text><text x="0" y="39" font-size="10" fill="#0f172a">Fahed Ismaiil</text>
+        <rect x="168" y="29" width="407.1" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="39" text-anchor="end" font-size="10" fill="#64748b">692</text><text x="0" y="61" font-size="10" fill="#0f172a">Aabass Diab</text>
+        <rect x="168" y="51" width="405.9" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="61" text-anchor="end" font-size="10" fill="#64748b">690</text><text x="0" y="83" font-size="10" fill="#0f172a">Mosaab Chouaab</text>
+        <rect x="168" y="73" width="389.4" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="83" text-anchor="end" font-size="10" fill="#64748b">662</text><text x="0" y="105" font-size="10" fill="#0f172a">Yaeel Khadour</text>
+        <rect x="168" y="95" width="368.8" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="105" text-anchor="end" font-size="10" fill="#64748b">627</text><text x="0" y="127" font-size="10" fill="#0f172a">Wassim Lcheikh</text>
+        <rect x="168" y="117" width="361.8" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="127" text-anchor="end" font-size="10" fill="#64748b">615</text><text x="0" y="149" font-size="10" fill="#0f172a">Fahed Fawaz</text>
+        <rect x="168" y="139" width="321.8" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="149" text-anchor="end" font-size="10" fill="#64748b">547</text><text x="0" y="171" font-size="10" fill="#0f172a">Nassim Slaymen</text>
+        <rect x="168" y="161" width="268.2" height="13" rx="2.5" fill="#16a34a" fill-opacity="0.85"/>
+        <text x="696" y="171" text-anchor="end" font-size="10" fill="#64748b">456</text>
+  </svg>
+  <p class="muted">Work is spread unevenly: the busiest driver carries 11.87% of all deliveries while the quietest of the eight carries 7.24%. Levelling that is capacity that already exists and is not being used.</p>
+
+  <h3>What the database cannot tell us</h3>
+  <p>The software records every order, fee and collection, so the revenue side of this study is measured, not estimated. It does not record <b>what the operation costs</b> — driver pay, fuel, phones, rent, office salaries. Rather than invent a figure, the table below models profit across a range of driver costs and office overheads. The only cost the system does know is the platform itself: <b>USD 600 a year</b>, or USD 88.77 for this period — 0.26% of revenue.</p>
+
+  <h3>Monthly profit at 3,552 orders / month · revenue USD 19,044.65</h3>
+  <table>
+    <thead><tr><th>Driver cost</th><th class="n">Fleet / month</th>
+      <th class="n">No overhead</th><th class="n">+ USD 500</th><th class="n">+ USD 1,000</th><th class="n">+ USD 1,500</th>
+      <th class="n">Break-even orders</th></tr></thead>
+    <tbody><tr>
+      <td>USD 20 / driver / day</td>
+      <td class="n">6,760</td>
+      <td class="n good">12,235</td>
+      <td class="n good">11,735</td>
+      <td class="n good">11,235</td>
+      <td class="n good">10,735</td>
+      <td class="n">1,271</td></tr><tr>
+      <td>USD 25 / driver / day</td>
+      <td class="n">8,450</td>
+      <td class="n good">10,545</td>
+      <td class="n good">10,045</td>
+      <td class="n good">9,545</td>
+      <td class="n good">9,045</td>
+      <td class="n">1,586</td></tr><tr>
+      <td>USD 30 / driver / day</td>
+      <td class="n">10,140</td>
+      <td class="n good">8,855</td>
+      <td class="n good">8,355</td>
+      <td class="n good">7,855</td>
+      <td class="n good">7,355</td>
+      <td class="n">1,901</td></tr><tr>
+      <td>USD 35 / driver / day</td>
+      <td class="n">11,830</td>
+      <td class="n good">7,165</td>
+      <td class="n good">6,665</td>
+      <td class="n good">6,165</td>
+      <td class="n good">5,665</td>
+      <td class="n">2,216</td></tr><tr>
+      <td>USD 40 / driver / day</td>
+      <td class="n">13,520</td>
+      <td class="n good">5,475</td>
+      <td class="n good">4,975</td>
+      <td class="n good">4,475</td>
+      <td class="n good">3,975</td>
+      <td class="n">2,532</td></tr></tbody>
+  </table>
+  <svg viewBox="0 0 700 190" class="chart" dir="ltr">
+    <line x1="52" x2="690" y1="160" y2="160" stroke="#e2e8f0"/>
+        <text x="46" y="163" text-anchor="end" font-size="9" fill="#64748b">0</text><line x1="52" x2="690" y1="86" y2="86" stroke="#e2e8f0"/>
+        <text x="46" y="89" text-anchor="end" font-size="9" fill="#64748b">6,117</text><line x1="52" x2="690" y1="12" y2="12" stroke="#e2e8f0"/>
+        <text x="46" y="15" text-anchor="end" font-size="9" fill="#64748b">12,235</text>
+    <rect x="63.8" y="12.0" width="23.0" height="148.0" rx="2" fill="#16a34a" fill-opacity="0.9"/><rect x="89.8" y="18.0" width="23.0" height="142.0" rx="2" fill="#2563eb" fill-opacity="0.9"/><rect x="115.8" y="24.1" width="23.0" height="135.9" rx="2" fill="#d97706" fill-opacity="0.9"/><rect x="141.8" y="30.1" width="23.0" height="129.9" rx="2" fill="#94a3b8" fill-opacity="0.9"/><rect x="191.4" y="32.4" width="23.0" height="127.6" rx="2" fill="#16a34a" fill-opacity="0.9"/><rect x="217.4" y="38.5" width="23.0" height="121.5" rx="2" fill="#2563eb" fill-opacity="0.9"/><rect x="243.4" y="44.5" width="23.0" height="115.5" rx="2" fill="#d97706" fill-opacity="0.9"/><rect x="269.4" y="50.6" width="23.0" height="109.4" rx="2" fill="#94a3b8" fill-opacity="0.9"/><rect x="319.0" y="52.9" width="23.0" height="107.1" rx="2" fill="#16a34a" fill-opacity="0.9"/><rect x="345.0" y="58.9" width="23.0" height="101.1" rx="2" fill="#2563eb" fill-opacity="0.9"/><rect x="371.0" y="65.0" width="23.0" height="95.0" rx="2" fill="#d97706" fill-opacity="0.9"/><rect x="397.0" y="71.0" width="23.0" height="89.0" rx="2" fill="#94a3b8" fill-opacity="0.9"/><rect x="446.6" y="73.3" width="23.0" height="86.7" rx="2" fill="#16a34a" fill-opacity="0.9"/><rect x="472.6" y="79.4" width="23.0" height="80.6" rx="2" fill="#2563eb" fill-opacity="0.9"/><rect x="498.6" y="85.4" width="23.0" height="74.6" rx="2" fill="#d97706" fill-opacity="0.9"/><rect x="524.6" y="91.5" width="23.0" height="68.5" rx="2" fill="#94a3b8" fill-opacity="0.9"/><rect x="574.2" y="93.8" width="23.0" height="66.2" rx="2" fill="#16a34a" fill-opacity="0.9"/><rect x="600.2" y="99.8" width="23.0" height="60.2" rx="2" fill="#2563eb" fill-opacity="0.9"/><rect x="626.2" y="105.9" width="23.0" height="54.1" rx="2" fill="#d97706" fill-opacity="0.9"/><rect x="652.2" y="111.9" width="23.0" height="48.1" rx="2" fill="#94a3b8" fill-opacity="0.9"/>
+    <text x="115.8" y="180" text-anchor="middle" font-size="9" fill="#0f172a">$20</text><text x="243.4" y="180" text-anchor="middle" font-size="9" fill="#0f172a">$25</text><text x="371.0" y="180" text-anchor="middle" font-size="9" fill="#0f172a">$30</text><text x="498.6" y="180" text-anchor="middle" font-size="9" fill="#0f172a">$35</text><text x="626.2" y="180" text-anchor="middle" font-size="9" fill="#0f172a">$40</text>
+  </svg>
+  <p class="legend"><span><i class="dot" style="background:#16a34a"></i>No office overhead</span>
+    <span><i class="dot" style="background:#2563eb"></i>+ USD 500</span>
+    <span><i class="dot" style="background:#d97706"></i>+ USD 1,000</span>
+    <span><i class="dot" style="background:#94a3b8"></i>+ USD 1,500</span></p>
+
+  <div class="verdict">
+    <p style="margin:0"><b>The operation clears its costs across every case modelled.</b> Even at USD 40 per driver per day with USD 1,500 of monthly office overhead, the month closes at <b>USD 3,974.65</b>. The margin comes from volume the fleet is already carrying, not from a price rise: 8.88 deliveries per driver per day at USD 5.36 each.</p>
+  </div>
+
+  <div class="foot">Fleet cost assumes 13 drivers working 26 days a month. Break-even orders = the volume that covers fleet and platform cost alone.</div>
+</section>
+
+<section class="page">
+  <h2>What to watch, and how this was measured</h2>
+
+  <h3>Risks the data itself shows</h3>
+  <table>
+    <thead><tr><th style="width:22%">Risk</th><th style="width:26%">What the data says</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td><b>Cash held by drivers</b></td><td>USD 105,437.57 collected in the field, 97.74% of all cash</td><td class="muted">About USD 150.20 per driver per day in hand before settlement. Daily reconciliation is not administration here; it is the control.</td></tr>
+      <tr><td><b>Customer concentration</b></td><td>Top 10 accounts = 25.38% of orders</td><td class="muted">Losing two or three large accounts would show up in the week it happened. Widening the base matters more than raising the fee.</td></tr>
+      <tr><td><b>One channel</b></td><td>95.87% of orders still come through the call centre</td><td class="muted">Every order costs staff time to key in. The customer app and partner portal are the only routes that scale without adding staff.</td></tr>
+      <tr><td><b>Commission not collected</b></td><td>1.57% of USD 216.85 earned</td><td class="muted">A small line today, but the one that grows with the shop module. Uncollected is indistinguishable from never charged.</td></tr>
+      <tr><td><b>Free deliveries</b></td><td>257 orders (4.08%) carry no fee</td><td class="muted">Worth about USD 1,377.52 over 54 days. Deliberate or not, it should be a decision rather than a default.</td></tr>
+      <tr><td><b>Currency</b></td><td>Both USD and LBP in daily use</td><td class="muted">This study converts at 89,500 LBP/USD. A 10% move in the rate moves the reported revenue materially — every LBP figure should be read with that in mind.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What would move the numbers most</h3>
+  <ol>
+    <li style="margin:4px 0"><b>Level the fleet.</b> The busiest driver does several times the work of the quietest. Bringing the bottom half up to the median is capacity already paid for.</li>
+    <li style="margin:4px 0"><b>Move orders off the call centre.</b> 4.13% of orders arrive through the app or the portal today. Every point moved is staff time returned.</li>
+    <li style="margin:4px 0"><b>Collect the commission.</b> 98.43% of it is still outstanding; the mechanism exists and is not being used.</li>
+    <li style="margin:4px 0"><b>Decide the free deliveries.</b> 4.08% of orders carry no fee — worth roughly USD 776.51 a month.</li>
+  </ol>
+
+  <h3>Method</h3>
+  <p class="muted">Every figure was read directly from the operating database on 23/08/2026, covering orders created between 01/07/2026 and 23/08/2026 inclusive — 54 days. 6,301 orders were examined, together with 938 packages, the retail invoices raised against them, and 5,965 payment collections. No sampling, and no projection except where a line is explicitly labelled as annualised or a per-month run-rate.</p>
+  <p class="muted"><b>Revenue</b> means what the business keeps: delivery fees, shop commission and advertising. Goods, packages and shop invoices are customers’ money in transit and are excluded from it — they appear only as “handled”. <b>Cancelled and failed orders</b> are excluded from volume and revenue. <b>LBP</b> is converted at 89,500 LBP/USD, stated here because the system does not store a rate; every LBP-denominated figure in this study depends on it. <b>Costs</b> other than the platform subscription are not recorded by the system and are modelled as a range rather than asserted.</p>
+
+  <div class="foot">iDeliver III · Feasibility study prepared 23/08/2026 · Data source: live operating database · Software platform by _NXCORE</div>
+</section>
+
+</body></html>

@@ -3087,9 +3087,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         </div>
       )}
 
-      {/* Toolbar — sticky top bar holding search, filters and actions */}
+      {/* Toolbar — sticky top bar holding search, filters and actions.
+          Sits ABOVE the list's frozen header (z-20): the filter pull-downs open
+          from inside this bar, and at equal z-index the header — later in the
+          DOM — would paint over them. */}
       <div ref={toolbarRef}
-        className="sticky top-0 z-20 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
+        className="sticky top-0 z-30 rounded-xl border border-blue-400/20 bg-gradient-to-r from-blue-950/80 via-slate-900/75 to-slate-800/80 backdrop-blur-md shadow-lg shadow-black/50 px-4 py-3 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
             <SearchField

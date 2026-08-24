@@ -47,7 +47,15 @@ app.whenReady().then(async () => {
     const out = src.replace(/\.html$/i, '.pdf')
 
     const win = new BrowserWindow({ show: false, width: 1240, height: 1754 })
-    await win.loadFile(src)
+    /* Chromium occasionally refuses a second file:// load in the same session
+       with ERR_FAILED, right after the previous window was destroyed. One
+       retry after a beat is enough, and is cheaper than failing a batch. */
+    try {
+      await win.loadFile(src)
+    } catch (e) {
+      await new Promise(r => setTimeout(r, 400))
+      await win.loadFile(src)
+    }
     // Give webfonts and any @print rules a moment to settle before capture.
     await new Promise(r => setTimeout(r, 1200))
 
@@ -59,6 +67,7 @@ app.whenReady().then(async () => {
     })
     fs.writeFileSync(out, pdf)
     win.destroy()
+    await new Promise(r => setTimeout(r, 250))     // let the window go before the next
     console.log(`${path.basename(out)}  ${(pdf.length / 1024).toFixed(0)} KB`)
   }
   app.quit()
