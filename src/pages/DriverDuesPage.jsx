@@ -7,6 +7,7 @@ import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, 
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* Cash is reconciled per currency. Adding a new currency (it must exist in the
    DB currency_type enum) only needs to be listed here — zero-value currencies
@@ -26,6 +27,21 @@ const EMPTY_FILTERS = {
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
+
+/* Whether the filter panel is open — remembered per device, so someone who
+   works with it folded away isn't folding it away again every visit. */
+const FILTERS_KEY = 'ideliver:driverDuesFiltersOpen'
+
+/* Money columns hold several currencies at once and there is no exchange rate
+   on this page, so they cannot simply be added up. A row therefore ranks by
+   its USD figure first and its LBP figure only settles ties — the order
+   someone reading the column expects, without inventing a rate. LBP is clamped
+   so it can never overtake a single dollar. */
+const LBP_CAP = 1e9 - 1
+const moneyRank = (m = {}) =>
+  (Number(m.USD) || 0) * 1e9 + Math.max(-LBP_CAP, Math.min(LBP_CAP, Number(m.LBP) || 0))
+/* The same, for the [currency, amount] pairs the history rows carry. */
+const pairsRank = (pairs = []) => moneyRank(Object.fromEntries(pairs))
 
 function fmtMoney(value, currency) {
   const n = Number(value) || 0
@@ -111,6 +127,16 @@ export default function DriverDuesPage() {
 
   const [tab,     setTab]     = useState('collect')   // 'collect' (dues to collect) | 'history'
   const [filters, setFilters] = useState(EMPTY_FILTERS)
+  // The filter panel folds away: four boxes are a lot of height above a list
+  // that is read line by line, and most of the day they are already set.
+  const [filtersOpen, setFiltersOpen] = useState(() => {
+    try { return localStorage.getItem(FILTERS_KEY) !== '0' } catch { return true }
+  })
+  const toggleFilters = () => setFiltersOpen(o => {
+    const next = !o
+    try { localStorage.setItem(FILTERS_KEY, next ? '1' : '0') } catch { /* private mode — just don't remember */ }
+    return next
+  })
   const [search,  setSearch]  = useState('')
 
   // Completed settlements (history tab).
@@ -803,6 +829,71 @@ export default function DriverDuesPage() {
 
   /* ── render ──────────────────────────────────────────────── */
 
+  /* What a settlement's three money columns hold. Pulled out of the row so the
+     column can be SORTED by the same figures it displays — including the
+     fallback for settlements that stored no currency totals (paid-to-office and
+     cashless ones), which would otherwise all sort as zero. */
+  const settlementFigures = useCallback((sr) => {
+    const totals = sr.driver_settlement_currency_totals ?? []
+    const lines  = sr.driver_settlement_orders ?? []
+    const hasStored = totals.some(t => Number(t.total_collected) || Number(t.amount_paid) || Number(t.difference))
+    const fallback = {}
+    if (!hasStored) {
+      for (const oid of [...new Set(lines.map(l => l.order_id))]) {
+        const o = orderById[oid]; if (!o) continue
+        for (const [cur, amt] of Object.entries(orderCollectedByCurrency(o))) fallback[cur] = round2((fallback[cur] || 0) + amt)
+      }
+    }
+    const fallbackEntries = Object.entries(fallback).filter(([, amt]) => amt)
+    return {
+      lines,
+      collectedRows: hasStored
+        ? totals.filter(t => Number(t.total_collected)).map(t => [t.currency, Number(t.total_collected)])
+        : fallbackEntries,
+      receivedRows: hasStored
+        ? totals.filter(t => Number(t.amount_paid)).map(t => [t.currency, Number(t.amount_paid)])
+        : fallbackEntries,   // paid to office = money already accounted for
+      diffRows: hasStored ? totals.filter(t => Number(t.difference)).map(t => [t.currency, Number(t.difference)]) : [],
+    }
+  }, [orderById])
+
+  /* ── sorting ─────────────────────────────────────────────────
+     Both lists sort by what a column MEANS, not by the text in it: a date by
+     its day, an amount by its figure. Clicking a third time returns to the
+     order the query gave, which for these lists is the meaningful one. */
+  const collectSortValue = useCallback((r, key) => {
+    const o = r.order || {}
+    switch (key) {
+      case 'date':      return orderDate(o) || ''
+      case 'order':     return o.order_number ?? ''
+      case 'customer':  return o.recipient_name ?? ''
+      case 'value':     return moneyRank(r.total)
+      case 'collected': return moneyRank(r.collected)
+      case 'retail':    return moneyRank(r.retail)
+      case 'net':       return moneyRank(r.net)
+      default:          return null
+    }
+  }, [])
+  const { sort: collectSort, cycle: cycleCollect, sortRows: sortCollect } = useTableSort(collectSortValue)
+  // Sorting reorders the list; it never changes what is in it, so the totals,
+  // the selection and the collect button all keep reading `visible`.
+  const visibleSorted = useMemo(() => sortCollect(visible), [sortCollect, visible])
+
+  const historySortValue = useCallback((sr, key) => {
+    switch (key) {
+      case 'date':       return sr.settlement_date || ''
+      case 'driver':     return driverName(sr.driver || drivers.find(d => d.id === sr.driver_id))
+      case 'orders':     return Number(sr.total_orders) || 0
+      case 'collected':  return pairsRank(settlementFigures(sr).collectedRows)
+      case 'received':   return pairsRank(settlementFigures(sr).receivedRows)
+      case 'difference': return pairsRank(settlementFigures(sr).diffRows)
+      case 'recorded':   return sr.received_at || ''
+      default:           return null
+    }
+  }, [drivers, settlementFigures])
+  const { sort: historySort, cycle: cycleHistory, sortRows: sortHistory } = useTableSort(historySortValue)
+  const settlementsSorted = useMemo(() => sortHistory(visibleSettlements), [sortHistory, visibleSettlements])
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
@@ -847,7 +938,24 @@ export default function DriverDuesPage() {
 
       {/* Filters */}
       <div className="card p-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <button type="button" onClick={toggleFilters} aria-expanded={filtersOpen}
+          className={`flex w-full items-center gap-1.5 text-left text-[11px] uppercase tracking-wider font-semibold text-slate-500 hover:text-slate-300 transition-colors ${filtersOpen ? 'mb-3' : ''}`}>
+          {filtersOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          Filters
+          {/* Folded away, it still says what is being filtered — a hidden
+              filter that silently shortens the list is how a page comes to
+              look wrong for no visible reason. */}
+          {!filtersOpen && (
+            <span className="ml-1.5 normal-case tracking-normal text-slate-400 truncate">
+              {[selectedDriverName || 'All drivers',
+                filters.date_from ? `from ${filters.date_from}` : null,
+                filters.date_to   ? `to ${filters.date_to}`     : null,
+                tab === 'collect' ? filters.settled : null,
+              ].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </button>
+        <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${filtersOpen ? '' : 'hidden'}`}>
           <div>
             <label className="label">Driver</label>
             <select className="input" value={filters.driver_id} onChange={e => setFilter('driver_id', e.target.value)}>
@@ -880,7 +988,7 @@ export default function DriverDuesPage() {
             </div>
           )}
         </div>
-        {tab === 'collect' && !filters.driver_id && (
+        {filtersOpen && tab === 'collect' && !filters.driver_id && (
           <p className="text-xs text-slate-500 mt-3 flex items-center gap-1.5">
             <AlertCircle className="w-3.5 h-3.5" /> Pick a driver to select orders and record a cash collection.
           </p>
@@ -899,22 +1007,29 @@ export default function DriverDuesPage() {
         </div>
       )}
 
-      {/* List */}
-      <div className="card overflow-x-auto">
+      {/* List. The table scrolls inside the card so its header can stay put —
+          a driver's day runs to dozens of orders and seven money columns, and
+          a figure means nothing once its heading has scrolled away. */}
+      <div className="card overflow-hidden">
+        <div className="overflow-auto max-h-[60vh]">
         <table className="w-full text-sm min-w-[1100px]">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-card">
             <tr className="border-b border-surface-border">
-              <th className="px-3 py-3 w-10">
+              <th className="px-3 py-3 w-10 bg-surface-card">
                 {canCollect && (
                   <input type="checkbox"
                     checked={selected.size > 0 && selected.size === outstandingVisible.length}
                     onChange={toggleAll} />
                 )}
               </th>
-              {['Date', 'Order #', 'Customer', 'Order value', 'Collected from customer', 'Petty cash used', 'Outstanding amount from driver'].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
-              ))}
-              <th className="px-4 py-3" />
+              <SortTh label="Date"                           sortKey="date"      sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" />
+              <SortTh label="Order #"                        sortKey="order"     sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" />
+              <SortTh label="Customer"                       sortKey="customer"  sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" />
+              <SortTh label="Order value"                    sortKey="value"     sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+              <SortTh label="Collected from customer"        sortKey="collected" sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+              <SortTh label="Petty cash used"                sortKey="retail"    sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+              <SortTh label="Outstanding amount from driver" sortKey="net"       sort={collectSort} onSort={cycleCollect} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+              <th className="px-4 py-3 bg-surface-card" />
             </tr>
           </thead>
           <tbody onMouseLeave={() => setHoverSummary(null)}>
@@ -922,7 +1037,7 @@ export default function DriverDuesPage() {
               <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">No driver collections found</td></tr>
-            ) : visible.map(r => {
+            ) : visibleSorted.map(r => {
               const o = r.order
               const selectable = !r.settled && !o.isclosed && !!filters.driver_id
               return (
@@ -996,6 +1111,7 @@ export default function DriverDuesPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Floating summary bar — totals + collect + PDF */}
@@ -1065,22 +1181,27 @@ export default function DriverDuesPage() {
             </button>
           </div>
         </div>
-        <div className="card overflow-x-auto">
+        <div className="card overflow-hidden">
+          <div className="overflow-auto max-h-[60vh]">
           <table className="w-full text-sm min-w-[900px]">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-surface-card">
               <tr className="border-b border-surface-border">
                 {isSuperAdmin && (
-                  <th className="px-3 py-3 w-8">
+                  <th className="px-3 py-3 w-8 bg-surface-card">
                     <input type="checkbox"
                       checked={selectedSettlements.size > 0 && selectedSettlements.size === visibleSettlements.length}
                       onChange={toggleAllSettlements} title="Select all" />
                   </th>
                 )}
-                <th className="px-3 py-3 w-8" />
-                {['Date', 'Driver', 'Orders', 'Total collected from customers', 'Total received from driver', 'Difference', 'Recorded'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
-                ))}
-                {isSuperAdmin && <th className="px-4 py-3" />}
+                <th className="px-3 py-3 w-8 bg-surface-card" />
+                <SortTh label="Date"                           sortKey="date"       sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" />
+                <SortTh label="Driver"                         sortKey="driver"     sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" />
+                <SortTh label="Orders"                         sortKey="orders"     sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" />
+                <SortTh label="Total collected from customers" sortKey="collected"  sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+                <SortTh label="Total received from driver"     sortKey="received"   sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+                <SortTh label="Difference"                     sortKey="difference" sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" align="right" />
+                <SortTh label="Recorded"                       sortKey="recorded"   sort={historySort} onSort={cycleHistory} className="text-slate-500 text-xs whitespace-nowrap" />
+                {isSuperAdmin && <th className="px-4 py-3 bg-surface-card" />}
               </tr>
             </thead>
             <tbody>
@@ -1088,30 +1209,12 @@ export default function DriverDuesPage() {
                 <tr><td colSpan={historyColSpan} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
               ) : visibleSettlements.length === 0 ? (
                 <tr><td colSpan={historyColSpan} className="px-4 py-10 text-center text-slate-500">No settlements recorded yet</td></tr>
-              ) : visibleSettlements.map(s => {
-                const isOpen  = expanded.has(s.id)
-                const totals  = s.driver_settlement_currency_totals ?? []
-                const lines   = s.driver_settlement_orders ?? []
-                // Settlements that recorded no driver cash (paid-to-office / cashless
-                // orders) have no stored currency totals. Fall back to what the
-                // customers actually paid on the referenced orders so every settlement
-                // still shows its collected amount.
-                const hasStored = totals.some(t => Number(t.total_collected) || Number(t.amount_paid) || Number(t.difference))
-                const fallback = {}
-                if (!hasStored) {
-                  for (const oid of [...new Set(lines.map(l => l.order_id))]) {
-                    const o = orderById[oid]; if (!o) continue
-                    for (const [cur, amt] of Object.entries(orderCollectedByCurrency(o))) fallback[cur] = round2((fallback[cur] || 0) + amt)
-                  }
-                }
-                const fallbackEntries = Object.entries(fallback).filter(([, amt]) => amt)
-                const collectedRows = hasStored
-                  ? totals.filter(t => Number(t.total_collected)).map(t => [t.currency, Number(t.total_collected)])
-                  : fallbackEntries
-                const receivedRows = hasStored
-                  ? totals.filter(t => Number(t.amount_paid)).map(t => [t.currency, Number(t.amount_paid)])
-                  : fallbackEntries   // paid to office = money already accounted for
-                const diffRows = hasStored ? totals.filter(t => Number(t.difference)).map(t => [t.currency, Number(t.difference)]) : []
+              ) : settlementsSorted.map(s => {
+                const isOpen = expanded.has(s.id)
+                // The same figures the columns sort by — including the fallback
+                // for settlements that stored no currency totals (paid-to-office
+                // and cashless ones).
+                const { lines, collectedRows, receivedRows, diffRows } = settlementFigures(s)
                 return (
                   <React.Fragment key={s.id}>
                     <tr onClick={() => toggleExpand(s.id)}
@@ -1210,6 +1313,7 @@ export default function DriverDuesPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </>)}
 
