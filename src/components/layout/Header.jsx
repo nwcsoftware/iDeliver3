@@ -42,6 +42,7 @@ const TITLE_OVERRIDES = {
   '/deliveries': 'Daily Orders',
   '/tracking':   'Real-time Tracking',
   '/reports':    'Reports & Analytics',
+  '/performance': 'Performance Report',
   '/party-statements': 'Shop Statements',
 }
 

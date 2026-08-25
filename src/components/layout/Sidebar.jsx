@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow,
-  ArrowRightLeft, Palette, UserX,
+  ArrowRightLeft, Palette, UserX, TrendingUp,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -85,6 +85,8 @@ export const navGroups = [
     key: 'reports', label: 'Reports', icon: BarChart3,
     items: [
       { to: '/reports', icon: BarChart3, label: 'Reports' },
+      // Earnings & volume over a chosen window (week / month / 3 months / all).
+      { to: '/performance', icon: TrendingUp, label: 'Performance' },
     ],
   },
   {
