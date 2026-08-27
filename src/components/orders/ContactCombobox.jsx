@@ -104,13 +104,18 @@ export default function ContactCombobox({
   function close() { setOpen(false); setEditing(false); setQuery('') }
 
   const q = query.trim().toLowerCase()
-  // Search across company name, the person's name, mobile and contact code so a
-  // contact is findable by any of them (even a company contact, by its person).
+  // Digits only, so an account number typed the way it is DISPLAYED ("0001 0002")
+  // still finds the row it is stored in ("00010002").
+  const qDigits = query.replace(/\D/g, '')
+  // Search across company name, the person's name, mobile, contact code and
+  // account number so a contact is findable by whichever the user has to hand
+  // (even a company contact, by its person).
   const matches = options.filter(o => {
     const hay = `${o.company_name ?? ''} ${o.first_name ?? ''} ${o.last_name ?? ''}`.toLowerCase()
     return hay.includes(q) ||
       (o.mobile || '').includes(query.trim()) ||
-      o.code?.toLowerCase?.().includes(q)
+      o.code?.toLowerCase?.().includes(q) ||
+      (!!qDigits && String(o.account_number ?? '').replace(/\D/g, '').includes(qDigits))
   })
     /* A retired contact only reaches this list for a super admin — everyone
        else has it filtered out upstream. Sort it below the live ones and label
