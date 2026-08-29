@@ -33,7 +33,9 @@ export default function PartnerDuesPage() {
   // Partner balances span the whole history, so pull every order (beyond the window).
   useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
-  const canPay = hasRole('super_admin', 'admin')
+  // Call center staff settle partners too — they are the ones at the counter
+  // when a partner comes to collect.
+  const canPay = hasRole('super_admin', 'admin', 'call_center')
   // Only the super admin may delete a settled payout — it reverses a recorded
   // payment, so regular admins can't undo it.
   const canDeletePayout = hasRole('super_admin')
@@ -49,6 +51,10 @@ export default function PartnerDuesPage() {
   // Show every partner with package movement by default (settled ones included,
   // with a disabled Pay button). Users can flip "Outstanding only" to hide settled.
   const [onlyDue,  setOnlyDue]  = useState(false)
+  // One partner picked from the dropdown, on top of the free-text search. The
+  // box is typeable (datalist), so we keep the typed text and resolve it to an id.
+  const [partnerPick, setPartnerPick] = useState('')
+  const [partnerId,   setPartnerId]   = useState('')
 
   // Record-payout modal — an editable list of { currency, amount } lines, so one
   // payout can settle several currencies at once.
@@ -105,13 +111,27 @@ export default function PartnerDuesPage() {
       // A retired partner is invisible to everyone but the super admin, here as
       // everywhere else. Its dues are settled before it can be retired at all.
       if (!canSeeRetired && inactiveContactIds?.has(p.id)) return false
+      if (partnerId && p.id !== partnerId) return false
       const hit = !q || [p.name, p.code, accountNos[p.id]]
         .some(v => String(v ?? '').toLowerCase().includes(q))
       if (!hit) return false
       if (onlyDue && !p.curs.some(c => round2(p.cur[c].dues) !== 0)) return false
       return true
     })
-  }, [list, search, onlyDue, accountNos, inactiveContactIds, canSeeRetired])
+  }, [list, search, partnerId, onlyDue, accountNos, inactiveContactIds, canSeeRetired])
+
+  /* Options for the partner dropdown — every partner the dues list knows about,
+     labelled so typing either the name or the code lands on the right one. */
+  const partnerOptions = useMemo(() => {
+    const opts = list
+      .filter(p => canSeeRetired || !inactiveContactIds?.has(p.id))
+      .map(p => ({
+        id: p.id,
+        label: [p.name, p.code, accountNos[p.id]].filter(Boolean).join(' · '),
+      }))
+    opts.sort((a, b) => a.label.localeCompare(b.label))
+    return opts
+  }, [list, accountNos, inactiveContactIds, canSeeRetired])
 
   // Count of closed orders (within the date range) that carry partner packages —
   // i.e. the orders the totals below are built from.
@@ -289,6 +309,20 @@ export default function PartnerDuesPage() {
               placeholder="Partner name, code or account number" />
           </div>
         </div>
+        <div className="min-w-[200px]">
+          <label className="label">Partner</label>
+          <input list="partner-dues-options" className="input py-1.5 text-xs" value={partnerPick}
+            placeholder="Type a partner name or code"
+            onChange={e => {
+              const v = e.target.value
+              setPartnerPick(v)
+              const hit = partnerOptions.find(o => o.label === v)
+              setPartnerId(hit ? hit.id : '')
+            }} />
+          <datalist id="partner-dues-options">
+            {partnerOptions.map(o => <option key={o.id} value={o.label} />)}
+          </datalist>
+        </div>
         <div>
           <label className="label">Closed from</label>
           <input type="date" className="input py-1.5 text-xs" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
@@ -303,8 +337,8 @@ export default function PartnerDuesPage() {
                     : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
           Outstanding only
         </button>
-        {(search || dateFrom || dateTo) && (
-          <button type="button" onClick={() => { setSearch(''); setDateFrom(''); setDateTo('') }}
+        {(search || partnerPick || dateFrom || dateTo) && (
+          <button type="button" onClick={() => { setSearch(''); setPartnerPick(''); setPartnerId(''); setDateFrom(''); setDateTo('') }}
             className="h-[34px] px-3 rounded-lg text-xs font-medium border border-surface-border text-slate-400 hover:text-slate-200 inline-flex items-center gap-1.5">
             <FilterX className="w-3.5 h-3.5" /> Clear
           </button>
