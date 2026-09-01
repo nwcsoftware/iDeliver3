@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
-  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow,
+  ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow, Ban,
   ArrowRightLeft, Palette, UserX, TrendingUp, Scale,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
@@ -33,6 +33,8 @@ export const navGroups = [
     key: 'orders', label: 'Orders & Delivery', icon: PackageCheck,
     items: [
       { to: '/closed-orders',    icon: PackageCheck,  label: 'Closed Orders' },
+      // The only list of cancelled orders — they are excluded everywhere else.
+      { to: '/cancelled-orders', icon: Ban,           label: 'Cancelled Orders' },
       { to: '/packages',         icon: Boxes,         label: 'Packages' },
       { to: '/package-labels',   icon: Tags,          label: 'Package Labels' },
       { to: '/returnable-items', icon: RotateCcw,     label: 'Returnable Items' },

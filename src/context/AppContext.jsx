@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { excludeCancelled, onlyCancelled } from '../lib/orderStatus'
 import { supabase, fetchAllRows, fetchAllRowsKeyset, HEAVY_PAGE_SIZE } from '../lib/supabase'
 import { fetchInactiveContactIds } from '../lib/contactVisibility'
 import { useAuth } from './AuthContext'
@@ -119,7 +120,10 @@ export function AppProvider({ children }) {
   const userId = currentUser?.user_id || 'anon'
 
   const [drivers,    setDrivers]    = useState([])
-  const [orders,     setOrders]     = useState([])
+  // Every order the window pulled, cancelled ones included. Consumers get the
+  // live split (`orders`) instead; only the Cancelled Orders page, the
+  // Deliveries list and the dashboard breakdown read the raw array.
+  const [allOrders,  setAllOrders]  = useState([])
   const [zones,      setZones]      = useState([])
   const [loading,    setLoading]    = useState({ drivers: true, orders: true })
 
@@ -452,7 +456,7 @@ export function AppProvider({ children }) {
     if (data) {
       // `data` is present even when the fetch ended early, so a slow page never
       // leaves the app with an empty list it will happily render.
-      setOrders(data)
+      setAllOrders(data)
       const nowFull = windowDays === 0 && !error
       ordersFullyLoadedRef.current = nowFull
       setOrdersFullyLoaded(nowFull)
@@ -490,7 +494,7 @@ export function AppProvider({ children }) {
   // Fetch one order and splice the fresh row into state (or drop it if it vanished).
   const refreshOrderIntoState = useCallback(async (id) => {
     const row = await fetchOneOrder(id)
-    setOrders(prev => {
+    setAllOrders(prev => {
       const i = prev.findIndex(o => o.id === id)
       if (!row) return i === -1 ? prev : prev.filter(o => o.id !== id)
       if (i === -1) {
@@ -521,7 +525,7 @@ export function AppProvider({ children }) {
     }
     const byId = new Map(rows.map(r => [r.id, r]))
     const asked = new Set(wanted)
-    setOrders(prev => {
+    setAllOrders(prev => {
       const seen = new Set(prev.map(o => o.id))
       const kept = prev
         .filter(o => !asked.has(o.id) || byId.has(o.id))     // vanished rows fall out
@@ -544,7 +548,7 @@ export function AppProvider({ children }) {
       if (id == null) return
       const t = timers.get(id)                       // cancel any pending refresh for a now-deleted row
       if (t) { clearTimeout(t); timers.delete(id) }
-      setOrders(prev => prev.filter(o => o.id !== id))
+      setAllOrders(prev => prev.filter(o => o.id !== id))
       return
     }
     const id = payload.new?.id
@@ -596,6 +600,14 @@ export function AppProvider({ children }) {
     }
   }, [fetchDrivers, fetchOrders, fetchZones, applyOrderChange])
 
+  /* The live orders — a cancelled order never happened, so this is what every
+     page, report and settlement works from. Pages that must still show one
+     (Cancelled Orders, the Deliveries list, the dashboard breakdown) ask for
+     `cancelledOrders` or `allOrders` by name, which makes including a cancelled
+     order a deliberate act rather than the default. */
+  const orders          = useMemo(() => excludeCancelled(allOrders), [allOrders])
+  const cancelledOrders = useMemo(() => onlyCancelled(allOrders),    [allOrders])
+
   const stats = {
     totalDrivers:      drivers.length,
     activeDrivers:     drivers.filter(d => d.driver_status === 'available' || d.driver_status === 'on_duty').length,
@@ -605,13 +617,17 @@ export function AppProvider({ children }) {
     inTransit:         orders.filter(o => o.status === 'in_transit').length,
     delivered:         orders.filter(o => o.status === 'delivered').length,
     failed:            orders.filter(o => o.status === 'failed').length,
-    cancelled:         orders.filter(o => o.status === 'cancelled').length,
+    // Counted off the raw array: cancelled orders are excluded from `orders` by
+    // design, but the dashboard still shows how many there were.
+    cancelled:         cancelledOrders.length,
   }
 
   return (
     <AppContext.Provider value={{
       drivers, fetchDrivers,
       orders,  fetchOrders, ordersError,
+      // Cancelled orders, kept apart from `orders` on purpose — see orderStatus.js.
+      cancelledOrders, allOrders,
       // Retired contacts — hidden from everyone but the super admin.
       inactiveContactIds, refreshInactiveContacts,
       // Targeted refreshes — always prefer these to fetchOrders() after a

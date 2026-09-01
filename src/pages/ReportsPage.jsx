@@ -49,8 +49,10 @@ export default function ReportsPage() {
       const key = o.created_at?.slice(0, 10)
       if (!map[key]) return
       const s = o.status
+      // Cancelled orders never reach this page — useApp().orders is the live
+      // split — so 'failed' here means failed, nothing else.
       if (s === 'delivered') map[key].delivered++
-      else if (s === 'failed' || s === 'cancelled') map[key].failed++
+      else if (s === 'failed') map[key].failed++
       else if (s === 'in_transit' || s === 'picked_up') map[key].in_transit++
       else map[key].pending++
     })

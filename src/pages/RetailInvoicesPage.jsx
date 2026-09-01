@@ -87,7 +87,10 @@ export default function RetailInvoicesPage() {
     setLoading(true)
     let q = supabase
       .from('retail_goods_invoices')
-      .select('*, order:delivery_orders(order_number)')
+      .select('*, order:delivery_orders!inner(order_number, status)')
+      // An invoice on a cancelled order is void — it buys nothing and owes
+      // nothing, so it is not in this list or its totals.
+      .or('status.is.null,status.neq.cancelled', { referencedTable: 'order' })
       .order('invoice_date', { ascending: false })
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data } = await q

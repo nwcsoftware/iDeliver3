@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../../lib/supabase'
 import { fetchOrdersByIds } from '../../lib/packageOrders'
+import { isCancelledOrder } from '../../lib/orderStatus'
 import { formatAccountNumber } from '../../lib/accountNumber'
 import { useApp } from '../../context/AppContext'
 
@@ -56,7 +57,11 @@ export default function ContactPartnerPackages({ contactId, contactName = 'Partn
       orderMap = await fetchOrdersByIds([...new Set((data ?? []).map(p => p.order_id).filter(Boolean))])
     } catch (e) { setError(e.message); setRows([]); setLoading(false); return }
 
-    const joined = (data ?? []).map(p => ({ ...p, order: orderMap.get(p.order_id) || null }))
+    // Nothing on a cancelled order was ever supplied, so it is not this
+    // partner's work and not part of their totals.
+    const joined = (data ?? [])
+      .map(p => ({ ...p, order: orderMap.get(p.order_id) || null }))
+      .filter(p => !isCancelledOrder(p.order))
     // Sort newest first by the order's close/scheduled date.
     joined.sort((a, b) => {
       const da = a.order?.closed_at || a.order?.scheduled_date || ''

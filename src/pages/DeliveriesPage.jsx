@@ -10,6 +10,7 @@ import {
 import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { excludeCancelled, isCancelledOrder } from '../lib/orderStatus'
 import { useAuth } from '../context/AuthContext'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import { fetchPartyOrderIds, partyOwnsOrder, PARTY_LINE_TABLES } from '../lib/partyOrders'
@@ -742,8 +743,19 @@ function fmtMoney(n, cur) { return Number(n || 0).toFixed(cur === 'LBP' ? 0 : 2)
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DeliveriesPage({ closed = false, partyContactId = null }) {
-  const { orders, drivers, zones, refreshOrder, ordersError, loading, COMPANY_ID, showSummary, appSettings,
+  const { allOrders, drivers, zones, refreshOrder, ordersError, loading, COMPANY_ID, showSummary, appSettings,
           loadFullOrderHistory, ordersFullyLoaded, inactiveContactIds } = useApp()
+  /* This page is the one list that still SHOWS a cancelled order — locked and
+     greyed, so the office can find it and reactivate it — which is why it reads
+     the raw array rather than the live split. Nothing derived from a cancelled
+     order counts: every money total below runs over `liveFiltered`.
+
+     The 2nd-party portal is the exception. A partner or supplier signed into
+     their own view has no cancelled-orders page and nothing to reactivate, so
+     for them a cancelled order is simply gone, as it is everywhere else. */
+  const orders = useMemo(
+    () => (partyContactId ? excludeCancelled(allOrders) : allOrders),
+    [allOrders, partyContactId])
   // Minutes an unconfirmed order may sit before its row starts blinking (0 = off).
   const reminderMins = Number(appSettings?.orderConfirmReminderMinutes) || 0
   // Minutes before an order's scheduled start time at which its row turns red (0 = off).
@@ -1295,6 +1307,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     if (closed || partyContactId) return []
     const out = []
     for (const o of orders) {
+      if (isCancelledOrder(o)) continue          // a cancelled ad is not running
       for (const a of (o.ads ?? [])) {
         if (a.confirmed_ads || adsIgnored.has(a.id)) continue
         const s = a.start_at ? new Date(a.start_at).getTime() : NaN
@@ -1439,10 +1452,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         return out
       })()
 
+  /* The filtered rows minus the cancelled ones. The list renders `filtered` so a
+     cancelled order stays findable; every figure on the page is summed from this
+     instead, so a cancelled order can never move a total or a count. */
+  const liveFiltered = useMemo(() => excludeCancelled(filtered), [filtered])
+
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
   const pendingsSummary = (() => {
     const cur = { USD: { order: 0, paid: 0, driverCollect: 0 }, LBP: { order: 0, paid: 0, driverCollect: 0 }, EUR: { order: 0, paid: 0, driverCollect: 0 } }
-    for (const o of filtered) {
+    for (const o of liveFiltered) {
       const tt = orderTotalsByCurrency(o)
       const cc = orderCollectedByCurrency(o)
       const dc = orderDriverCollectByCurrency(o)   // delivery fees + local retail items
@@ -1456,7 +1474,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       .map(c => ({ cur: c, order: round2(cur[c].order), paid: round2(cur[c].paid), driverCollect: round2(cur[c].driverCollect) }))
       .filter(r => r.order !== 0 || r.paid !== 0)
       .map(r => ({ ...r, pending: round2(r.order - r.paid) }))
-    return { count: filtered.length, rows }
+    return { count: liveFiltered.length, rows }
   })()
 
   /* Sum the per-order amount breakdown (packages, services, local/external retail,
@@ -1519,9 +1537,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      group, so there everything stays in the one total. */
   const adsRows      = closed ? [] : filtered.filter(isStoryOrder)
   const deliveryRows = closed ? filtered : filtered.filter(o => !isStoryOrder(o))
+  // The same two groups with cancelled orders dropped — what the money is summed
+  // from. The *Rows arrays above stay whole because they are what gets rendered.
+  const adsLive      = excludeCancelled(adsRows)
+  const deliveryLive = excludeCancelled(deliveryRows)
 
-  const totalsBreakdown = sumBreakdown(deliveryRows)
-  const adsBreakdown    = sumBreakdown(adsRows)
+  const totalsBreakdown = sumBreakdown(deliveryLive)
+  const adsBreakdown    = sumBreakdown(adsLive)
 
   // Rows shown in the "Totals breakdown" popup. For 2nd-party (supplier/partner)
   // logins we only surface their own packages + external retail invoices totals;
@@ -3829,9 +3851,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {/* Count what these figures actually cover: ads are summed in their
                   own panel inside the Ads & Services group, not here. */}
               <span className="text-xs text-slate-500">
-                · {deliveryRows.length} {closed ? 'filtered' : 'delivery'} order{deliveryRows.length === 1 ? '' : 's'}
-                {adsRows.length > 0 && (
-                  <span className="text-slate-600"> · {adsRows.length} ad{adsRows.length === 1 ? '' : 's'} counted separately</span>
+                · {deliveryLive.length} {closed ? 'filtered' : 'delivery'} order{deliveryLive.length === 1 ? '' : 's'}
+                {adsLive.length > 0 && (
+                  <span className="text-slate-600"> · {adsLive.length} ad{adsLive.length === 1 ? '' : 's'} counted separately</span>
+                )}
+                {/* Cancelled rows are still in the list above but in none of these
+                    figures, so say so rather than let the counts look wrong. */}
+                {filtered.length - liveFiltered.length > 0 && (
+                  <span className="text-slate-600"> · {filtered.length - liveFiltered.length} cancelled, not counted</span>
                 )}
               </span>
             </div>

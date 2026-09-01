@@ -10,7 +10,29 @@ import { formatMobile } from '../lib/phone'
 import StatCard from '../components/ui/StatCard'
 import Badge from '../components/ui/Badge'
 
-const PIE_COLORS = ['#6366f1', '#22c55e', '#eab308', '#ef4444', '#f97316', '#94a3b8']
+/* The status breakdown speaks the same four-step vocabulary as the Deliveries
+   list — Scheduled → In Progress → Completed, plus the two ways an order ends
+   without arriving — rather than the raw enum, which spread one lifecycle over
+   half a dozen names. Each slice keeps a fixed colour so the same status is the
+   same colour every visit, however many slices happen to be non-empty. */
+const STATUS_SLICES = [
+  { key: 'scheduled',  name: 'Scheduled',   color: '#eab308' },
+  { key: 'inProgress', name: 'In Progress', color: '#6366f1' },
+  { key: 'completed',  name: 'Completed',   color: '#22c55e' },
+  { key: 'failed',     name: 'Failed',      color: '#ef4444' },
+  { key: 'cancelled',  name: 'Cancelled',   color: '#94a3b8' },
+]
+
+/* Raw order_status → the lifecycle step shown on the charts. Mirrors
+   normalizeStatus on the Deliveries page. */
+function lifecycleStep(status) {
+  const s = String(status ?? '').trim().toLowerCase()
+  if (s === 'cancelled') return 'cancelled'
+  if (s === 'failed')    return 'failed'
+  if (['delivered', 'returned', 'completed'].includes(s))                        return 'completed'
+  if (['assigned', 'picked_up', 'in_transit', 'return_requested'].includes(s))   return 'inProgress'
+  return 'scheduled'   // pending, confirmed, scheduled, or anything unknown
+}
 
 function buildTrend(orders) {
   const days = []
@@ -22,29 +44,38 @@ function buildTrend(orders) {
       date:      d.toISOString().slice(0, 10),
       delivered: 0,
       failed:    0,
+      cancelled: 0,
     })
   }
   orders.forEach(o => {
     const date = o.scheduled_date?.slice(0, 10) || o.delivered_at?.slice(0, 10) || o.created_at?.slice(0, 10)
     const day  = days.find(d => d.date === date)
     if (!day) return
-    if (o.status === 'delivered') day.delivered++
-    else if (o.status === 'failed') day.failed++
+    const step = lifecycleStep(o.status)
+    if (step === 'completed')      day.delivered++
+    else if (step === 'failed')    day.failed++
+    else if (step === 'cancelled') day.cancelled++
   })
   return days
 }
 
 export default function DashboardPage() {
-  const { stats, orders, drivers } = useApp()
+  /* `orders` is the live set — cancelled orders are held apart deliberately
+     (see lib/orderStatus.js). The dashboard is one of the few screens allowed to
+     show them, and it counts them as their own category rather than folding them
+     into any figure: the stat cards, the Recent Orders table and every other page
+     stay live-only. */
+  const { stats, orders, cancelledOrders, drivers } = useApp()
 
-  const trend   = buildTrend(orders)
-  const pieData = [
-    { name: 'In Transit', value: stats.inTransit },
-    { name: 'Delivered',  value: stats.delivered },
-    { name: 'Pending',    value: stats.pendingOrders },
-    { name: 'Failed',     value: stats.failed },
-    { name: 'Cancelled',  value: stats.cancelled },
-  ].filter(d => d.value > 0)
+  const trend = buildTrend([...orders, ...cancelledOrders])
+
+  const counts = { scheduled: 0, inProgress: 0, completed: 0, failed: 0, cancelled: 0 }
+  for (const o of orders) counts[lifecycleStep(o.status)]++
+  counts.cancelled = cancelledOrders.length
+
+  const pieData = STATUS_SLICES
+    .map(slice => ({ ...slice, value: counts[slice.key] }))
+    .filter(d => d.value > 0)
 
   const recentOrders = orders.slice(0, 6)
 
@@ -73,6 +104,10 @@ export default function DashboardPage() {
                   <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2} />
                   <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                 </linearGradient>
+                <linearGradient id="cancelledGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#94a3b8" stopOpacity={0.2} />
+                  <stop offset="95%" stopColor="#94a3b8" stopOpacity={0} />
+                </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 12 }} axisLine={false} tickLine={false} />
@@ -84,6 +119,7 @@ export default function DashboardPage() {
               />
               <Area type="monotone" dataKey="delivered" stroke="#6366f1" fill="url(#deliveredGrad)" strokeWidth={2} name="Delivered" />
               <Area type="monotone" dataKey="failed"    stroke="#ef4444" fill="url(#failedGrad)"    strokeWidth={2} name="Failed"    />
+              <Area type="monotone" dataKey="cancelled" stroke="#94a3b8" fill="url(#cancelledGrad)" strokeWidth={2} name="Cancelled" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -95,7 +131,7 @@ export default function DashboardPage() {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value">
-                  {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                  {pieData.map(d => <Cell key={d.key} fill={d.color} />)}
                 </Pie>
                 <Tooltip
                   contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}

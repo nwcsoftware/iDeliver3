@@ -10,12 +10,17 @@ import { supabase } from './supabase'
    Map<order_id, order>.
 
    `onProgress(done, total)` — optional — is called after each chunk, so a
-   caller can show how far along a long load is instead of a bare spinner. */
+   caller can show how far along a long load is instead of a bare spinner.
+
+   Cancelled orders ARE returned — `status` is in the field list for exactly this
+   reason. Callers drop their packages with isCancelledOrder(); leaving them out
+   of the map here would make a cancelled order indistinguishable from an order
+   that no longer exists, and the two want different handling. */
 
 const CHUNK = 200
 // delivery_fee + payment_collections feed the daily-summary report (delivery
 // fees charged and cash collected from the customer, per day).
-const ORDER_FIELDS = 'id, order_number, recipient_name, delivery_address, currency, isclosed, closed_at, scheduled_date, created_at, delivery_fee, total_amount, payment_collections(amount, currency)'
+const ORDER_FIELDS = 'id, order_number, recipient_name, delivery_address, status, currency, isclosed, closed_at, scheduled_date, created_at, delivery_fee, total_amount, payment_collections(amount, currency)'
 
 export async function fetchOrdersByIds(ids = [], onProgress) {
   const map = new Map()

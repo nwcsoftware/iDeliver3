@@ -22,6 +22,7 @@ import RetailInvoicesPage     from './pages/RetailInvoicesPage'
 import PriceListPage          from './pages/PriceListPage'
 import ReturnableItemsPage     from './pages/ReturnableItemsPage'
 import PackagesReportPage       from './pages/PackagesReportPage'
+import CancelledOrdersPage     from './pages/CancelledOrdersPage'
 import DailyCollectionPage       from './pages/DailyCollectionPage'
 import AccountTransactionsPage from './pages/AccountTransactionsPage'
 import ContactStatementsPage    from './pages/ContactStatementsPage'
@@ -130,6 +131,7 @@ function AppShell() {
                 <Route path="/price-list"           element={<PriceListPage />} />
                 <Route path="/returnable-items"     element={<ReturnableItemsPage />} />
                 <Route path="/packages"             element={<PackagesReportPage />} />
+                <Route path="/cancelled-orders"     element={<CancelledOrdersPage />} />
                 <Route path="/package-labels"       element={<PackageLabelsPage />} />
                 <Route path="/daily-collection"     element={<DailyCollectionPage />} />
                 <Route path="/account-transactions" element={<AccountTransactionsPage />} />

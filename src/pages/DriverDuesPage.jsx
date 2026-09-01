@@ -5,6 +5,7 @@ import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderOfficeCollectedByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
+import { isCancelledOrder } from '../lib/orderStatus'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -90,6 +91,13 @@ function isReconcilable(o) { return ['collected_by_driver', 'paid_to_office'].in
    driver carries no cash for them and they must not show under a driver or add to
    the driver's order count. */
 function isSettlementEligible(o) {
+  /* A cancelled order is never settled: no cash was carried, no order was
+     worked, and the driver is not answerable for it. useApp().orders already
+     holds it back, so this is belt and braces — but the two branches below
+     would each let one through on their own (a super admin can force-close any
+     row, and the credit branch tests only for collected cash), and that is
+     exactly the kind of thing this guard is for. */
+  if (isCancelledOrder(o)) return false
   if (o?.is_free_order === true) return false
   // Credit-customer orders carry no cash by default, but if the driver actually
   // collected from the customer, that cash must still be reconciled here — so the

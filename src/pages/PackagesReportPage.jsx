@@ -4,6 +4,7 @@ import { FilterX, AlertCircle, Calendar, X } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { fetchOrdersByIds } from '../lib/packageOrders'
+import { isCancelledOrder } from '../lib/orderStatus'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -102,7 +103,13 @@ export default function PackagesReportPage() {
     const orderIds = [...new Set((pkgs ?? []).map(p => p.order_id).filter(Boolean))]
     const orderMap = await fetchOrdersByIds(orderIds, (done, total) =>
       setProgress(p => ({ ...p, ordersDone: done, ordersTotal: total })))
-    setRows((pkgs ?? []).map(p => ({ ...p, order: orderMap.get(p.order_id) || null })))
+    // Packages on a cancelled order are dropped outright: the order never
+    // happened, so its packages were never shipped and are owed to nobody.
+    // (A package whose order simply cannot be found is kept, as before — that
+    // is an orphan worth seeing, not a cancellation.)
+    setRows((pkgs ?? [])
+      .map(p => ({ ...p, order: orderMap.get(p.order_id) || null }))
+      .filter(p => !isCancelledOrder(p.order)))
     setLoading(false)
   }, [COMPANY_ID])
 

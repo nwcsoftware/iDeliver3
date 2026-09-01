@@ -3,6 +3,7 @@ import { Banknote, Search, FilterX, AlertCircle, Calendar, X, Shield, AlertTrian
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency, orderCollectedByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
+import { isCancelledOrder } from '../lib/orderStatus'
 import { useAuth } from '../context/AuthContext'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 import { OrderNumber, useOrderQuickView } from '../components/orders/OrderQuickView'
@@ -52,7 +53,7 @@ async function fetchOrders(ids) {
   const results = await Promise.all(slices.map(slice =>
     supabase.from('delivery_orders')
       .select(`
-        id, order_number, order_source, closed_at, scheduled_date,
+        id, order_number, order_source, status, closed_at, scheduled_date,
         currency, delivery_fee, discount_amount, discount_currency, vat_amount, is_free_order,
         driver:contacts!driver_id(first_name, last_name),
         order_items(line_total, currency, is_deleted),
@@ -131,7 +132,12 @@ export default function DailyCollectionPage() {
     try { orderMap = await fetchOrders((pcs ?? []).map(p => p.order_id)) }
     catch (e) { setError(e.message); setRows([]); setLoading(false); return }
 
-    const joined = (pcs ?? []).map(p => {
+    /* Payments on a cancelled order are dropped: the order never happened, so
+       there was no collection to report and nothing to reconcile. Filtered on
+       the resolved order rather than in the query above, so a payment whose
+       order cannot be found at all still shows as an orphan — that is a
+       different problem and worth seeing. */
+    const joined = (pcs ?? []).filter(p => !isCancelledOrder(orderMap.get(p.order_id))).map(p => {
       const o = orderMap.get(p.order_id) || null
       const deliveryDate = (o?.closed_at || o?.scheduled_date || p.collected_at || '').slice(0, 10)
       const mismatch = orderMismatch(o)

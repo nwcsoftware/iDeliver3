@@ -59,9 +59,11 @@ export default function ReturnableItemsPage() {
     const iq = supabase.from('order_items')
       .select(`id, product_id, quantity, added_at, is_returned, returned_at, returned_by,
         product:products!inner(code, name, is_returnable),
-        order:delivery_orders(id, order_number, recipient_name, driver:contacts!driver_id(first_name, last_name))`)
+        order:delivery_orders!inner(id, order_number, status, recipient_name, driver:contacts!driver_id(first_name, last_name))`)
       .eq('product.is_returnable', true)
       .eq('is_deleted', false)
+      // Nothing went out on a cancelled order, so there is nothing to get back.
+      .or('status.is.null,status.neq.cancelled', { referencedTable: 'order' })
       .order('added_at', { ascending: false })
 
     const [{ data: prods }, { data: items }] = await Promise.all([pq, iq])

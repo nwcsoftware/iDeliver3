@@ -211,6 +211,8 @@ export default function PackageLabelsPage() {
           provider:contacts!provider_id(id, first_name, last_name, company_name, mobile))
       `)
       .eq('scheduled_date', date)
+      // No labels for a cancelled order — nothing is going out.
+      .or(`status.is.null,status.neq.cancelled`)
       .order('order_number')
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { BookOpenText, CalendarDays, ChevronRight, FilterX, ReceiptText, UsersRound, WalletCards } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency } from '../lib/orderAmounts'
+import { queryExcludeCancelled, queryExcludeCancelledOn } from '../lib/orderStatus'
 import { useApp } from '../context/AppContext'
 import SearchField from '../components/ui/SearchField'
 
@@ -77,21 +78,27 @@ export default function ContactStatementsPage() {
         payment_collections(id, amount, currency, collection_type, collected_at, collected_by, collected_by_name)
       `).eq('customer_id', contact.id)
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
-      return q
+      // A cancelled order never happened, so it owes and is owed nothing. Filtered
+      // in the query rather than trusted to come out at zero: a cancel clears the
+      // fee and the lines but not VAT or a discount, and a customer-app cancel
+      // clears no lines at all — either would post a phantom line here.
+      return queryExcludeCancelled(q)
     })
 
     // 2) Delivery packages this contact provides (partner/supplier role).
     let packagesQ = supabase.from('delivery_packages')
-      .select('id, package_price, currency, paid, created_at, order:delivery_orders!inner(order_number, closed_at, scheduled_date, created_at, company_id)')
+      .select('id, package_price, currency, paid, created_at, order:delivery_orders!inner(order_number, status, closed_at, scheduled_date, created_at, company_id)')
       .eq('provider_id', contact.id).eq('paid', false)
     if (COMPANY_ID) packagesQ = packagesQ.eq('order.company_id', COMPANY_ID)
+    packagesQ = queryExcludeCancelledOn(packagesQ, 'order')   // nothing is owed on a cancelled order
     const { data: suppliedPackages } = await packagesQ
 
     // 3) External retail invoices for this contact's shop (partner/supplier role).
     let invoicesQ = supabase.from('retail_goods_invoices')
-      .select('id, invoice_value, currency, exclude_calculation, shop_name, created_at, order:delivery_orders!inner(order_number, closed_at, scheduled_date, created_at, company_id)')
+      .select('id, invoice_value, currency, exclude_calculation, shop_name, created_at, order:delivery_orders!inner(order_number, status, closed_at, scheduled_date, created_at, company_id)')
       .eq('contact_id', contact.id).eq('exclude_calculation', false)
     if (COMPANY_ID) invoicesQ = invoicesQ.eq('order.company_id', COMPANY_ID)
+    invoicesQ = queryExcludeCancelledOn(invoicesQ, 'order')
     const { data: suppliedInvoices } = await invoicesQ
 
     const rows = []

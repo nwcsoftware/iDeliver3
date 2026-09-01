@@ -49,7 +49,7 @@ export default function ContactPartnerOrders({ contactId, contactName = 'Partner
     if (!contactId) { setRows([]); setLoading(false); return }
     setLoading(true); setError('')
 
-    const ORDER_COLS = 'id, order_number, currency, isclosed, closed_at, scheduled_date, created_at, delivery_fee, total_amount'
+    const ORDER_COLS = 'id, order_number, status, currency, isclosed, closed_at, scheduled_date, created_at, delivery_fee, total_amount'
     const PKG_COLS   = 'delivery_packages(package_price, currency, paid, quantity, provider_id)'
 
     // 1. Orders where this contact is the customer.
@@ -57,6 +57,7 @@ export default function ContactPartnerOrders({ contactId, contactName = 'Partner
       .from('delivery_orders')
       .select(`${ORDER_COLS}, ${PKG_COLS}`)
       .eq('customer_id', contactId)
+      .or('status.is.null,status.neq.cancelled')   // a cancelled order is not their work
     if (COMPANY_ID) qCustomer = qCustomer.eq('company_id', COMPANY_ID)
 
     // 2. Orders carrying one of this partner's packages (inner join filters both
@@ -65,6 +66,7 @@ export default function ContactPartnerOrders({ contactId, contactName = 'Partner
       .from('delivery_orders')
       .select(`${ORDER_COLS}, delivery_packages!inner(package_price, currency, paid, quantity, provider_id)`)
       .eq('delivery_packages.provider_id', contactId)
+      .or('status.is.null,status.neq.cancelled')
     if (COMPANY_ID) qProvider = qProvider.eq('company_id', COMPANY_ID)
 
     const [asCustomer, asProvider] = await Promise.all([qCustomer, qProvider])

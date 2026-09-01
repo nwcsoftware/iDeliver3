@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { cancelOwnOrder, canCustomerCancel, CANCEL_REFUSED, SUPPORT_PHONE } from '../lib/orderCancel'
+import { isCancelledOrder } from '../lib/orderStatus'
 import {
   fetchCustomerThemes, pickCurrent as pickCurrentTheme, applyCustomerTheme,
   themeByKey, DEFAULT_THEME, clearCustomerTheme,
@@ -1000,6 +1001,11 @@ const statusTranslations = {
   Now: 'now',
   Stopped: 'stopped',
   Waiting: 'waiting',
+  // A cancelled order keeps whatever delivery step it was on when it was called
+  // off ('Awaiting Pickup', usually), which would read as still coming. The card
+  // shows this instead.
+  Cancelled: 'orderCancelled',
+  cancelled: 'orderCancelled',
 }
 
 const I18nContext = createContext({
@@ -1055,6 +1061,7 @@ function statusClass(status) {
   if (key === 'pending') return 'bg-amber-100 text-amber-700'
   if (key === 'confirmed') return 'bg-blue-100 text-blue-700'
   if (key === 'completed' || key === 'delivered') return 'bg-fresh-100 text-fresh-700'
+  if (key === 'cancelled') return 'bg-slate-200 text-slate-500'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -3445,6 +3452,9 @@ function HomeScreen({ customerSession, onBook, onOrders, onProfile, onShop, onVi
             )
           `)
           .eq('customer_id', customerSession.contact_id)
+          // The home card is "what is happening now", so a cancelled order is
+          // not it — the customer finds those under My Orders.
+          .or('status.is.null,status.neq.cancelled')
           .order('created_at', { ascending: false })
           .limit(1),
       ])
@@ -3628,6 +3638,12 @@ function orderTypeLabel(order) {
 }
 
 function mapCustomerOrder(order, invoices = [], payments = []) {
+  /* A cancelled order stays in the customer's history — they should be able to
+     see what became of a request they made — but it carries no money with it.
+     Its invoices and payments are dropped here, at the one point every screen
+     reads an order through, so no card, total or balance can pick them up. */
+  const cancelled = isCancelledOrder(order)
+  if (cancelled) { invoices = []; payments = [] }
   const activeItems = (order.order_items || []).filter(item => !item.is_deleted)
   const requirements = activeItems
     .map(item => item.parcel_description || item.item_type || 'Item')
@@ -3642,18 +3658,25 @@ function mapCustomerOrder(order, invoices = [], payments = []) {
     orderNumber: order.order_number,
     type: orderTypeLabel(order),
     status: order.status,
+    cancelled,
     confirmed: order.order_confirmed === true,   // confirmed by the call center → view-only
-    deliveryStatus: order.delivery_status || 'Awaiting Pickup',
+    // Cancelled wins over the delivery step: the parcel is not "awaiting pickup",
+    // it is not coming at all.
+    deliveryStatus: cancelled ? 'Cancelled' : (order.delivery_status || 'Awaiting Pickup'),
     paymentStatus: order.payment_status,
     pickup: order.pickup_address || '',
     drop: order.delivery_address || '',
     schedule: formatOrderSchedule(order),
-    invoice: invoices.length
-      ? `${invoices.length} invoice${invoices.length > 1 ? 's' : ''} / ${formatMoney(invoiceTotal, invoiceCurrency)}`
-      : 'Waiting for quotation',
-    payment: payments.length
-      ? `Collected USD ${paidUsd.toFixed(2)}${paidLbp ? ` / LBP ${paidLbp.toFixed(0)}` : ''}`
-      : order.payment_status || 'Unpaid',
+    invoice: cancelled
+      ? '—'
+      : invoices.length
+        ? `${invoices.length} invoice${invoices.length > 1 ? 's' : ''} / ${formatMoney(invoiceTotal, invoiceCurrency)}`
+        : 'Waiting for quotation',
+    payment: cancelled
+      ? '—'
+      : payments.length
+        ? `Collected USD ${paidUsd.toFixed(2)}${paidLbp ? ` / LBP ${paidLbp.toFixed(0)}` : ''}`
+        : order.payment_status || 'Unpaid',
     requirements: requirements.length ? requirements : (order.order_details_text ? order.order_details_text.split('\n').filter(Boolean) : []),
     raw: order,
     invoices,
@@ -4050,7 +4073,10 @@ function Field({ label, value, type = 'text' }) {
 
 function OrdersScreen({ customerSession, onView, onCancel, refreshKey = 0, deliveryStatusByOrder }) {
   const { t } = useI18n()
-  const deliveryFilters = ['all', 'Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered']
+  /* 'Cancelled' is a filter of its own rather than a delivery step. The four
+     live steps show live orders only, so a cancelled order can never sit in
+     "Awaiting Pickup" looking like it is still coming. */
+  const deliveryFilters = ['all', 'Awaiting Pickup', 'Picked Up', 'In Transit', 'Delivered', 'Cancelled']
   const [orders, setOrders] = useState([])
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
@@ -4074,7 +4100,11 @@ function OrdersScreen({ customerSession, onView, onCancel, refreshKey = 0, deliv
   const filtered = useMemo(() => {
     const text = search.trim().toLowerCase()
     return visibleOrders.filter(order => {
-      const statusMatch = filter === 'all' || order.deliveryStatus === filter
+      const statusMatch = filter === 'all'
+        ? true
+        : filter === 'Cancelled'
+          ? order.cancelled
+          : !order.cancelled && order.deliveryStatus === filter
       const textMatch = !text || order.orderNumber?.toLowerCase().includes(text) || order.drop?.toLowerCase().includes(text)
       return statusMatch && textMatch
     })
@@ -5079,6 +5109,8 @@ export default function CustomerMobileApp() {
         .from('delivery_orders')
         .select('id,order_number,status,delivery_status,payment_status')
         .eq('customer_id', customerSession.contact_id)
+        // No "your order is on its way" for an order that was called off.
+        .or('status.is.null,status.neq.cancelled')
       if (COMPANY_ID) query = query.eq('company_id', COMPANY_ID)
 
       const { data, error } = await query

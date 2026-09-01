@@ -41,6 +41,8 @@ export async function fetchOrdersForPeriod(period, companyId = null) {
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
     if (companyId) q = q.eq('company_id', companyId)
+    // A cancelled order carries no money to check.
+    q = q.or('status.is.null,status.neq.cancelled')
     // `lte` rather than `lt` so orders sharing a timestamp are never skipped;
     // the helper drops the duplicates that overlap causes.
     if (cursor) q = q.lte('created_at', cursor)
