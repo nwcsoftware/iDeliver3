@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { AppProvider }  from './context/AppContext'
@@ -58,7 +58,64 @@ import DeleteDriverPage        from './pages/DeleteDriverPage'
 import CashierBoxResetPage      from './pages/CashierBoxResetPage'
 import DriverCollectionsPage   from './pages/DriverCollectionsPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
+import LandingPage            from './pages/LandingPage'
+import LandingAdminPage       from './pages/LandingAdminPage'
+import LandingBackgroundPage  from './pages/LandingBackgroundPage'
+import { fetchLandingSettings, isDesktopApp } from './lib/landingPage'
 import logo             from './assets/Logo.png'
+
+const LANDING_COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
+
+/* What a visitor meets before there is any session (supabase-fix140.sql).
+
+   The web address opens on the public front page; sign-in is one click away at
+   #/signin, and the hash is kept in step so the back button and a bookmarked
+   link both behave.
+
+   Two deliberate fallbacks to the plain sign-in box:
+
+     · The DESKTOP app, always. Someone who launched the installed Windows app
+       is staff arriving at work, and making them click past a brochure every
+       morning would be an insult dressed as marketing.
+     · The web, whenever there is nothing published — including before
+       fix140 has been run, or if the fetch fails. The front page is an
+       addition; it must never be able to stand between a user and their work. */
+function PublicShell() {
+  const [status, setStatus] = useState('checking')   // checking | landing | login
+  const [signingIn, setSigningIn] = useState(() => window.location.hash.startsWith('#/signin'))
+
+  useEffect(() => {
+    const onHash = () => setSigningIn(window.location.hash.startsWith('#/signin'))
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    fetchLandingSettings(LANDING_COMPANY_ID).then(({ settings }) => {
+      if (alive) setStatus(settings ? 'landing' : 'login')
+    })
+    return () => { alive = false }
+  }, [])
+
+  if (status === 'checking') {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-surface gap-4">
+        <img src={logo} alt="iDeliver" className="w-16 h-16 object-contain" />
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:0ms]"   />
+          <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:150ms]" />
+          <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:300ms]" />
+        </div>
+      </div>
+    )
+  }
+
+  if (status === 'login' || signingIn) {
+    return <LoginPage onBack={status === 'landing' ? () => { window.location.hash = '#/' } : null} />
+  }
+  return <LandingPage onSignIn={() => { window.location.hash = '#/signin' }} />
+}
 
 function AppShell() {
   const { currentUser, loading, hasRole } = useAuth()
@@ -88,7 +145,9 @@ function AppShell() {
   }
 
   if (!currentUser) {
-    return <LoginPage />
+    // The desktop app goes straight to the sign-in window, exactly as it always
+    // has; only the web build meets a visitor with the front page first.
+    return isDesktopApp() ? <LoginPage /> : <PublicShell />
   }
 
   // New account or admin-reset password: block the app until it's changed.
@@ -157,6 +216,8 @@ function AppShell() {
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />
                 <Route path="/settings/shop-categories" element={<ShopCategoriesPage />} />
                 <Route path="/settings/header-background" element={<HeaderBackgroundPage />} />
+                <Route path="/settings/front-page" element={<LandingAdminPage />} />
+                <Route path="/settings/front-page-background" element={<LandingBackgroundPage />} />
                 <Route path="/settings/customer-theme"    element={<CustomerThemePage />} />
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
                 <Route path="/settings/software-subscriptions" element={<SoftwareSubscriptionsPage />} />

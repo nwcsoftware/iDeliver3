@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow, Ban,
-  ArrowRightLeft, Palette, UserX, TrendingUp, Scale,
+  ArrowRightLeft, Palette, UserX, TrendingUp, Scale, Globe, Film,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -103,6 +103,8 @@ export const navGroups = [
     key: 'admin', label: 'Administration', icon: Settings, adminOnly: true,
     items: [
       { to: '/settings/app',                    icon: Settings,     label: 'App Settings' },
+      // The public page visitors meet before signing in (web only).
+      { to: '/settings/front-page',             icon: Globe,        label: 'Front Page' },
       { to: '/settings/users',                  icon: UserCog,      label: 'User Accounts' },
       { to: '/settings/subscriptions',          icon: CreditCard,   label: 'Subscriptions' },
       { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions' },
@@ -117,6 +119,9 @@ export const navGroups = [
       { to: '/settings/driver-collections',  icon: Truck,         label: 'Driver App (Collect)' },
       { to: '/settings/shop-categories',     icon: Tags,          label: 'Shop Categories' },
       { to: '/settings/header-background',   icon: ImageIcon,     label: 'Header Background' },
+      // The clip behind the public front page — heavy media, so it sits with
+      // the other decorative media rather than with the page's words.
+      { to: '/settings/front-page-background', icon: Film,        label: 'Front Page Background' },
       // The customer app's seasonal look: colours + a background movie, by date.
       { to: '/settings/customer-theme',      icon: Palette,       label: 'Customer App Theme' },
       { to: '/settings/messages',            icon: Megaphone,     label: 'Broadcast Messages' },

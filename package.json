@@ -26,6 +26,7 @@
     "jspdf-autotable": "^5.0.8",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.363.0",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-leaflet": "^4.2.1",
@@ -78,7 +79,7 @@
       "icon": "public/icon.png",
       "category": "Office"
     },
-    "copyright": "Copyright \u00a9 2026 _NXCORE",
+    "copyright": "Copyright © 2026 _NXCORE",
     "publish": null,
     "nsis": {
       "oneClick": false,

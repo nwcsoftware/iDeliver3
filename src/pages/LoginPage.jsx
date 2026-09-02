@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Eye, EyeOff, X, LogIn, AlertCircle, Loader, Headset, Store } from 'lucide-react'
+import { Eye, EyeOff, X, LogIn, AlertCircle, Loader, Headset, Store, ArrowLeft } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import logo from '../assets/Logo.png'
 import { APP_NAME, APP_VERSION } from '../lib/appVersion'
@@ -13,7 +13,7 @@ const TABS = [
     help: 'Sign in to your partner or supplier account' },
 ]
 
-export default function LoginPage() {
+export default function LoginPage({ onBack = null }) {
   const { login } = useAuth()
   const [tab,        setTab]        = useState(() => (localStorage.getItem(TAB_KEY) === 'partner' ? 'partner' : 'staff'))
   const [identifier, setIdentifier] = useState('')
@@ -51,7 +51,30 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-surface overflow-hidden">
+    <div className="h-screen flex flex-col bg-surface overflow-hidden relative">
+
+      {/* Back to the public front page. Only rendered when there IS one to go
+          back to — the visitor came from it — so it never offers a door that
+          opens onto the same room. Never present in the desktop app, which has
+          no front page at all.
+
+          Placed over the window rather than inside the frameless title bar:
+          that bar is 8px of drag region built for Electron's chrome, and a
+          control the visitor is meant to find should not be squeezed into it. */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          title="Back to the 3asari3 front page"
+          aria-label="Back to the 3asari3 front page"
+          className="absolute top-4 left-4 z-10 flex items-center gap-2 rounded-xl border border-surface-border
+                     bg-surface-hover/70 px-3 py-2 text-sm text-slate-300 backdrop-blur
+                     transition-colors hover:border-brand-500/40 hover:bg-surface-hover hover:text-white"
+          style={{ WebkitAppRegion: 'no-drag' }}
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span className="hidden sm:inline">Back to 3asari3</span>
+        </button>
+      )}
 
       {/* Frameless title bar — drag region + close */}
       <div
