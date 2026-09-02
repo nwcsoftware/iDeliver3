@@ -108,6 +108,17 @@
   transform-origin: bottom left;
 }
 
+/* The orders list's "Applying filters…" popup. Held invisible through the
+   delay, so a filter that lands in a frame or two never flashes it, while a
+   slow one fades in while the list is still being rebuilt. */
+@keyframes filter-progress-in {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-filter-progress {
+  animation: filter-progress-in .18s ease-out .22s both;
+}
+
 /* Leaflet overrides for dark theme */
 .leaflet-container {
   background: #1e293b !important;

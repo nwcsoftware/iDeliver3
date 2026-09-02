@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react'
 import {
   Plus, Search, Filter, X, Check, Trash2, AlertTriangle,
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
@@ -1167,18 +1167,38 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   /* ── filter ──────────────────────────────────────────────── */
 
-  function matchScheduledDate(o) {
+  /* Everything that narrows the list, gathered into one object. Filtering,
+     sorting and the money totals all run over every order the page holds —
+     on Closed Orders that is the whole history, which is far too much work to
+     do between a click and the next frame. So the criteria are DEFERRED: the
+     toolbar reacts at once (the chip lights up, the box takes the keystroke)
+     and the list catches up in a background render, with a progress popup
+     covering the gap. Identity is stable while nothing changes, which is what
+     lets React tell "still applying" from "done". */
+  const criteria = useMemo(() => ({
+    search, filter, confirmFilter, payFilter, flagFilter,
+    driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter,
+    dateFrom, dateTo, sort,
+  }), [search, filter, confirmFilter, payFilter, flagFilter,
+       driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter,
+       dateFrom, dateTo, sort])
+  const applied = useDeferredValue(criteria)
+  // True while the list on screen is still the previous criteria — drives the
+  // "Applying filters…" popup.
+  const filtering = applied !== criteria
+
+  function matchScheduledDate(o, c) {
     // On the daily list, Ads & Services (Story) orders run over a period rather
     // than on a delivery day, so the scheduled-date range never hides them —
     // every other filter still applies. Closed Orders is a record of finished
     // work, so there the date range applies to them like anything else.
     if (isStoryOrder(o) && !closed) return true
-    if (!dateFrom && !dateTo) return true
+    if (!c.dateFrom && !c.dateTo) return true
     const sd = o.scheduled_date ? o.scheduled_date.slice(0, 10) : ''
     if (!sd) return false                              // no date → excluded once a date filter is set
-    if (dateFrom && dateTo) return sd >= dateFrom && sd <= dateTo  // between two dates (inclusive)
-    if (dateFrom)           return sd === dateFrom     // single scheduled date
-    return sd <= dateTo
+    if (c.dateFrom && c.dateTo) return sd >= c.dateFrom && sd <= c.dateTo  // between two dates (inclusive)
+    if (c.dateFrom)             return sd === c.dateFrom   // single scheduled date
+    return sd <= c.dateTo
   }
 
   // Whether the scheduled-date range is currently pinned to just today, and a
@@ -1201,17 +1221,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
   // Multi-select customer-type filter: empty = all; otherwise the order matches if
   // its customer is ANY of the selected types.
-  function matchCategory(o) {
-    if (categoryFilter.length === 0) return true
-    return categoryFilter.some(t => customerMatchesType(o.customer, t))
+  function matchCategory(o, c) {
+    if (c.categoryFilter.length === 0) return true
+    return c.categoryFilter.some(t => customerMatchesType(o.customer, t))
   }
   function toggleCategory(v) {
     setCategoryFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
   }
-  function matchSource(o) {
-    if (!sourceFilter) return true
+  function matchSource(o, c) {
+    if (!c.sourceFilter) return true
     // Exact match against the actual delivery_orders.order_source value.
-    return (o.order_source || '').trim().toLowerCase() === sourceFilter.toLowerCase()
+    return (o.order_source || '').trim().toLowerCase() === c.sourceFilter.toLowerCase()
   }
   // Distinct order_source values actually present in the data, for the dropdown.
   const sourceOptions = useMemo(() => {
@@ -1239,54 +1259,61 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return null
   }
 
-  const filtered = orders.filter(o => {
-    /* A retired contact is hidden from everyone but the super admin — and so is
-       its work. Leaving the orders on the list while the contact vanished from
-       the pickers would be the worst of both: rows nobody can act on properly. */
-    if (!isSuperAdmin && orderTouchesInactive(o, inactiveContactIds)) return false
-    // 2nd-party view: restrict to orders that name this contact — through a
-    // line, or as the customer the order was raised for. Empty while the
-    // ownership lookup is still running.
-    if (partyContactId && !(ownedOrderIds && partyOwnsOrder(o, partyContactId, ownedOrderIds))) return false
-    // Closed orders live on their own page; the daily Orders page excludes them.
-    const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
-    const q = search.toLowerCase()
+  /* Runs over every order the page holds, so it is memoised on the DEFERRED
+     criteria: a filter change re-renders the toolbar first (popup up), then
+     this runs in the background render that follows. */
+  const filtered = useMemo(() => {
+    const c = applied
+    const q = c.search.toLowerCase()
     // Numbers are shown grouped (account "6089 0774 4864", phone "+961 70 334
     // 868") but stored unspaced, so a search is matched twice: as typed, and
     // with every non-digit stripped from both sides. Typing what is on the
     // screen then finds the row, however it was punctuated.
     const qDigits = q.replace(/\D/g, '')
-    const matchSearch = !search || [
-      o.order_number,
-      o.recipient_name,
-      o.recipient_mobile,
-      o.recipient_whatsapp,
-      o.delivery_address,
-      o.pickup_address,
-      o.main_account,
-      o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
-      o.customer?.account_number,
-      o.customer?.code,             // CST-000123 / PTN-000004, shown in their column
-      o.customer?.mobile,
-    ].some(v => {
-      const text = String(v ?? '').toLowerCase()
-      if (text.includes(q)) return true
-      if (qDigits.length < 3) return false            // "70" would match half the list
-      const digits = text.replace(/\D/g, '')
-      return digits.length > 0 && digits.includes(qDigits)
+    return orders.filter(o => {
+      /* A retired contact is hidden from everyone but the super admin — and so is
+         its work. Leaving the orders on the list while the contact vanished from
+         the pickers would be the worst of both: rows nobody can act on properly. */
+      if (!isSuperAdmin && orderTouchesInactive(o, inactiveContactIds)) return false
+      // 2nd-party view: restrict to orders that name this contact — through a
+      // line, or as the customer the order was raised for. Empty while the
+      // ownership lookup is still running.
+      if (partyContactId && !(ownedOrderIds && partyOwnsOrder(o, partyContactId, ownedOrderIds))) return false
+      // Closed orders live on their own page; the daily Orders page excludes them.
+      const matchClosed = closed ? o.isclosed === true : o.isclosed !== true
+      const matchSearch = !c.search || [
+        o.order_number,
+        o.recipient_name,
+        o.recipient_mobile,
+        o.recipient_whatsapp,
+        o.delivery_address,
+        o.pickup_address,
+        o.main_account,
+        o.customer && `${o.customer.first_name ?? ''} ${o.customer.last_name ?? ''} ${o.customer.company_name ?? ''}`,
+        o.customer?.account_number,
+        o.customer?.code,             // CST-000123 / PTN-000004, shown in their column
+        o.customer?.mobile,
+      ].some(v => {
+        const text = String(v ?? '').toLowerCase()
+        if (text.includes(q)) return true
+        if (qDigits.length < 3) return false            // "70" would match half the list
+        const digits = text.replace(/\D/g, '')
+        return digits.length > 0 && digits.includes(qDigits)
+      })
+      return matchClosed && matchSearch
+        && (c.confirmFilter === 'all' || (c.confirmFilter === 'confirmed' ? isConfirmed(o) : !isConfirmed(o)))
+        && (c.filter === 'all' || normalizeStatus(o.status) === c.filter)
+        && (!c.payFilter      || o.payment_status === c.payFilter)
+        && (!c.flagFilter     || (c.flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
+        && (c.driverFilter.length   === 0 || c.driverFilter.includes(o.driver_id))
+        && (c.customerFilter.length === 0 || c.customerFilter.includes(o.customer_id))
+        && (!c.orderTypeFilter || o.order_type === c.orderTypeFilter)
+        && matchCategory(o, c)
+        && matchSource(o, c)
+        && matchScheduledDate(o, c)
     })
-    return matchClosed && matchSearch
-      && (confirmFilter === 'all' || (confirmFilter === 'confirmed' ? isConfirmed(o) : !isConfirmed(o)))
-      && (filter === 'all' || normalizeStatus(o.status) === filter)
-      && (!payFilter      || o.payment_status === payFilter)
-      && (!flagFilter     || (flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
-      && (driverFilter.length   === 0 || driverFilter.includes(o.driver_id))
-      && (customerFilter.length === 0 || customerFilter.includes(o.customer_id))
-      && (!orderTypeFilter || o.order_type === orderTypeFilter)
-      && matchCategory(o)
-      && matchSource(o)
-      && matchScheduledDate(o)
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, applied, closed, isSuperAdmin, inactiveContactIds, partyContactId, ownedOrderIds])
 
   // Orders in the current (filtered) list that have data-integrity issues, for the
   // "Check orders" audit popup.
@@ -1392,19 +1419,22 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               : { col: null, dir: null })
   }
 
-  // Apply the active column sort to the filtered rows.
-  const sorted = (() => {
-    const get = sort.col && SORT_GETTERS[sort.col]
-    if (!get || !sort.dir) return filtered
+  // Apply the active column sort to the filtered rows. Sorting the whole
+  // history is as heavy as filtering it, so it runs off the deferred sort too.
+  const sorted = useMemo(() => {
+    const { col, dir } = applied.sort
+    const get = col && SORT_GETTERS[col]
+    if (!get || !dir) return filtered
     const arr = [...filtered].sort((a, b) => {
       const va = get(a), vb = get(b)
       const cmp = (typeof va === 'number' && typeof vb === 'number')
         ? va - vb
         : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
-      return sort.dir === 'asc' ? cmp : -cmp
+      return dir === 'asc' ? cmp : -cmp
     })
     return arr
-  })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, applied.sort])
 
   // Ads & Services (Story) orders obey the search and every filter EXCEPT the
   // scheduled-date range (see matchScheduledDate) — `sorted` already has the
@@ -1458,7 +1488,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const liveFiltered = useMemo(() => excludeCancelled(filtered), [filtered])
 
   /* Aggregate the filtered orders into per-currency totals for the pendings popup. */
-  const pendingsSummary = (() => {
+  const pendingsSummary = useMemo(() => {
     const cur = { USD: { order: 0, paid: 0, driverCollect: 0 }, LBP: { order: 0, paid: 0, driverCollect: 0 }, EUR: { order: 0, paid: 0, driverCollect: 0 } }
     for (const o of liveFiltered) {
       const tt = orderTotalsByCurrency(o)
@@ -1475,7 +1505,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       .filter(r => r.order !== 0 || r.paid !== 0)
       .map(r => ({ ...r, pending: round2(r.order - r.paid) }))
     return { count: liveFiltered.length, rows }
-  })()
+  }, [liveFiltered])
 
   /* Sum the per-order amount breakdown (packages, services, local/external retail,
      fees, discount, vat, total, collected, balance, to-collect, pending) across
@@ -1535,15 +1565,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      On the daily list the ads group carries its own summary (below) and the
      floating bar's breakdown covers deliveries only. Closed Orders has no ads
      group, so there everything stays in the one total. */
-  const adsRows      = closed ? [] : filtered.filter(isStoryOrder)
-  const deliveryRows = closed ? filtered : filtered.filter(o => !isStoryOrder(o))
+  const adsRows      = useMemo(() => (closed ? [] : filtered.filter(isStoryOrder)),        [closed, filtered])
+  const deliveryRows = useMemo(() => (closed ? filtered : filtered.filter(o => !isStoryOrder(o))), [closed, filtered])
   // The same two groups with cancelled orders dropped — what the money is summed
   // from. The *Rows arrays above stay whole because they are what gets rendered.
-  const adsLive      = excludeCancelled(adsRows)
-  const deliveryLive = excludeCancelled(deliveryRows)
+  const adsLive      = useMemo(() => excludeCancelled(adsRows),      [adsRows])
+  const deliveryLive = useMemo(() => excludeCancelled(deliveryRows), [deliveryRows])
 
-  const totalsBreakdown = sumBreakdown(deliveryLive)
-  const adsBreakdown    = sumBreakdown(adsLive)
+  // Summing every line of every filtered order is the heaviest thing on the
+  // page — memoised so it runs once per list, not once per render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const totalsBreakdown = useMemo(() => sumBreakdown(deliveryLive), [deliveryLive, partyContactId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const adsBreakdown    = useMemo(() => sumBreakdown(adsLive),      [adsLive, partyContactId])
 
   // Rows shown in the "Totals breakdown" popup. For 2nd-party (supplier/partner)
   // logins we only surface their own packages + external retail invoices totals;
@@ -3104,6 +3138,25 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
             <div>
               <p className="text-sm font-medium text-slate-100">Opening order…</p>
               <p className="text-[11px] text-slate-500 mt-0.5">Loading its items, packages and payments.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Applying a filter re-sifts every order the page holds — the whole
+          history on Closed Orders — which takes a visible moment. This popup
+          says so, and lands BEFORE the work: the toolbar's own render paints
+          it, then the list is rebuilt in the background render that follows.
+          It doesn't block: the search box keeps taking keystrokes underneath. */}
+      {filtering && (
+        <div className="fixed inset-0 z-[190] flex items-center justify-center pointer-events-none">
+          <div className="card px-6 py-5 flex items-center gap-3 shadow-2xl shadow-black/50 border-brand-400/30 animate-filter-progress">
+            <Loader className="w-5 h-5 text-brand-400 animate-spin" />
+            <div>
+              <p className="text-sm font-medium text-slate-100">Applying filters…</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Sifting {orders.length.toLocaleString()} order{orders.length === 1 ? '' : 's'}. This can take a moment.
+              </p>
             </div>
           </div>
         </div>
