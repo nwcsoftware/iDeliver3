@@ -87,6 +87,11 @@ export const navGroups = [
     key: 'reports', label: 'Reports', icon: BarChart3,
     items: [
       { to: '/reports', icon: BarChart3, label: 'Reports' },
+      // Finished work only, per currency: fees, stories, packages, invoices —
+      // with the split by order type and by month.
+      { to: '/closed-orders-report', icon: PackageCheck, label: 'Closed Orders Report' },
+      // Advertising sold, over time — read from the "story" order-service lines.
+      { to: '/story-orders-report', icon: Megaphone, label: 'Story Orders Report' },
       // Earnings & volume over a chosen window (week / month / 3 months / all).
       { to: '/performance', icon: TrendingUp, label: 'Performance' },
       // Credit vs regular customers: fees, packages and shop invoices,

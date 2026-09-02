@@ -14,6 +14,8 @@ import TrackingPage     from './pages/TrackingPage'
 import ReportsPage      from './pages/ReportsPage'
 import PerformanceReportPage from './pages/PerformanceReportPage'
 import CustomerCategoryReportPage from './pages/CustomerCategoryReportPage'
+import ClosedOrdersReportPage from './pages/ClosedOrdersReportPage'
+import StoryOrdersReportPage from './pages/StoryOrdersReportPage'
 import CompanyPage      from './pages/CompanyPage'
 import ProductsPage          from './pages/ProductsPage'
 import ProductInventoryPage  from './pages/ProductInventoryPage'
@@ -123,6 +125,8 @@ function AppShell() {
                 <Route path="/reports"    element={<ReportsPage    />} />
                 <Route path="/performance" element={<PerformanceReportPage />} />
                 <Route path="/customer-categories" element={<CustomerCategoryReportPage />} />
+                <Route path="/closed-orders-report" element={<ClosedOrdersReportPage />} />
+                <Route path="/story-orders-report" element={<StoryOrdersReportPage />} />
                 <Route path="/company"   element={<CompanyPage    />} />
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/inventory"      element={<ProductInventoryPage  />} />
