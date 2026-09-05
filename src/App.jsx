@@ -63,6 +63,10 @@ import LandingAdminPage       from './pages/LandingAdminPage'
 import LandingBackgroundPage  from './pages/LandingBackgroundPage'
 import { fetchLandingSettings, isDesktopApp } from './lib/landingPage'
 import logo             from './assets/Logo.png'
+/* The company's mark, for the wait before the public page appears. The one on
+   the session splash below stays the application's own: by that point the
+   visitor is a user, and it is iDeliver they are waiting for. */
+import brandLogo        from './assets/3asari3-logo-white.png'
 
 const LANDING_COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
 
@@ -101,7 +105,9 @@ function PublicShell() {
   if (status === 'checking') {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-surface gap-4">
-        <img src={logo} alt="iDeliver" className="w-16 h-16 object-contain" />
+        {/* Sized by height so the mark's own 16:9 sets the width. bg-surface is
+            #0f172a, which is why this is the white cut of the logo. */}
+        <img src={brandLogo} alt="3asari3" className="h-20 w-auto object-contain" />
         <div className="flex items-center gap-2 text-slate-500 text-sm">
           <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:0ms]"   />
           <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-bounce [animation-delay:150ms]" />

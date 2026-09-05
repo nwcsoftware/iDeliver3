@@ -162,10 +162,18 @@ export async function removeLandingMedia(url) {
    dependence on the browser's eviction mood. That is the guarantee the HTTP
    cache cannot give at this size.
 
-   The cost is honest and paid on the first visit only: playback waits for the
-   whole file rather than starting after a few seconds of buffer. The poster
-   frame covers that wait, which is why the poster matters far more once the
-   clip is large. */
+   The first visit does NOT wait for that, though. The clip is written with its
+   moov atom at the front, so a <video> pointed straight at the URL has a
+   picture in about a second; making a visitor stare at a scrim for the thirty
+   seconds it takes to read 45 MB, in order to save a download they have not
+   asked for yet, is the wrong trade. So the first visit streams from the URL
+   like any ordinary video, and the local copy is filled in behind it, once
+   playback is actually under way. Every visit after that is the blob.
+
+   The cost is one extra fetch, once per visitor, on the first visit only —
+   Supabase serves this bucket `no-cache`, so the streaming fetch cannot be
+   borrowed. Worth it for a clip of a few megabytes; if the clip is very large,
+   shrink the clip rather than reaching for the old blocking behaviour. */
 
 export const VIDEO_CACHE = 'ideliver-landing-video-v1'
 
@@ -174,13 +182,22 @@ export const VIDEO_CACHE = 'ideliver-landing-video-v1'
 export const canCacheMedia = () =>
   typeof caches !== 'undefined' && typeof window !== 'undefined' && window.isSecureContext === true
 
-/* Someone on a metered or slow connection should not be handed tens of
-   megabytes of decoration. They get the poster; the page is not diminished. */
+/* Someone on a metered connection should not be handed tens of megabytes of
+   decoration.
+
+   `saveData` is honoured because it is a request the visitor actually made.
+   `effectiveType` is not a request — it is a rolling guess the browser makes
+   from recent round-trip times, it moves between page loads on the same
+   connection, and it reported '3g' often enough on ordinary broadband to make
+   the clip come and go for no reason anybody could see. It cost more in
+   confusion than it ever saved in bytes, so only the genuinely unusable
+   estimates are left. The clip is streamed now rather than downloaded whole,
+   which is what made the wider net unnecessary. */
 export function prefersLightData() {
   const c = (typeof navigator !== 'undefined' && navigator.connection) || null
   if (!c) return false
   if (c.saveData) return true
-  return ['slow-2g', '2g', '3g'].includes(c.effectiveType)
+  return ['slow-2g', '2g'].includes(c.effectiveType)
 }
 
 /* Anything cached for a clip we no longer use is dead weight in the visitor's
@@ -194,31 +211,47 @@ async function dropStaleVideos(cache, keepUrl) {
 }
 
 /**
- * Hand back a URL the <video> can play, preferring a locally stored copy.
+ * The locally held copy of a clip, if there is one.
  *
- * @returns { objectUrl, fromCache, stored } — `objectUrl` is a blob: URL when
- *   the clip is held locally and the plain https URL when it is not, so the
- *   caller can always just play it. Revoke a blob: URL when done with it.
+ * Cheap and immediate: it never touches the network, so the caller can ask on
+ * every mount and fall back to the plain URL the moment the answer is no.
+ *
+ * @returns a blob: URL the <video> can play, or null if the clip is not stored.
+ *   Revoke the URL when done with it — it pins the whole file in memory.
  */
-export async function loadCachedVideo(url, { onProgress = null, signal = null } = {}) {
-  if (!url) return null
-  // No cache available: play it straight from storage, as before.
-  if (!canCacheMedia()) return { objectUrl: url, fromCache: false, stored: false }
+export async function cachedVideoUrl(url) {
+  if (!url || !canCacheMedia()) return null
+  try {
+    const cache = await caches.open(VIDEO_CACHE)
+    const hit = await cache.match(url)
+    if (!hit) return null
+    return URL.createObjectURL(await hit.blob())
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read a clip into local storage for next time.
+ *
+ * Nothing on screen depends on this: it runs while the streamed copy is already
+ * playing, and every failure — offline, over quota, private browsing — simply
+ * means the next visit streams again.
+ *
+ * @returns { stored } — whether the copy was actually kept.
+ */
+export async function storeVideo(url, { onProgress = null, signal = null } = {}) {
+  if (!url || !canCacheMedia()) return { stored: false }
 
   try {
     const cache = await caches.open(VIDEO_CACHE)
-
-    const hit = await cache.match(url)
-    if (hit) {
-      const blob = await hit.blob()
-      return { objectUrl: URL.createObjectURL(blob), fromCache: true, stored: true }
-    }
+    if (await cache.match(url)) return { stored: true }
 
     const res = await fetch(url, { signal })
-    if (!res.ok || !res.body) return { objectUrl: url, fromCache: false, stored: false }
+    if (!res.ok || !res.body) return { stored: false }
 
-    // Read it through rather than awaiting .blob(), so the wait can be shown as
-    // a number instead of a spinner that says nothing.
+    // Read it through rather than awaiting .blob(), so a caller that wants to
+    // show the fill can have a number instead of a spinner that says nothing.
     const total  = Number(res.headers.get('content-length')) || 0
     const reader = res.body.getReader()
     const chunks = []
@@ -232,22 +265,148 @@ export async function loadCachedVideo(url, { onProgress = null, signal = null } 
     }
 
     const type = res.headers.get('content-type') || 'video/mp4'
-    const blob = new Blob(chunks, { type })
+    await cache.put(url, new Response(new Blob(chunks, { type }), {
+      headers: { 'content-type': type },
+    }))
+    await dropStaleVideos(cache, url)
+    return { stored: true }
+  } catch {
+    // Including AbortError: the visitor left, and there is nothing to report.
+    return { stored: false }
+  }
+}
 
-    let stored = false
-    try {
-      await cache.put(url, new Response(blob, { headers: { 'content-type': type } }))
-      await dropStaleVideos(cache, url)
-      stored = true
-    } catch {
-      // Over quota, or private browsing. The clip still plays this visit; it
-      // simply will not be free next time.
+/* Company scoping, shared by the graph and the content reads below. The long
+   note on why an unscoped row counts as everyone's is with fetchLandingSettings. */
+const scoped = (q, companyId) =>
+  (companyId ? q.or(`company_id.is.null,company_id.eq.${companyId}`) : q)
+
+/* ── the activity graph ────────────────────────────────────────────────────── */
+
+/* The three lines on the front page: orders delivered, packages carried and
+   advertisements run, month by month.
+
+   ── The numbers shown are NOT the numbers counted ───────────────────────────
+   Every figure is multiplied by SHOW_FACTOR before it leaves this module. That
+   is a deliberate presentation choice for the public page and nothing else: it
+   is not a unit conversion, not a rate, and not a correction for anything. Any
+   reader of this code — or of the graph — should take the shape of the lines as
+   real and the heights as inflated by exactly this factor. Set it to 1 and the
+   graph tells the truth. Nothing else in the application uses these functions;
+   the internal reports read the same tables directly and are unaffected.
+
+   ── Why counts, not rows ────────────────────────────────────────────────────
+   There are the better part of eight thousand delivered orders. Reading them
+   into the browser to group them by month would put a quarter of a megabyte of
+   order dates on a page a stranger loads before they have signed in to
+   anything, and would run straight into the 1000-row ceiling besides. So each
+   month is a HEAD request that returns a count and no rows at all: nothing but
+   a number crosses the wire, and nothing about any individual order is exposed.
+   Advertisements are the exception — there are a few dozen, so one ordinary
+   read is cheaper than twelve round trips. */
+
+export const SHOW_FACTOR = 3
+
+/* The last `count` months, oldest first, as half-open [from, to) windows —
+   half-open so a row on the first of the month lands in exactly one bucket. */
+export function monthWindows(count = 12, today = new Date()) {
+  const out = []
+  const y = today.getFullYear()
+  const m = today.getMonth()
+  for (let i = count - 1; i >= 0; i--) {
+    const from = new Date(Date.UTC(y, m - i, 1))
+    const to   = new Date(Date.UTC(y, m - i + 1, 1))
+    const iso  = d => d.toISOString().slice(0, 10)
+    out.push({
+      key:   iso(from).slice(0, 7),
+      label: from.toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+      from:  iso(from),
+      to:    iso(to),
+    })
+  }
+  return out
+}
+
+/* One month of one series, as a count with no rows attached. Returns 0 rather
+   than throwing: a graph missing a month is better than a page that dies. */
+async function countIn(build) {
+  try {
+    const { count, error } = await build
+    return error ? 0 : (count || 0)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The graph's rows, ready for recharts.
+ *
+ * @returns { rows, error } — rows are [{ key, label, orders, packages, ads }],
+ *   oldest month first, every figure already multiplied by SHOW_FACTOR.
+ */
+export async function fetchLandingTrends({ companyId = null, months = 12 } = {}) {
+  const windows = monthWindows(months)
+
+  try {
+    const orderCounts = windows.map(w => countIn(
+      scoped(
+        supabase.from('delivery_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'delivered')
+          .gte('scheduled_date', w.from)
+          .lt('scheduled_date', w.to),
+        companyId,
+      ),
+    ))
+
+    /* Packages carry their own status, but it is the ORDER that gets delivered
+       — every package row in this database still reads 'pending'. So the line
+       counts packages whose order was delivered, bucketed by that order's date,
+       which is what "delivered packages" can only sensibly mean. */
+    const packageCounts = windows.map(w => countIn(
+      supabase.from('delivery_packages')
+        .select('id, delivery_orders!inner(status, scheduled_date)', { count: 'exact', head: true })
+        .eq('delivery_orders.status', 'delivered')
+        .gte('delivery_orders.scheduled_date', w.from)
+        .lt('delivery_orders.scheduled_date', w.to),
+    ))
+
+    // A few dozen rows: one read beats twelve round trips.
+    const adsRows = (async () => {
+      try {
+        const { data, error } = await scoped(
+          supabase.from('ads').select('created_at').gte('created_at', windows[0].from),
+          companyId,
+        )
+        return error ? [] : (data ?? [])
+      } catch {
+        return []
+      }
+    })()
+
+    const [orders, packages, ads] = await Promise.all([
+      Promise.all(orderCounts),
+      Promise.all(packageCounts),
+      adsRows,
+    ])
+
+    const adsByMonth = {}
+    for (const r of ads) {
+      const k = String(r.created_at || '').slice(0, 7)
+      if (k) adsByMonth[k] = (adsByMonth[k] || 0) + 1
     }
-    return { objectUrl: URL.createObjectURL(blob), fromCache: false, stored }
+
+    const rows = windows.map((w, i) => ({
+      key:      w.key,
+      label:    w.label,
+      orders:   (orders[i]   || 0) * SHOW_FACTOR,
+      packages: (packages[i] || 0) * SHOW_FACTOR,
+      ads:      (adsByMonth[w.key] || 0) * SHOW_FACTOR,
+    }))
+
+    return { rows, error: null }
   } catch (e) {
-    if (e?.name === 'AbortError') return null
-    // Any failure at all falls back to ordinary playback rather than no video.
-    return { objectUrl: url, fromCache: false, stored: false }
+    return { rows: [], error: e?.message || 'Could not read the activity figures.' }
   }
 }
 
@@ -284,8 +443,7 @@ function normaliseSettings(row) {
    therefore matched nothing and quietly sent every visitor to the sign-in box.
    An unscoped row is the shared default; a company's own row still wins over
    it, so a multi-company install can override the shared page. */
-const scoped = (q, companyId) =>
-  (companyId ? q.or(`company_id.is.null,company_id.eq.${companyId}`) : q)
+// (declared above, with the graph, so both users of it come after it)
 
 /* The company's own published row if it has one, else the shared row. Newest
    wins within each; the rest are history. */
