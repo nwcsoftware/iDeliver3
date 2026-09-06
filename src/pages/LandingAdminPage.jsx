@@ -10,6 +10,7 @@ import {
   fetchLandingSettings, fetchLandingPosts, saveLandingSettings, saveLandingPost,
   deleteLandingPost, uploadLandingMedia, removeLandingMedia,
   POST_KINDS, CONTENT_FIELDS, MAX_IMAGE_KB, dayLabel,
+  SOCIAL_PLATFORMS, socialHref, IMAGE_SIDES,
 } from '../lib/landingPage'
 
 const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
@@ -17,12 +18,14 @@ const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
 const EMPTY_POST = {
   id: null, kind: 'event', title: '', body: '', location: '',
   event_date: '', images: [], is_published: true, sort_order: 0,
+  image_side: 'auto',
 }
 
 const EMPTY_SETTINGS = {
   isPublished: true, headline: '', tagline: '', intro: '',
   videoUrl: '', posterUrl: '', videoOpacity: 0.45,
   appDownloadUrl: '', appNote: '', stats: [], contacts: [],
+  socials: [], contactNote: '',
 }
 
 const kb = n => `${(n / 1024).toFixed(0)} MB`
@@ -138,6 +141,7 @@ export default function LandingAdminPage() {
     setForm({
       id: p.id, kind: p.kind, title: p.title, body: p.body, location: p.location,
       event_date: p.day || '', images: p.images, is_published: p.isPublished, sort_order: p.sortOrder,
+      image_side: p.imageSide,
     })
     setFormErr('')
     setModal(p)
@@ -169,6 +173,7 @@ export default function LandingAdminPage() {
     await saveLandingPost({
       id: p.id, kind: p.kind, title: p.title, body: p.body, location: p.location,
       event_date: p.day || '', images: p.images, sort_order: p.sortOrder,
+      image_side: p.imageSide,
       is_published: !p.isPublished,
     }, { companyId: COMPANY_ID, userId: currentUser?.user_id })
     setBusyId(null)
@@ -258,7 +263,9 @@ export default function LandingAdminPage() {
           <p className="text-xs text-rose-200/90">
             {error}
             {/rela|does not exist|schema cache/i.test(error) && (
-              <span className="ml-1 text-rose-200/60">Run supabase-fix140.sql, then reload.</span>
+              <span className="ml-1 text-rose-200/60">
+                Run supabase-fix140.sql and supabase-fix141.sql, then reload.
+              </span>
             )}
           </p>
         </div>
@@ -376,7 +383,7 @@ export default function LandingAdminPage() {
               )}
             </div>
 
-            {/* figures + contacts, both simple label/value lists */}
+            {/* the headline figures: a simple label/value/note list */}
             <PairList
               title="Headline figures"
               note="Three read best. Shown as cards under the welcome."
@@ -385,14 +392,30 @@ export default function LandingAdminPage() {
               placeholders={['Deliveries completed', '48,000', 'since 2024']}
               onChange={rows => setS('stats', rows)}
             />
+            {/* the last panel on the front page: the words over it, the
+                direct lines, and the accounts */}
+            <div className="rounded-xl border border-surface-border bg-surface-hover/20 p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Contact us — the words
+              </h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                The line under the heading of the last panel on the page.
+              </p>
+              <input className="input mt-2 text-xs" value={settings.contactNote}
+                onChange={e => setS('contactNote', e.target.value)}
+                placeholder="Message us wherever you already are — we answer on all of them." />
+            </div>
+
             <PairList
-              title="Contact details"
-              note="A short line at the foot of the page. Optional."
+              title="Direct lines"
+              note="Phone, email, address. Shown at the top of Contact us; a number becomes a tap-to-dial link."
               rows={settings.contacts}
               fields={['label', 'value']}
               placeholders={['Call us', '+961 …']}
               onChange={rows => setS('contacts', rows)}
             />
+
+            <SocialList rows={settings.socials} onChange={rows => setS('socials', rows)} />
 
             <div className="flex flex-wrap items-center gap-3 border-t border-surface-border pt-4">
               <button type="button" onClick={saveSettings} disabled={savingS || !!upload} className="btn-primary">
@@ -489,6 +512,75 @@ export default function LandingAdminPage() {
                 <p className="mt-1 text-[11px] text-slate-500">Leave a blank line between paragraphs.</p>
               </div>
 
+              {/* Where the picture goes (supabase-fix142.sql). News only: an
+                  event is a dated gallery and lays itself out around the
+                  pictures it has, so there is no one picture to place.
+
+                  Three little diagrams rather than a dropdown. The setting is
+                  about a shape, and a shape is quicker to recognise than to
+                  read — the words are underneath for the one that is chosen. */}
+              {form.kind !== 'event' && (
+                <div className="rounded-xl border border-surface-border bg-surface-hover/20 p-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Where the picture goes
+                  </h3>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {IMAGE_SIDES.map(opt => {
+                      const on = (form.image_side || 'auto') === opt.key
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, image_side: opt.key }))}
+                          className={
+                            'flex flex-col items-center gap-2 rounded-lg border p-2.5 transition-colors ' +
+                            (on
+                              ? 'border-brand-500 bg-brand-500/10'
+                              : 'border-surface-border hover:border-slate-500')
+                          }
+                          title={opt.note}
+                        >
+                          {/* The card, drawn small: a filled block is the
+                              picture, the lines are the words. */}
+                          <span className="flex h-9 w-full items-stretch gap-1 rounded border border-slate-700/70 bg-surface p-1">
+                            {opt.key === 'auto' ? (
+                              <span className="flex w-full flex-col gap-1">
+                                <span className="h-3 w-full rounded-sm bg-brand-500/70" />
+                                <span className="h-1 w-3/4 rounded-sm bg-slate-600" />
+                                <span className="h-1 w-1/2 rounded-sm bg-slate-600" />
+                              </span>
+                            ) : (
+                              <>
+                                {opt.key === 'right' && (
+                                  <span className="flex flex-1 flex-col justify-center gap-1">
+                                    <span className="h-1 w-full rounded-sm bg-slate-600" />
+                                    <span className="h-1 w-2/3 rounded-sm bg-slate-600" />
+                                  </span>
+                                )}
+                                <span className="w-[42%] rounded-sm bg-brand-500/70" />
+                                {opt.key === 'left' && (
+                                  <span className="flex flex-1 flex-col justify-center gap-1">
+                                    <span className="h-1 w-full rounded-sm bg-slate-600" />
+                                    <span className="h-1 w-2/3 rounded-sm bg-slate-600" />
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </span>
+                          <span className={'text-[11px] font-medium ' + (on ? 'text-brand-300' : 'text-slate-400')}>
+                            {opt.label}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    {IMAGE_SIDES.find(o => o.key === (form.image_side || 'auto'))?.note}
+                    {' '}On a phone the picture is always on top — there is only one column to put it in.
+                  </p>
+                </div>
+              )}
+
               {/* pictures */}
               <div className="rounded-xl border border-surface-border bg-surface-hover/20 p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -553,7 +645,17 @@ export default function LandingAdminPage() {
 
               {formErr && (
                 <p className="flex items-start gap-2 text-xs text-rose-300">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" /> {formErr}
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  <span>
+                    {formErr}
+                    {/* Every post now carries a picture placement, so an install
+                        that has not run fix142 yet fails on the save rather than
+                        on the read — and the raw message names a column, which
+                        tells the admin nothing they can act on. */}
+                    {/does not exist|schema cache/i.test(formErr) && (
+                      <span className="ml-1 text-rose-200/60">Run supabase-fix142.sql, then reload.</span>
+                    )}
+                  </span>
                 </p>
               )}
             </div>
@@ -573,6 +675,88 @@ export default function LandingAdminPage() {
 
 /* A small editable list of label/value rows — the figures and the contact
    line are the same shape, so they are the same component. */
+/* The accounts behind the "Contact us" panel (supabase-fix141.sql).
+
+   Every platform in the catalogue is listed whether it is filled in or not —
+   an empty box says "we could be on TikTok" in a way an Add button never does,
+   and the admin never has to know that a row is a row. Only the ones with
+   something typed in them are saved; saveLandingSettings drops the rest.
+
+   The box asks for the ID, not the address, and shows the admin exactly what it
+   will be glued to. A pasted URL still works, for the accounts whose address
+   does not follow the usual shape. */
+function SocialList({ rows, onChange }) {
+  const handleOf = key => rows.find(r => r.platform === key)?.handle ?? ''
+
+  const setHandle = (key, value) => {
+    const rest = rows.filter(r => r.platform !== key)
+    onChange(value.trim() ? [...rest, { platform: key, handle: value }] : rest)
+  }
+
+  const groups = [
+    { kind: 'chat',   title: 'Talk to us',
+      note: 'Where a customer sends a message and expects an answer. Shown first.' },
+    { kind: 'social', title: 'Follow us',
+      note: 'Where the company posts. Shown underneath.' },
+  ]
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-hover/20 p-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+        Social accounts
+      </h3>
+      <p className="mt-0.5 text-[11px] text-slate-500">
+        Type the ID only — the address is built for you. Leave a box empty and that
+        platform is left off the page. A WhatsApp number is published to the whole
+        internet, so use the company’s line, not a personal one.
+      </p>
+
+      {groups.map(g => (
+        <div key={g.kind} className="mt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{g.title}</p>
+          <p className="mb-2 text-[11px] text-slate-600">{g.note}</p>
+          <div className="space-y-2">
+            {SOCIAL_PLATFORMS.filter(p => p.kind === g.kind).map(p => {
+              const handle = handleOf(p.key)
+              const href   = socialHref(p, handle)
+              return (
+                <div key={p.key} className="flex flex-wrap items-center gap-2">
+                  <span
+                    className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                    style={{ backgroundColor: p.brand }}
+                  />
+                  <span className="w-20 flex-shrink-0 text-xs font-medium text-slate-300">{p.label}</span>
+                  <span className="hidden flex-shrink-0 text-[11px] text-slate-600 sm:inline">{p.prefix}</span>
+                  <input
+                    className="input min-w-[8rem] flex-1 text-xs"
+                    value={handle}
+                    placeholder={p.hint}
+                    onChange={e => setHandle(p.key, e.target.value)}
+                  />
+                  {/* The one check that matters: whether the address this builds
+                      is the account the admin had in mind. Cheaper to click now
+                      than to find out from a customer. */}
+                  {href ? (
+                    <a href={href} target="_blank" rel="noreferrer noopener"
+                      className="btn-ghost flex-shrink-0 p-1.5 text-xs text-brand-400" title={href}>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  ) : (
+                    <span className="w-[1.85rem] flex-shrink-0" />
+                  )}
+                  {p.idLabel && (
+                    <span className="w-full pl-[7.4rem] text-[11px] text-slate-600">{p.idLabel}</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PairList({ title, note, rows, fields, placeholders, onChange }) {
   const set = (i, k, v) => onChange(rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)))
   const add = () => onChange([...rows, Object.fromEntries(fields.map(f => [f, '']))])

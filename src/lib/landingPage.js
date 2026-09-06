@@ -43,10 +43,126 @@ export const MAX_IMAGE_KB   = 4000
 /* A landscape clip, authored to be looked past rather than at. */
 export const VIDEO_SIZE = { width: 1920, height: 1080 }
 
+/* Which side of the words a news post's picture sits on (supabase-fix142.sql).
+
+   'auto' is the arithmetic that was here before: two cards to a row with the
+   picture on top, and a card left alone on its row widened to a side-on one.
+   Naming a side opts a post out of that and gives it the whole row, because
+   half a two-column grid is not enough width for a picture and a paragraph to
+   sit beside each other and still be readable. */
+export const IMAGE_SIDES = [
+  { key: 'auto',  label: 'Automatic',    note: 'Picture on top, two cards to a row. What every post did before.' },
+  { key: 'left',  label: 'Picture left',  note: 'Its own row, picture to the left of the words.' },
+  { key: 'right', label: 'Picture right', note: 'Its own row, picture to the right of the words.' },
+]
+
+/* Anything unrecognised becomes 'auto'. A decorative setting on a public page
+   should degrade to the old layout, never to a broken one. */
+export const imageSideOf = v =>
+  (['left', 'right'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'auto')
+
 export const POST_KINDS = [
   { key: 'news',  label: 'News',  note: 'An announcement. Shown as a card, newest first.' },
   { key: 'event', label: 'Event', note: 'Something that happened on a day. Shown as a dated gallery.' },
 ]
+
+/* ── the accounts a customer can reach the company on (supabase-fix141.sql) ──
+
+   The HANDLE is what is stored, never the address. Two reasons, and both have
+   bitten this kind of list before:
+
+     · A platform can move. twitter.com became x.com, and every stored URL in
+       the world became a redirect nobody controls. Here it is one line below.
+     · A handle is what the admin actually knows. Asked for a URL, people paste
+       whatever the browser was showing — a post, a reel, a session-tagged
+       share link — and the "profile" button lands on a photograph from 2023.
+
+   So the box asks for the ID, `prefix` shows the admin what it will be glued
+   to, and `build` glues it. A full URL pasted in anyway is honoured as-is
+   (see socialHref), because a few accounts genuinely do not follow the shape —
+   a LinkedIn showcase page, a Facebook page that is still a numeric id.
+
+   `kind` splits the list in two on the page: 'chat' is somewhere a message
+   arrives and an answer is expected; 'social' is somewhere the company posts.
+   A customer with a question wants the first group, and should not have to
+   read past six logos to find it. */
+const digits = h => String(h).replace(/\D+/g, '')
+
+export const SOCIAL_PLATFORMS = [
+  { key: 'whatsapp',  label: 'WhatsApp',  kind: 'chat',   brand: '#25D366',
+    prefix: 'wa.me/', hint: '96170123456', idLabel: 'The number in full, with the country code and no +',
+    // Everything but the digits is thrown away, so '+961 70 123 456' and
+    // '96170123456' are the same account. Nothing left means no link at all —
+    // wa.me with no number is a page about WhatsApp, not a way to reach anyone.
+    build: (h) => { const d = digits(h); return d ? `https://wa.me/${d}` : '' } },
+  { key: 'telegram',  label: 'Telegram',  kind: 'chat',   brand: '#2AABEE',
+    prefix: 't.me/',  hint: '3asari3',
+    build: h => `https://t.me/${h}` },
+  { key: 'messenger', label: 'Messenger', kind: 'chat',   brand: '#A334FA',
+    prefix: 'm.me/',  hint: '3asari3', idLabel: 'The same name as the Facebook page',
+    build: h => `https://m.me/${h}` },
+
+  { key: 'facebook',  label: 'Facebook',  kind: 'social', brand: '#1877F2',
+    prefix: 'facebook.com/',  hint: '3asari3',
+    build: h => `https://www.facebook.com/${h}` },
+  { key: 'instagram', label: 'Instagram', kind: 'social', brand: '#E4405F',
+    prefix: 'instagram.com/', hint: '3asari3',
+    build: h => `https://www.instagram.com/${h}` },
+  { key: 'tiktok',    label: 'TikTok',    kind: 'social', brand: '#FF3B5C',
+    prefix: 'tiktok.com/@',   hint: '3asari3',
+    build: h => `https://www.tiktok.com/@${h}` },
+  { key: 'snapchat',  label: 'Snapchat',  kind: 'social', brand: '#F7C700',
+    prefix: 'snapchat.com/add/', hint: '3asari3',
+    build: h => `https://www.snapchat.com/add/${h}` },
+  { key: 'linkedin',  label: 'LinkedIn',  kind: 'social', brand: '#0A66C2',
+    prefix: 'linkedin.com/company/', hint: '3asari3', idLabel: 'The company page, not a person',
+    build: h => `https://www.linkedin.com/company/${h}` },
+  { key: 'x',         label: 'X',         kind: 'social', brand: '#94A3B8',
+    prefix: 'x.com/',         hint: '3asari3', idLabel: 'Formerly Twitter',
+    build: h => `https://x.com/${h}` },
+  { key: 'youtube',   label: 'YouTube',   kind: 'social', brand: '#FF0000',
+    prefix: 'youtube.com/@',  hint: '3asari3',
+    build: h => `https://www.youtube.com/@${h}` },
+]
+
+export const socialPlatform = key =>
+  SOCIAL_PLATFORMS.find(p => p.key === String(key || '').toLowerCase()) || null
+
+/* What a handle reads as on the page. The '@' is how people write these to each
+   other, so it goes back on for the platforms that use one — but a WhatsApp
+   entry is a phone number, and '@96170…' would be nonsense. */
+export const socialLabel = (platform, handle) => {
+  const h = trim(handle)
+  if (!h) return ''
+  if (/^https?:\/\//i.test(h)) return h.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '')
+  if (platform?.key === 'whatsapp') return `+${digits(h)}`
+  return `@${h.replace(/^@+/, '')}`
+}
+
+/* The address to send someone to. A pasted URL wins over the pattern; anything
+   else is a handle, with the leading '@' and any stray slashes taken off before
+   it is glued on — people type '@3asari3' because that is how the name is
+   written down, and '3asari3/' because they copied it out of an address bar. */
+export const socialHref = (platform, handle) => {
+  const h = trim(handle)
+  if (!h || !platform) return ''
+  if (/^https?:\/\//i.test(h)) return h
+  const clean = h.replace(/^@+/, '').replace(/^\/+|\/+$/g, '')
+  return clean ? platform.build(clean) : ''
+}
+
+/* The saved entries worth showing, in the catalogue's own order with the empty
+   ones dropped. The order matters: it is the order the admin screen lists them
+   in, so what a visitor sees cannot come out shuffled against what was typed. */
+export const publishedSocials = (rows) =>
+  SOCIAL_PLATFORMS
+    .map((platform) => {
+      const row = asArray(rows).find(r => String(r?.platform || '').toLowerCase() === platform.key)
+      const handle = trim(row?.handle)
+      const href = socialHref(platform, handle)
+      return href ? { platform, handle, href, text: socialLabel(platform, handle) } : null
+    })
+    .filter(Boolean)
 
 /* The desktop app, as opposed to the same build served in a browser. Electron's
    preload is the only thing that puts `window.electron` there, so this is a
@@ -431,6 +547,13 @@ function normaliseSettings(row) {
     appNote:         trim(row.app_note),
     stats:    asArray(row.stats).filter(s => trim(s?.label) || trim(s?.value)),
     contacts: asArray(row.contacts).filter(c => trim(c?.label) || trim(c?.value)),
+    contactNote: trim(row.contact_note),
+    /* Kept as the raw entries rather than the rendered links, because the admin
+       screen edits this same shape. The front page runs it through
+       publishedSocials() to drop the blanks and build the addresses. */
+    socials: asArray(row.socials)
+      .map(r => ({ platform: String(r?.platform || '').toLowerCase(), handle: trim(r?.handle) }))
+      .filter(r => r.platform && socialPlatform(r.platform)),
   }
 }
 
@@ -480,6 +603,7 @@ function normalisePost(row) {
     location:  trim(row.location),
     day:       postDay(row),
     sortOrder: Number(row.sort_order) || 0,
+    imageSide: imageSideOf(row.image_side),
     images:    asArray(row.images)
       .map(i => ({ url: trim(i?.url), caption: trim(i?.caption) }))
       .filter(i => i.url),
@@ -523,7 +647,8 @@ export async function fetchLandingPosts({ companyId = null, publishedOnly = true
    copy it happened to be holding: an admin fixing a typo at the wrong moment
    would wipe a 50 MB clip somebody had just uploaded. */
 export const CONTENT_FIELDS    = ['is_published', 'headline', 'tagline', 'intro',
-                                  'app_download_url', 'app_note', 'stats', 'contacts']
+                                  'app_download_url', 'app_note', 'stats', 'contacts',
+                                  'socials', 'contact_note']
 export const BACKGROUND_FIELDS = ['video_url', 'poster_url', 'video_opacity']
 
 export async function saveLandingSettings(form, { companyId = null, userId = null, id = null, only = null } = {}) {
@@ -541,6 +666,14 @@ export async function saveLandingSettings(form, { companyId = null, userId = nul
       .filter(s => s.label || s.value),
     contacts: asArray(form.contacts).map(c => ({ label: trim(c.label), value: trim(c.value) }))
       .filter(c => c.label || c.value),
+    contact_note: trim(form.contactNote) || null,
+    /* Only the platforms with something in the box are stored. The admin screen
+       shows every platform in the catalogue whether it is filled in or not, so
+       saving the form as it stands would otherwise write ten rows of nothing
+       and grow one more every time the catalogue does. */
+    socials: asArray(form.socials)
+      .map(r => ({ platform: String(r?.platform || '').toLowerCase(), handle: trim(r?.handle) }))
+      .filter(r => r.handle && socialPlatform(r.platform)),
   }
   const picked = only
     ? Object.fromEntries(only.filter(k => k in all).map(k => [k, all[k]]))
@@ -576,6 +709,7 @@ export async function saveLandingPost(form, { companyId = null, userId = null } 
     images:       asArray(form.images).map(i => ({ url: trim(i.url), caption: trim(i.caption) })).filter(i => i.url),
     is_published: form.is_published !== false,
     sort_order:   Number(form.sort_order) || 0,
+    image_side:   imageSideOf(form.image_side),
     updated_at:   new Date().toISOString(),
     ...(companyId ? { company_id: companyId } : {}),
   }

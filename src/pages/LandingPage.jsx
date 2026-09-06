@@ -6,6 +6,8 @@ import {
 import {
   LogIn, MapPin, CalendarDays, X, ChevronLeft, ChevronRight, Smartphone,
   Loader, ArrowDown, Apple, Bot, TrendingUp, ShoppingBag,
+  Facebook, Instagram, Linkedin, Twitter, Youtube, Ghost, Music2,
+  MessageCircle, MessagesSquare, Send, Phone, Mail, Globe, ExternalLink,
 } from 'lucide-react'
 import {
   APP_NAME, APP_VERSION, PRODUCT_TITLE, BRAND_MARK, VENDOR_MARK, VENDOR_GROUP,
@@ -14,6 +16,7 @@ import {
 import {
   fetchLandingSettings, fetchLandingPosts, paragraphsOf, dayLabel, groupByMonth,
   cachedVideoUrl, storeVideo, prefersLightData, fetchLandingTrends,
+  publishedSocials,
 } from '../lib/landingPage'
 
 /* Bundled rather than fetched from storage: the welcome is the first thing a
@@ -603,6 +606,242 @@ function EventCard({ post, onOpen, wide = false }) {
   )
 }
 
+/* Which shape each news card takes, worked out before any of them is drawn.
+
+   It used to be one line — `news.length % 2 === 1 && n === news.length - 1` —
+   and that was correct only while every card was the same width. Now a post can
+   claim a whole row for itself, and the arithmetic no longer holds: the last
+   card is not necessarily the odd one out any more, and a half card sitting
+   immediately before a full-width one is stranded beside an empty half-row.
+
+   So the row is walked instead of computed. A post that has chosen a side takes
+   the whole row. The rest pair up two to a row, and any left facing a wide card
+   or the end of the list is widened as well — picture left, which is what the
+   old rule did to the odd one out.
+
+   Deliberately NOT `grid-flow-dense`: CSS would happily fill the holes by
+   pulling a later card up into one, and the news reads newest first. A tidy
+   grid is not worth reordering the news to get. */
+function planNews(posts) {
+  const plan = posts.map(post => ({
+    post,
+    // 'auto' means "no opinion", so it is left null here and decided below.
+    side: post.imageSide === 'left' || post.imageSide === 'right' ? post.imageSide : null,
+  }))
+
+  for (let i = 0; i < plan.length; i++) {
+    if (plan[i].side) continue                  // already has the row to itself
+    const next = plan[i + 1]
+    if (next && !next.side) { i++; continue }   // a pair: both stay half-width
+    plan[i].side = 'left'                       // alone on its row — widen it
+  }
+  return plan
+}
+
+/* ── contact us ────────────────────────────────────────────────────────────── */
+
+/* The icons.
+
+   lucide draws five of these as brand marks — Facebook, Instagram, LinkedIn,
+   Twitter (X's old bird) and YouTube — and has nothing for the rest. Rather
+   than paste in traced copies of five more logos, the remainder use the lucide
+   glyph that each platform's own mark already is: Snapchat is a ghost, TikTok
+   is a musical note, Telegram is a paper plane, WhatsApp and Messenger are
+   speech bubbles. They read correctly, they are drawn in the same stroke as
+   every other icon on this page, and nothing here is a company's trademark
+   redrawn by us. The platform is named in words beside it regardless, which is
+   what a visitor actually reads. */
+const SOCIAL_ICONS = {
+  whatsapp:  MessageCircle,
+  telegram:  Send,
+  messenger: MessagesSquare,
+  facebook:  Facebook,
+  instagram: Instagram,
+  tiktok:    Music2,
+  snapchat:  Ghost,
+  linkedin:  Linkedin,
+  x:         Twitter,
+  youtube:   Youtube,
+}
+
+/* A direct line — dialled, messaged or written to, rather than read.
+
+   The admin types a label and a value, "Call us" / "+961 …", and knows nothing
+   about hrefs; so the pair decides what it becomes. Something with an @ in it
+   is a mailto:, a URL is itself, a number is a tel:, and anything else is
+   simply text.
+
+   Except that a number is not always a phone call. The live row on this install
+   reads "Don't call, send whatsapp — +961 71 392 692", and turning that into a
+   tap-to-dial link does the one thing the label asks nobody to do. So the LABEL
+   is read first: if it names a messaging app, the number becomes a link into
+   that app instead. It costs one regex and it is the difference between a
+   customer reaching someone and a phone ringing in an office that said not to
+   ring it.
+
+   Guessing wrong costs nothing — the line still shows, it is just not tappable
+   — and guessing right saves a customer on a phone from copying a number out
+   by hand. */
+function directLine(label, value) {
+  const v = String(value ?? '').trim()
+  if (!v) return null
+  const l = String(label ?? '')
+  const digits = v.replace(/\D+/g, '')
+
+  if (/^https?:\/\//i.test(v)) return { href: v, Icon: Globe, external: true }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return { href: `mailto:${v}`, Icon: Mail }
+
+  // A number, written with the punctuation people write numbers with. The digit
+  // count is what stops "24/7" or "Floor 3" from becoming a link at all.
+  const isNumber = /^\+?[\d\s()./-]{6,}$/.test(v) && digits.length >= 6
+  if (!isNumber) return { href: '', Icon: MapPin }
+
+  // Arabic and English, because the label is whatever the admin typed.
+  if (/whats\s*-?\s*app|واتس/i.test(l)) {
+    return { href: `https://wa.me/${digits}`, Icon: MessageCircle, external: true, brand: '#25D366' }
+  }
+  if (/telegram|تليجرام|تلغرام/i.test(l)) {
+    return { href: `https://t.me/+${digits}`, Icon: Send, external: true, brand: '#2AABEE' }
+  }
+  return { href: `tel:${v.replace(/[^\d+]/g, '')}`, Icon: Phone }
+}
+
+function SocialTile({ entry }) {
+  const Icon = SOCIAL_ICONS[entry.platform.key] || Globe
+  return (
+    <a
+      href={entry.href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="group flex items-center gap-3 rounded-xl border border-slate-300/60 bg-white/70 px-4 py-3 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-slate-400 hover:bg-white/85 hover:shadow-md"
+    >
+      {/* The brand colour is set inline rather than as a class: it comes from
+          the platform catalogue in lib/landingPage, and Tailwind cannot build
+          a class it has never seen written down. */}
+      <span
+        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: `${entry.platform.brand}1A`, color: entry.platform.brand }}
+      >
+        <Icon className="h-5 w-5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-slate-900">{entry.platform.label}</span>
+        {/* A handle can be longer than its tile. It is truncated rather than
+            allowed to push the grid out of shape — the link works whether or
+            not the last letter of the name is visible. */}
+        <span className="block truncate text-xs text-slate-600">{entry.text}</span>
+      </span>
+      <ExternalLink className="ml-auto h-3.5 w-3.5 flex-shrink-0 text-slate-400 transition-colors group-hover:text-slate-600" />
+    </a>
+  )
+}
+
+function SocialGroup({ title, entries }) {
+  if (entries.length === 0) return null
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700">{title}</h3>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {entries.map(e => <SocialTile key={e.platform.key} entry={e} />)}
+      </div>
+    </div>
+  )
+}
+
+/* The last thing on the page, and the only light thing on it.
+
+   Everything above sits on the clip in dark glass, which is right for a page
+   someone is looking AT. This is a panel someone looks THROUGH, for a number or
+   a name — so it is inverted: a pale ground, dark text, and the marks in their
+   own colours, which need a light ground to read as themselves anyway.
+
+   How pale is not a taste question, it is a contrast one. The panel is white at
+   70% over whatever frame of the clip happens to be behind it, and the worst
+   case is a black frame: against that the ground lands at #b2b2b2, where
+   slate-900 reads at 8.5:1 and slate-700 at 4.9:1 — both clear of the 4.5:1 AA
+   floor for text this size. slate-500 manages 2.3:1 there, which is why none of
+   the greys in here are lighter than slate-600, and why the two lines sitting
+   directly on the panel rather than on a tile are slate-700. Open the panel
+   further and those numbers fall with it; 70% is the floor for a light panel
+   with dark text on it, not a preference.
+
+   The blur does the rest of the work the lost opacity used to do: at
+   backdrop-blur-2xl there is no legible detail behind the words, only colour.
+
+   Two groups, in this order. "Talk to us" is somewhere a message arrives and an
+   answer is expected; "Follow us" is somewhere the company posts. Someone with
+   a question about an order wants the first, and should not have to read past
+   six logos to reach it. */
+function ContactUs({ socials, contacts, note }) {
+  const chat   = socials.filter(s => s.platform.kind === 'chat')
+  const social = socials.filter(s => s.platform.kind === 'social')
+  const lines  = contacts.filter(c => String(c.value ?? '').trim())
+
+  // Nothing configured: no empty panel with a heading standing over it.
+  if (socials.length === 0 && lines.length === 0) return null
+
+  return (
+    <section
+      id="front-contact"
+      className="mt-16 scroll-mt-24 overflow-hidden rounded-2xl border border-white/50 bg-white/70 p-6 text-slate-900 shadow-2xl backdrop-blur-2xl sm:p-9 lg:scroll-mt-36"
+    >
+      <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
+        <MessagesSquare className="h-6 w-6 text-brand-600" /> Contact us
+      </h2>
+      <p className="mt-1 max-w-2xl text-sm text-slate-700">
+        {note || 'Message us wherever you already are — we answer on all of them.'}
+      </p>
+
+      {/* The direct lines first, and across the full width: a phone number is
+          still the fastest way to settle a question about a delivery that is
+          already out, and it should not be underneath ten logos. */}
+      {lines.length > 0 && (
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {lines.map((c, i) => {
+            const link = directLine(c.label, c.value)
+            const Icon = link?.Icon || MapPin
+            const body = (
+              <>
+                <span
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-700"
+                  style={link?.brand ? { backgroundColor: `${link.brand}1A`, color: link.brand } : undefined}
+                >
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[11px] uppercase tracking-wider text-slate-600">{c.label}</span>
+                  <span className="block break-words text-sm font-semibold text-slate-900">{c.value}</span>
+                </span>
+              </>
+            )
+            return link?.href ? (
+              <a
+                key={i}
+                href={link.href}
+                {...(link.external ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+                className="flex items-center gap-3 rounded-xl border border-slate-300/60 bg-white/70 px-4 py-3 shadow-sm backdrop-blur-sm transition-colors hover:border-brand-500/60 hover:bg-white/85"
+              >
+                {body}
+              </a>
+            ) : (
+              <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-300/60 bg-white/70 px-4 py-3 shadow-sm backdrop-blur-sm">
+                {body}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {(chat.length > 0 || social.length > 0) && (
+        <div className="mt-8 space-y-8">
+          <SocialGroup title="Talk to us" entries={chat} />
+          <SocialGroup title="Follow us"  entries={social} />
+        </div>
+      )}
+    </section>
+  )
+}
+
 /* ── the page ──────────────────────────────────────────────────────────────── */
 
 export default function LandingPage({ onSignIn }) {
@@ -647,6 +886,9 @@ export default function LandingPage({ onSignIn }) {
   const tagline  = settings?.tagline  || ''
   const intro    = paragraphsOf(settings?.intro)
   const stats    = settings?.stats ?? []
+  /* Built here rather than inside the section, so it can decide whether the
+     whole panel is worth drawing before it draws any of it. */
+  const socials  = useMemo(() => publishedSocials(settings?.socials), [settings])
 
   return (
     <div className="relative min-h-screen overflow-x-hidden text-slate-100">
@@ -841,51 +1083,55 @@ export default function LandingPage({ onSignIn }) {
         {news.length > 0 && (
           <section id="front-news" className="mt-16 scroll-mt-24 lg:scroll-mt-36">
             <h2 className="text-2xl font-semibold text-white">News</h2>
-            {/* Same rule as the events below: the odd card out takes the whole
-                row and turns side-on rather than leaving half a row blank. */}
+            {/* Each post says where its picture goes; planNews turns those
+                answers into rows. A card with a side gets the whole row, the
+                rest pair up, and none is left beside an empty half-row. */}
             <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-              {news.map((p, n) => {
-                const wide = news.length % 2 === 1 && n === news.length - 1
-                return (
-                  <article
-                    key={p.id}
-                    className={
-                      'overflow-hidden border border-white/10 bg-white/[0.04] backdrop-blur-md' +
-                      (wide ? ' md:col-span-2 md:flex md:min-h-[16rem]' : '')
-                    }
-                  >
-                    {p.images[0] && (
-                      <button
-                        type="button"
-                        onClick={() => openBox(p, 0)}
+              {planNews(news).map(({ post: p, side }) => (
+                <article
+                  key={p.id}
+                  className={
+                    'overflow-hidden border border-white/10 bg-white/[0.04] backdrop-blur-md' +
+                    (side ? ' md:col-span-2 md:flex md:min-h-[16rem]' : '') +
+                    /* The ONLY difference between the two sides. Reversing the
+                       flex row rather than reordering the markup keeps the
+                       picture first in the document, which is the order both a
+                       screen reader and a phone want: below `md` this card
+                       stacks, and the picture belongs on top. */
+                    (side === 'right' ? ' md:flex-row-reverse' : '')
+                  }
+                >
+                  {p.images[0] && (
+                    <button
+                      type="button"
+                      onClick={() => openBox(p, 0)}
+                      className={
+                        'group relative block w-full overflow-hidden' +
+                        (side ? ' md:w-[45%] md:shrink-0' : '')
+                      }
+                    >
+                      <img
+                        src={p.images[0].url}
+                        alt={p.images[0].caption || p.title}
+                        loading="lazy"
                         className={
-                          'group relative block w-full overflow-hidden' +
-                          (wide ? ' md:w-[45%] md:shrink-0' : '')
+                          'h-44 w-full object-cover transition-transform duration-500 group-hover:scale-105' +
+                          (side ? ' md:absolute md:inset-0 md:h-full' : '')
                         }
-                      >
-                        <img
-                          src={p.images[0].url}
-                          alt={p.images[0].caption || p.title}
-                          loading="lazy"
-                          className={
-                            'h-44 w-full object-cover transition-transform duration-500 group-hover:scale-105' +
-                            (wide ? ' md:absolute md:inset-0 md:h-full' : '')
-                          }
-                        />
-                      </button>
+                      />
+                    </button>
+                  )}
+                  <div className={'space-y-2 p-5' + (side ? ' md:flex-1 md:self-center md:p-8' : '')}>
+                    {p.day && (
+                      <p className="text-[11px] uppercase tracking-wider text-brand-300/80">{dayLabel(p.day)}</p>
                     )}
-                    <div className={'space-y-2 p-5' + (wide ? ' md:flex-1 md:self-center md:p-8' : '')}>
-                      {p.day && (
-                        <p className="text-[11px] uppercase tracking-wider text-brand-300/80">{dayLabel(p.day)}</p>
-                      )}
-                      {p.title && <h3 className="text-lg font-semibold text-white">{p.title}</h3>}
-                      {paragraphsOf(p.body).map((t, i) => (
-                        <p key={i} className="text-sm leading-relaxed text-slate-300">{t}</p>
-                      ))}
-                    </div>
-                  </article>
-                )
-              })}
+                    {p.title && <h3 className="text-lg font-semibold text-white">{p.title}</h3>}
+                    {paragraphsOf(p.body).map((t, i) => (
+                      <p key={i} className="text-sm leading-relaxed text-slate-300">{t}</p>
+                    ))}
+                  </div>
+                </article>
+              ))}
             </div>
           </section>
         )}
@@ -927,17 +1173,16 @@ export default function LandingPage({ onSignIn }) {
           </section>
         )}
 
-        {/* ── contact ─────────────────────────────────────────────────────── */}
-        {(settings?.contacts?.length ?? 0) > 0 && (
-          <section className="mt-16 flex flex-wrap items-center gap-x-8 gap-y-3 border border-white/10 bg-white/[0.04] p-6 backdrop-blur-md">
-            {settings.contacts.map((c, i) => (
-              <div key={i}>
-                <p className="text-[11px] uppercase tracking-wider text-slate-500">{c.label}</p>
-                <p className="text-sm text-slate-200">{c.value}</p>
-              </div>
-            ))}
-          </section>
-        )}
+        {/* ── contact us ──────────────────────────────────────────────────── */}
+        {/* The direct lines used to be a strip of their own here. They are
+            now inside the panel below with the accounts, so there is ONE
+            place on the page that answers "how do I reach you" rather than
+            two that each answer half of it. */}
+        <ContactUs
+          socials={socials}
+          contacts={settings?.contacts ?? []}
+          note={settings?.contactNote}
+        />
       </main>
 
       {/* Pinned to the bottom of the window rather than to the end of the page:
