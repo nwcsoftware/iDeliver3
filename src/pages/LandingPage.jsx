@@ -5,7 +5,7 @@ import {
 } from 'recharts'
 import {
   LogIn, MapPin, CalendarDays, X, ChevronLeft, ChevronRight, Smartphone,
-  Loader, ArrowDown, Apple, Bot, TrendingUp,
+  Loader, ArrowDown, Apple, Bot, TrendingUp, ShoppingBag,
 } from 'lucide-react'
 import {
   APP_NAME, APP_VERSION, PRODUCT_TITLE, BRAND_MARK, VENDOR_MARK, VENDOR_GROUP,
@@ -35,6 +35,20 @@ const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || null
    a dead link or a page pretending to be a listing that is not there. Replace
    these two lines with the real listing URLs when the app is published; nothing
    else on the page has to change. */
+/* The customer app, opened as its own page.
+
+   AppShell reads this route before it reads anything about a session, so a
+   visitor who has signed in to nothing still lands in the shop rather than
+   back on this page. It has to be a NEW tab, and not only because it is
+   pleasanter: that route test runs once, off window.location at render time,
+   and is deaf to a hash that changes under it — a same-tab jump would leave
+   the visitor looking at the front page with #/customer in the address bar.
+   A fresh document reads the hash fresh, and the question does not arise.
+
+   Built from the current path so it survives being served from a sub-path;
+   only the fragment is ours to set. */
+const CUSTOMER_APP_HREF = `${window.location.pathname}${window.location.search}#/customer`
+
 const APPLE_APP_URL   = 'https://apps.apple.com/search?term=3asari3'
 const ANDROID_APP_URL = 'https://play.google.com/store/search?q=3asari3&c=apps'
 
@@ -740,17 +754,32 @@ export default function LandingPage({ onSignIn }) {
               </div>
             )}
 
-            {/* Straight to the events. If a page is published with news but
-                no events yet the anchor would point at nothing, so it falls back
-                to the news heading rather than jumping nowhere. */}
-            {(news.length > 0 || events.length > 0) && (
+            {/* The way in for someone who came here to buy something, and the
+                way down for someone who came to read. One row: they are the two
+                things a visitor can do from here, and the shop is the louder of
+                them — filled where the other is only coloured text. */}
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
               <a
-                href={events.length > 0 ? '#front-events' : '#front-news'}
-                className="mt-8 inline-flex items-center gap-2 self-start text-sm text-purple-400 transition-colors hover:text-white"
+                href={CUSTOMER_APP_HREF}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-flex items-center gap-2 rounded-xl border border-brand-400/50 bg-brand-500/30 px-5 py-2.5 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-brand-500/50"
               >
-                <ArrowDown className="h-4 w-4" /> See what’s happening
+                <ShoppingBag className="h-4 w-4" /> Shop online
               </a>
-            )}
+
+              {/* Straight to the events. If a page is published with news but no
+                  events yet the anchor would point at nothing, so it falls back
+                  to the news heading rather than jumping nowhere. */}
+              {(news.length > 0 || events.length > 0) && (
+                <a
+                  href={events.length > 0 ? '#front-events' : '#front-news'}
+                  className="inline-flex items-center gap-2 text-sm text-purple-400 transition-colors hover:text-white"
+                >
+                  <ArrowDown className="h-4 w-4" /> See what’s happening
+                </a>
+              )}
+            </div>
           </div>
         </section>
 
