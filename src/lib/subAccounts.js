@@ -307,10 +307,21 @@ export function subAccountBalance({ account, orders = [], payments = [], account
  * Returns { ok, reason } — reason is a user-facing sentence when ok is false.
  *
  * `amount` is the unpaid balance the order would leave behind, in `currency`.
+ *
+ * `owingByCurrency` is that same balance in EVERY currency the order carries.
+ * It matters only for a cash account, which has to be settled in all of them:
+ * an order whose USD was collected at the door but whose LBP was not has not
+ * been paid, and passing only the order's primary currency would let it close.
+ * Omit it and the single `amount` is used, which is the old behaviour.
  */
-export function checkSubAccountCharge({ account, amount, currency, outstanding = 0 }) {
+export function checkSubAccountCharge({ account, amount, currency, outstanding = 0, owingByCurrency = null }) {
   if (!account) return { ok: true, reason: null }          // no account terms → nothing to enforce
   const owed = round2(amount)
+
+  // Everything still unpaid on this order, as [currency, amount] pairs.
+  const stillOwed = owingByCurrency
+    ? Object.entries(owingByCurrency).map(([c, v]) => [c, round2(v)]).filter(([, v]) => v > 0)
+    : (owed > 0 ? [[currency, owed]] : [])
 
   if (account.is_active === false) {
     return { ok: false, reason: `Account ${account.code} is inactive.` }
@@ -318,10 +329,19 @@ export function checkSubAccountCharge({ account, amount, currency, outstanding =
   if (isSubAccountExpired(account)) {
     return { ok: false, reason: `Account ${account.code} expired on ${String(account.expires_on).slice(0, 10)}.` }
   }
-  if (owed <= 0) return { ok: true, reason: null }         // nothing left owing → no limit to breach
+  if (stillOwed.length === 0) return { ok: true, reason: null }   // nothing owing → nothing to enforce
 
-  if (account.account_type !== 'credit') {
-    return { ok: false, reason: `Account ${account.code} is a cash account — it must be paid in full to close.` }
+  /* A CASH account is money that should already be in the drawer, so an order
+     billed to one cannot be closed while any of it is outstanding. A CREDIT
+     account is money we agreed to wait for, so the same order closes unpaid and
+     becomes a receivable on the Credit Customers page — subject only to the
+     limit and expiry checked below. */
+  if (accountNature(account) !== CREDIT) {
+    const list = stillOwed.map(([c, v]) => `${v.toLocaleString()} ${c}`).join(' · ')
+    return {
+      ok: false,
+      reason: `Account ${account.code} is a CASH account — the order must be paid in full before it can be closed (${list} still due).`,
+    }
   }
   if (isUnlimited(account)) return { ok: true, reason: null }
 
@@ -342,3 +362,51 @@ export function checkSubAccountCharge({ account, amount, currency, outstanding =
   }
   return { ok: true, reason: null }
 }
+
+/* ── account nature: Cash or Credit (fix144) ─────────────────────────────────
+ *
+ * The nature is the ACCOUNT's, not the customer's. A contact may hold a cash
+ * account and a credit account at once; each of their orders is whatever the
+ * account it bills to is, so the same customer can appear in both the cash and
+ * the credit reports — for different orders.
+ *
+ * delivery_orders.account_nature stores it as 'Cash' | 'Credit', stamped when
+ * the order is saved (and by a database trigger for every other writer). The
+ * stamp is what a report should read: it is what the order was billed as, and
+ * it does not move when an account is re-typed years later.
+ */
+
+export const CASH   = 'Cash'
+export const CREDIT = 'Credit'
+
+/** The nature of one sub_accounts row. Only 'credit' is credit. */
+export function accountNature(account) {
+  return String(account?.account_type ?? '').toLowerCase() === 'credit' ? CREDIT : CASH
+}
+
+/**
+ * The nature an order was billed as.
+ *
+ * Prefers the stamp on the row. `accounts` is an optional pool of sub_accounts
+ * rows used to resolve an unstamped order (one written before fix144, or by a
+ * client that predates it); `creditFallback` is the old contact-level flag,
+ * consulted only when there is no account to read at all — which is what keeps
+ * a customer with no accounts behaving exactly as they did before.
+ */
+export function orderAccountNature(order, accounts = null, creditFallback = null) {
+  const stamped = String(order?.account_nature ?? '').trim().toLowerCase()
+  if (stamped === 'credit') return CREDIT
+  if (stamped === 'cash')   return CASH
+
+  if (accounts) {
+    const pool = accounts.filter ? accounts.filter(a => a.contact_id === order?.customer_id) : []
+    const resolved = resolveSubAccount(order?.sub_account_id || null, pool)
+    if (resolved) return accountNature(resolved)
+  }
+  const flag = creditFallback === null ? order?.customer?.credit_debit_allowed === true : creditFallback === true
+  return flag ? CREDIT : CASH
+}
+
+/** True when this order is billed to a credit account (or an account-less credit customer). */
+export const isCreditOrder = (order, accounts = null, creditFallback = null) =>
+  orderAccountNature(order, accounts, creditFallback) === CREDIT

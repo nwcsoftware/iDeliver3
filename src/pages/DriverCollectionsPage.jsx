@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { orderTotalsByCurrency, orderCollectedByCurrency, fmtAmount } from '../lib/orderAmounts'
+import { isCreditOrder } from '../lib/subAccounts'
 
 /* ── Driver App — Payment Collection Simulator ───────────────────────────────
    Super-admin-only demonstration tool. In production the external "Driver app"
@@ -81,7 +82,9 @@ export default function DriverCollectionsPage() {
         String(o.scheduled_date || '').slice(0, 10) === date &&
         o.order_confirmed === true &&
         o.isclosed !== true &&
-        o.customer?.credit_debit_allowed !== true &&
+        // Orders billed to a credit account are settled on the account, not at
+        // the door, so they are not the driver's to hand over (fix144).
+        !isCreditOrder(o) &&
         !['cancelled', 'failed'].includes(o.status) &&
         !!o.driver_id &&
         Object.keys(remainingByCurrency(o)).length > 0)
@@ -135,6 +138,10 @@ export default function DriverCollectionsPage() {
         notes:             `Driver app (simulated) — collected by ${driverName(order)}`,
         collected_by:      order.driver_id,
         collected_by_name: driverName(order),
+        // The account being settled is the order's, whoever takes the money (fix144).
+        sub_account_id:    order.sub_account_id || null,
+        main_account:      order.main_account   || null,
+        account_nature:    order.account_nature || null,
       }))
       const { error: pe } = await supabase.from('payment_collections').insert(payments)
       if (pe) {

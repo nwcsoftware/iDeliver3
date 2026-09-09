@@ -5,9 +5,11 @@ import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { orderTotalsByCurrency } from '../lib/orderAmounts'
 import { formatAccountNumber } from '../lib/accountNumber'
+import { isCreditOrder } from '../lib/subAccounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
+import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* Multi-currency, matching Driver Settlements / Cashier Box. A currency only needs
@@ -38,6 +40,24 @@ function customerName(c) {
   return (c.company_name || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()) || '—'
 }
 
+/* One account number, saying whether it is the contact's MAIN account or a SUB
+   account beneath it. Two bare numbers on a statement are indistinguishable;
+   this is the difference between "their account" and "one of their accounts". */
+function AccountTag({ account, className = '' }) {
+  if (!account) return null
+  const main = account.is_primary === true
+  return (
+    <span className={`inline-flex items-center gap-1.5 min-w-0 ${className}`}>
+      <span className="font-mono text-slate-500">{formatAccountNumber(account.code)}</span>
+      <span className={`px-1 py-px rounded text-[9px] font-semibold uppercase tracking-wider flex-shrink-0 ${
+        main ? 'bg-brand-500/15 text-brand-300' : 'bg-slate-500/20 text-slate-400'}`}>
+        {main ? 'Main' : 'Sub'}
+      </span>
+      {account.name && <span className="text-slate-600 truncate">{account.name}</span>}
+    </span>
+  )
+}
+
 /* The date an order lands on the account = when it was closed (else scheduled,
    else created) — what the user filters the statement by. */
 function orderDate(o) {
@@ -48,7 +68,7 @@ function orderDate(o) {
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function CreditCustomersPage() {
-  const { orders, loading, fetchOrders, COMPANY_ID, loadFullOrderHistory } = useApp()
+  const { orders, loading, fetchOrders, COMPANY_ID, loadFullOrderHistory, ordersFullyLoaded, ordersError } = useApp()
   const { currentUser, hasRole } = useAuth()
 
   // Credit balances span the whole history, so pull every order (beyond the window).
@@ -56,6 +76,8 @@ export default function CreditCustomersPage() {
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
   const isAdmin = hasRole('super_admin', 'admin')   // settlement-erasing tools are admin-only
 
+  const [creditAccounts, setCreditAccounts] = useState([])  // sub_accounts rows of account_type 'credit'
+  const [acctLoading,  setAcctLoading]  = useState(true)
   const [payments,     setPayments]     = useState([])      // credit_customer_payments rows
   const [clears,       setClears]       = useState([])      // credit_customer_clears rows
   const [excluded,     setExcluded]     = useState([])      // credit_excluded_orders rows
@@ -89,6 +111,29 @@ export default function CreditCustomersPage() {
     setPayLoading(false)
   }, [COMPANY_ID])
 
+  /* ── fetch the credit accounts themselves (fix144) ─────────
+     The page used to be built entirely from ORDERS, so a customer appeared here
+     only once they had been charged something. But the account IS the promise:
+     a contact holding a credit account belongs on this page the moment it is
+     opened, with an empty statement, because that is a line of credit somebody
+     granted and nobody can see anywhere else.
+
+     The contact is joined in so a customer with no orders at all still has a
+     name — there is no order row to read it from. */
+  const fetchCreditAccounts = useCallback(async () => {
+    setAcctLoading(true)
+    const { data, error } = await supabase
+      .from('sub_accounts')
+      .select('id, code, name, contact_id, account_type, is_primary, is_active, currency, credit_limit, expires_on, '
+            + 'contact:contacts!contact_id(id, first_name, last_name, company_name, mobile, account_number)')
+      .eq('account_type', 'credit')
+      .not('contact_id', 'is', null)
+      .order('is_primary', { ascending: false })
+      .order('code')
+    if (!error && data) setCreditAccounts(data)
+    setAcctLoading(false)
+  }, [])
+
   /* ── fetch statement clear checkpoints ───────────────────── */
   const fetchClears = useCallback(async () => {
     let q = supabase.from('credit_customer_clears').select('*').order('cleared_through', { ascending: false })
@@ -105,7 +150,8 @@ export default function CreditCustomersPage() {
     if (!error && data) setExcluded(data)
   }, [COMPANY_ID])
 
-  useEffect(() => { fetchPayments(); fetchClears(); fetchExclusions() }, [fetchPayments, fetchClears, fetchExclusions])
+  useEffect(() => { fetchPayments(); fetchClears(); fetchExclusions(); fetchCreditAccounts() },
+    [fetchPayments, fetchClears, fetchExclusions, fetchCreditAccounts])
 
   const excludedIds = useMemo(() => new Set(excluded.map(e => e.order_id)), [excluded])
 
@@ -119,12 +165,18 @@ export default function CreditCustomersPage() {
     return m
   }, [clears])
 
-  /* ── closed orders belonging to credit customers ─────────── */
-  // Every CLOSED order whose customer is credit-allowed is a charge on that
-  // customer's account, regardless of how the order was closed. Orders an admin
-  // has excluded from the credit statement are left out.
+  /* ── closed orders billed to a CREDIT account ─────────────
+     Every CLOSED order billed to a credit account is a charge to settle later,
+     regardless of how the order was closed. Orders an admin has excluded from
+     the credit statement are left out.
+
+     Since fix144 this follows the ACCOUNT NUMBER on the order, not the customer:
+     an order the customer paid on a cash account was settled at the door and has
+     no place on a credit statement, even when the same customer also holds a
+     credit account. Orders taken before fix144 carry no stamp and fall back to
+     the contact's old credit flag — the rule they were taken under. */
   const creditOrders = useMemo(
-    () => orders.filter(o => o.isclosed === true && o.customer?.credit_debit_allowed === true && !excludedIds.has(o.id)),
+    () => orders.filter(o => o.isclosed === true && isCreditOrder(o) && !excludedIds.has(o.id)),
     [orders, excludedIds],
   )
 
@@ -137,6 +189,27 @@ export default function CreditCustomersPage() {
     }
     return m
   }, [payments])
+
+  /* An account number is either the contact's MAIN account or one of their SUB
+     accounts. is_primary is what marks it: it is the account the order form
+     offers first, and the one a NULL sub_account_id has resolved to since
+     fix81. Saying which is which matters as soon as a customer holds more than
+     one, because two numbers on a statement are otherwise indistinguishable. */
+  const creditAccountsByContact = useMemo(() => {
+    const m = new Map()
+    for (const a of creditAccounts) {
+      if (!a.contact_id) continue
+      if (!m.has(a.contact_id)) m.set(a.contact_id, [])
+      m.get(a.contact_id).push(a)
+    }
+    return m
+  }, [creditAccounts])
+
+  // code → account, so a statement line can name the account its order billed to.
+  const accountByCode = useMemo(
+    () => new Map(creditAccounts.filter(a => a.code).map(a => [String(a.code).trim(), a])),
+    [creditAccounts],
+  )
 
   /* ── per-customer account summary (charges − payments) ──────
      Built from ALL the customer's closed orders + payments so the balance is
@@ -180,8 +253,17 @@ export default function CreditCustomersPage() {
       // Account-level "Collect Payment" is taken at the call center / office.
       for (const p of ps) a.collectedOffice[CURRENCIES.includes(p.currency) ? p.currency : 'USD'] += round2(Number(p.amount) || 0)
     }
+    /* Every contact holding a credit account belongs here even with nothing on
+       it yet — an account opened and never used is still an account, and this
+       is the only page that shows one. Their name comes from the joined contact,
+       since there is no order row to read it from. */
+    for (const [cid, list] of creditAccountsByContact) {
+      ensure(list[0].contact || { id: cid, first_name: '', last_name: '', company_name: '' })
+    }
+
     // paid (= driver + call center), balance, and a "has any outstanding" flag
-    for (const a of m.values()) {
+    for (const [cid, a] of m) {
+      a.accounts = creditAccountsByContact.get(cid) || []
       a.balance = {}
       a.outstanding = false
       for (const c of CURRENCIES) {
@@ -191,7 +273,7 @@ export default function CreditCustomersPage() {
       }
     }
     return m
-  }, [creditOrders, paymentsByCustomer])
+  }, [creditOrders, paymentsByCustomer, creditAccountsByContact])
 
   /* ── customer list (left pane) with search + status filter ── */
   const customerList = useMemo(() => {
@@ -205,6 +287,8 @@ export default function CreditCustomersPage() {
           customerName(a.customer),
           a.customer.account_number,
           a.customer.mobile,
+          ...(a.accounts ?? []).map(x => x.code),
+          ...(a.accounts ?? []).map(x => x.name),
         ].some(v => String(v ?? '').toLowerCase().includes(q))
       })
       .sort((x, y) => customerName(x.customer).localeCompare(customerName(y.customer)))
@@ -232,11 +316,21 @@ export default function CreditCustomersPage() {
     const inRange = (d) => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo)
     const activeCutoff = showAll ? null : cutoff      // fold entries on/before this date
 
+    /* A customer may hold more than one credit account (fix144). When their
+       charges sit on several, every line says which one it landed on; when they
+       all sit on the same account, the number would just repeat down the page. */
+    const multiAccount = new Set(selected.orders.map(o => o.main_account).filter(Boolean)).size > 1
+
     const all = []
     for (const o of selected.orders) {
       all.push({
         kind: 'order', date: orderDate(o), ref: o.order_number || String(o.id).slice(0, 8),
-        label: o.recipient_name || o.order_type || 'Order', debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at, order: o,
+        label: (o.recipient_name || o.order_type || 'Order')
+          + (multiAccount && o.main_account
+              ? ` · ${accountByCode.get(String(o.main_account).trim())?.is_primary === false ? 'sub' : 'main'} account `
+                + formatAccountNumber(o.main_account)
+              : ''),
+        debit: orderTotalsByCurrency(o), credit: null, _t: o.closed_at || o.created_at, order: o,
       })
       // Cash collected on the order (driver at delivery / office) — a credit that
       // reduces the balance, shown as its own statement line so it reconciles.
@@ -287,7 +381,7 @@ export default function CreditCustomersPage() {
       rows.push(r)
     }
     return rows
-  }, [selected, dateFrom, dateTo, cutoff, showAll])
+  }, [selected, dateFrom, dateTo, cutoff, showAll, accountByCode])
 
   // Totals of what's currently listed in the statement (respects the date filter).
   const statementTotals = useMemo(() => {
@@ -586,7 +680,13 @@ export default function CreditCustomersPage() {
     doc.save(`statement-daily-${(selected.customer.account_number || customerName(selected.customer)).toString().replace(/\s+/g, '-')}-${now.toISOString().slice(0, 10)}.pdf`)
   }
 
-  const busy = loading.orders || payLoading
+  /* This page reads the WHOLE order history — every closed order ever, not the
+     recent window — plus the settlements, the checkpoints and the accounts. That
+     is several seconds on a real database, and a screen that simply sits there
+     looks broken, so the overlay below says which step it is on.
+     `ordersError` is part of the test so a failed fetch ends the wait instead of
+     spinning for ever; the error banner underneath then explains it. */
+  const busy = (!ordersFullyLoaded && !ordersError) || loading.orders || payLoading || acctLoading
 
   /* ── render ──────────────────────────────────────────────── */
   /* What each statement column sorts BY. Charge and Payment sort by the figure
@@ -623,6 +723,18 @@ export default function CreditCustomersPage() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
+
+      <DataLoadingOverlay
+        open={busy}
+        title="Opening the credit ledger"
+        subtitle="Reading every closed order, settlement and credit account…"
+        steps={[
+          { label: 'Loading the full order history', done: !!ordersFullyLoaded },
+          { label: 'Loading account settlements',    done: !payLoading },
+          { label: 'Loading credit accounts',        done: !acctLoading },
+          { label: 'Building each account statement', done: false },
+        ]}
+      />
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -671,12 +783,25 @@ export default function CreditCustomersPage() {
       <div className="flex gap-4 items-stretch flex-1 min-h-0">
         {/* ── Customer list ──────────────────────────────────── */}
         <div className="w-72 flex-shrink-0 bg-surface-card border border-surface-border rounded-xl overflow-hidden flex flex-col">
-          <div className="px-3 py-2 border-b border-surface-border text-xs font-semibold text-slate-400 uppercase tracking-wider">Customers</div>
+          <div className="px-3 py-2 border-b border-surface-border text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-baseline justify-between gap-2">
+            <span>Customers</span>
+            {/* "12 of 41" — the filter defaults to those who owe something, so
+                without this a credit customer sitting at zero looks missing. */}
+            <span className="normal-case tracking-normal text-slate-500 font-normal">
+              {customerList.length === accounts.size
+                ? `${accounts.size}`
+                : `${customerList.length} of ${accounts.size}`}
+            </span>
+          </div>
           <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-surface-border/50">
             {busy ? (
               <p className="px-3 py-6 text-center text-sm text-slate-500">Loading…</p>
             ) : customerList.length === 0 ? (
-              <p className="px-3 py-6 text-center text-sm text-slate-500">No credit customers</p>
+              <p className="px-3 py-6 text-center text-sm text-slate-500">
+                {accounts.size > 0 && statusFilter === 'outstanding'
+                  ? `Nothing outstanding — all ${accounts.size} credit customers are settled.`
+                  : 'No credit customers'}
+              </p>
             ) : customerList.map(a => {
               const active = a.customer.id === selectedId
               return (
@@ -691,9 +816,13 @@ export default function CreditCustomersPage() {
                       ? <span className="text-[10px] font-semibold text-amber-400 flex-shrink-0">DUE</span>
                       : <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />}
                   </div>
-                  {a.customer.account_number && (
-                    <p className="text-[11px] font-mono text-slate-500 mt-0.5 ml-5">{formatAccountNumber(a.customer.account_number)}</p>
-                  )}
+                  {(a.accounts?.length
+                    ? a.accounts.map(acc => (
+                        <p key={acc.id} className="text-[11px] mt-0.5 ml-5"><AccountTag account={acc} /></p>
+                      ))
+                    : a.customer.account_number && (
+                        <p className="text-[11px] font-mono text-slate-500 mt-0.5 ml-5">{formatAccountNumber(a.customer.account_number)}</p>
+                      ))}
                   <p className={`text-[11px] mt-0.5 ml-5 ${a.outstanding ? 'text-amber-300' : 'text-slate-500'}`}>
                     Balance: {fmtCurMap(a.balance)}
                   </p>
@@ -717,7 +846,11 @@ export default function CreditCustomersPage() {
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-100">{customerName(selected.customer)}</h2>
-                    {selected.customer.account_number && (
+                    {selected.accounts?.length ? (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                        {selected.accounts.map(acc => <AccountTag key={acc.id} account={acc} className="text-xs" />)}
+                      </div>
+                    ) : selected.customer.account_number && (
                       <p className="text-xs font-mono text-slate-500 mt-0.5">Account {formatAccountNumber(selected.customer.account_number)}</p>
                     )}
                     {selected.customer.mobile && <p className="text-xs text-slate-500">{selected.customer.mobile}</p>}

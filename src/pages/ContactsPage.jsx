@@ -42,7 +42,7 @@ import ContactSubAccounts from '../components/contacts/ContactSubAccounts'
 import ContactPartnerPackages from '../components/contacts/ContactPartnerPackages'
 import ContactPartnerOrders from '../components/contacts/ContactPartnerOrders'
 import { saveContactAddresses } from '../lib/contactAddresses'
-import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount } from '../lib/subAccounts'
+import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount, accountNature, CREDIT } from '../lib/subAccounts'
 import SearchField from '../components/ui/SearchField'
 
 /* ── type config ─────────────────────────────────────────── */
@@ -95,6 +95,30 @@ const BASE_FORM = {
   partner_percentage: '', partner_percentage_type: '', shop_type: '', contact_category: '',
 }
 
+/* One account number on a contact row: the number, whether it is the contact's
+   MAIN account or a SUB one beneath it, and — the thing this list exists to show
+   — whether it is a CASH or a CREDIT account. The nature decides how every order
+   billed to it is closed, collected and reported, so it is the part that carries
+   colour. */
+function AccountLine({ account }) {
+  const credit = accountNature(account) === CREDIT
+  return (
+    <span className="flex items-center gap-1.5 min-w-0">
+      <span className="text-slate-500 text-xs font-mono tracking-wider">{formatAccountNumber(account.code)}</span>
+      <span className="px-1 py-px rounded text-[9px] font-semibold uppercase tracking-wider bg-slate-500/20 text-slate-400 flex-shrink-0">
+        {account.is_primary ? 'Main' : 'Sub'}
+      </span>
+      <span className={`px-1 py-px rounded text-[9px] font-semibold uppercase tracking-wider flex-shrink-0 ${
+        credit ? 'bg-fuchsia-500/15 text-fuchsia-300' : 'bg-emerald-500/15 text-emerald-300'}`}>
+        {credit ? 'Credit' : 'Cash'}
+      </span>
+      {account.is_active === false && (
+        <span className="px-1 py-px rounded text-[9px] font-semibold uppercase tracking-wider bg-red-500/15 text-red-300 flex-shrink-0">Inactive</span>
+      )}
+    </span>
+  )
+}
+
 export default function ContactsPage({ type }) {
   const cfg = TYPE_CONFIG[type] ?? TYPE_CONFIG.customer
   const { COMPANY_ID, orders, loadFullOrderHistory, refreshInactiveContacts } = useApp()
@@ -107,6 +131,7 @@ export default function ContactsPage({ type }) {
   const [loading,   setLoading]   = useState(true)
   const [search,    setSearch]    = useState('')
   const [filter,    setFilter]    = useState('active')
+  const [nature,    setNature]    = useState('all')      // all | credit | cash — by account nature
   const [modal,     setModal]     = useState(null)
   const [form,      setForm]      = useState(BASE_FORM)
   const [saving,    setSaving]    = useState(false)
@@ -118,8 +143,9 @@ export default function ContactsPage({ type }) {
   const [contactCategories, setContactCategories] = useState([])   // custom contact_categories
   const [addresses,      setAddresses]      = useState([])
   const [origAddressIds, setOrigAddressIds] = useState([])
-  const [accounts,       setAccounts]       = useState([])   // sub_accounts rows
+  const [accounts,       setAccounts]       = useState([])   // sub_accounts rows (the open contact)
   const [origAccountIds, setOrigAccountIds] = useState([])
+  const [allAccounts,    setAllAccounts]    = useState([])   // every contact's accounts, for the list
   const [tab,            setTab]            = useState('details')
   // Customer "User Account & Security" collapsible section (admin only).
   const [credOpen,     setCredOpen]     = useState(false)
@@ -155,7 +181,48 @@ export default function ContactsPage({ type }) {
     setLoading(false)
   }, [cfg.contactType, COMPANY_ID])
 
+  /* Every contact's account numbers, for the list itself (fix144).
+
+     The row used to print contacts.account_number — one number, saying nothing
+     about what kind of account it is. Since the accounts decide whether an order
+     is cash or credit, the list has to show them: which number, whether it is
+     the MAIN account or a SUB one beneath it, and which of them is the credit
+     account. It is also what the Cash/Credit filter below reads.
+
+     One query for the whole page rather than one per row; sub_accounts holds a
+     couple of thousand small rows and the list is already paged past the
+     PostgREST cap. */
+  const fetchAllAccounts = useCallback(async () => {
+    const { data } = await fetchAllRows(() => supabase
+      .from('sub_accounts')
+      .select('id, code, name, contact_id, account_type, is_primary, is_active, currency, credit_limit, expires_on')
+      .not('contact_id', 'is', null)
+      .order('is_primary', { ascending: false })
+      .order('id'))
+    setAllAccounts(data ?? [])
+  }, [])
+
   useEffect(() => { fetchContacts() }, [fetchContacts])
+  useEffect(() => { fetchAllAccounts() }, [fetchAllAccounts])
+
+  // contact_id → their accounts, main first (the order the fetch already applied).
+  const accountsByContact = useMemo(() => {
+    const m = new Map()
+    for (const a of allAccounts) {
+      if (!m.has(a.contact_id)) m.set(a.contact_id, [])
+      m.get(a.contact_id).push(a)
+    }
+    return m
+  }, [allAccounts])
+
+  /* A contact is a CREDIT customer when they hold a credit account — the same
+     test every report now applies. contacts.credit_debit_allowed is no longer
+     consulted here: it is a legacy hint that can drift from the accounts, and
+     the accounts are what an order is actually billed to. */
+  const hasCreditAccount = useCallback(
+    (c) => (accountsByContact.get(c.id) ?? []).some(a => accountNature(a) === CREDIT),
+    [accountsByContact],
+  )
 
   /* ── user-extensible lookups (supplier form) ─────────────── */
 
@@ -227,7 +294,15 @@ export default function ContactsPage({ type }) {
       effFilter === 'all'      ? true :
       effFilter === 'active'   ? c.is_active :
       !c.is_active
-    return matchSearch && matchFilter
+    /* Cash / credit is asked of the ACCOUNTS, so a contact holding both kinds
+       answers YES to both filters — they are a credit customer for the orders
+       they put on the credit account and a cash one for the rest. */
+    const matchNature =
+      nature === 'all'    ? true :
+      nature === 'credit' ? hasCreditAccount(c)
+                          : (accountsByContact.get(c.id) ?? []).some(a => accountNature(a) !== CREDIT)
+                            || (accountsByContact.get(c.id) ?? []).length === 0
+    return matchSearch && matchFilter && matchNature
   })
 
   /* ── handlers ────────────────────────────────────────────── */
@@ -646,7 +721,11 @@ export default function ContactsPage({ type }) {
             <Icon className={`w-4 h-4 ${color}`} />
           </div>
           <div>
-            <p className="text-xs text-slate-500 mt-0.5">{contacts.length} total</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {visible.length === contacts.length
+                ? `${contacts.length} total`
+                : `${visible.length} of ${contacts.length}`}
+            </p>
           </div>
         </div>
 
@@ -657,6 +736,30 @@ export default function ContactsPage({ type }) {
             placeholder={`Search ${title.toLowerCase()}…`}
             className="input pl-9"
           />
+        </div>
+
+        {/* Cash / credit, by ACCOUNT (fix144). A contact who holds both kinds of
+            account answers to both filters, which is the point: they are a credit
+            customer for what they put on the credit account and a cash one for
+            the rest. The count says how many the filter is showing. */}
+        <div className="flex items-center gap-1">
+          {[
+            { key: 'all',    label: 'All' },
+            { key: 'credit', label: 'Credit' },
+            { key: 'cash',   label: 'Cash' },
+          ].map(n => (
+            <button key={n.key} onClick={() => setNature(n.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1.5 ${
+                nature === n.key
+                  ? (n.key === 'credit' ? 'bg-fuchsia-600 text-white'
+                     : n.key === 'cash' ? 'bg-emerald-600 text-white'
+                     : 'bg-brand-600 text-white')
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
+              }`}>
+              {n.key === 'credit' && <CreditCard className="w-3.5 h-3.5" />}
+              {n.label}
+            </button>
+          ))}
         </div>
 
         {/* Active / inactive / all — the super admin alone. A retired contact is
@@ -706,18 +809,27 @@ export default function ContactsPage({ type }) {
                         <>
                           <p className="text-slate-100 font-medium flex items-center gap-1.5">
                             {c.company_name}
-                            {c.credit_debit_allowed && <CreditCard className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" title="Credit customer (may owe a balance)" />}
+                            {hasCreditAccount(c) && <CreditCard className="w-3.5 h-3.5 text-fuchsia-400 flex-shrink-0" title="Holds a credit account (may owe a balance)" />}
                           </p>
                           <p className="text-slate-400 text-xs">{c.first_name} {c.last_name}</p>
                         </>
                       ) : (
                         <p className="text-slate-100 font-medium flex items-center gap-1.5">
                           {c.first_name} {c.last_name}
-                          {c.credit_debit_allowed && <CreditCard className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" title="Credit customer (may owe a balance)" />}
+                          {hasCreditAccount(c) && <CreditCard className="w-3.5 h-3.5 text-fuchsia-400 flex-shrink-0" title="Holds a credit account (may owe a balance)" />}
                         </p>
                       )}
                       {c.code && <p className="text-slate-500 text-xs font-mono">{c.code}</p>}
-                      {c.account_number && <p className="text-slate-500 text-xs font-mono tracking-wider">{formatAccountNumber(c.account_number)}</p>}
+                      {/* Their account numbers, each saying what kind it is. Falls
+                          back to the contact's own number for a contact whose
+                          accounts have not been created yet. */}
+                      {(accountsByContact.get(c.id)?.length
+                        ? accountsByContact.get(c.id).map(a => (
+                            <div key={a.id} className="mt-0.5"><AccountLine account={a} /></div>
+                          ))
+                        : c.account_number && (
+                            <p className="text-slate-500 text-xs font-mono tracking-wider">{formatAccountNumber(c.account_number)}</p>
+                          ))}
                       {/* Other roles this contact also holds (besides this page's). */}
                       {Array.isArray(c.contact_types) && c.contact_types.filter(t => t !== cfg.contactType).length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">

@@ -17,8 +17,9 @@ import { fetchPartyOrderIds, partyOwnsOrder, PARTY_LINE_TABLES } from '../lib/pa
 import { formatMobile } from '../lib/phone'
 import { buildOrderGroups, defaultOpenGroup } from '../lib/orderGroups'
 import {
-  resolveSubAccount, subAccountBalance, checkSubAccountCharge,
+  subAccountBalance, checkSubAccountCharge,
   isSubAccountExpired, isUnlimited, ensurePrimarySubAccount,
+  accountNature, isCreditOrder, CREDIT,
 } from '../lib/subAccounts'
 import { orderTouchesInactive, visibleContacts } from '../lib/contactVisibility'
 import { currencyWarnings, DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
@@ -82,9 +83,11 @@ const FILTER_LABELS    = { all: 'All' }
 // '' is the "All" pseudo-value (no payment filter applied).
 const PAYMENT_FILTERS  = ['','unpaid','partially_paid','collected_by_driver','paid_to_office']
 // Customer-type filter options (multi-select). An empty selection means "All types".
+// Credit / cash name the ACCOUNT the order bills to (fix144), so the same customer
+// can appear under both; partner / supplier are properties of the contact itself.
 const CATEGORY_OPTIONS = [
-  { value: 'credit',   label: 'Credit customers' },
-  { value: 'regular',  label: 'Regular customers' },
+  { value: 'credit',   label: 'Credit account orders' },
+  { value: 'regular',  label: 'Cash account orders' },
   { value: 'partner',  label: 'Partners' },
   { value: 'supplier', label: 'Suppliers' },
 ]
@@ -140,8 +143,13 @@ function needsConfirmReminder(o, reminderMins, nowMs) {
 // pull selected orders into the Flagged filter. Independent of any status.
 function isFlagged(o) { return o?.is_flagged === true }
 
-// Is this order's customer a credit customer (allowed to owe a balance)?
-function isCreditCustomerOrder(o) { return o?.customer?.credit_debit_allowed === true }
+/* Is this order billed to a credit account — i.e. may it legitimately close with
+   a balance still owing? Since fix144 that is a property of the ACCOUNT the order
+   names, not of the customer: the same customer may hold a cash account and a
+   credit one, and each of their orders is whatever the account it bills to is.
+   Orders written before fix144 carry no stamp and fall back to the old
+   contact-level flag, which is what they were taken under. */
+function isCreditCustomerOrder(o) { return isCreditOrder(o) }
 
 // "Ads & Services" (Story) orders: a lightweight order nature stored in the same
 // delivery_orders table with order_type = 'Story'. They carry no route, driver,
@@ -1210,11 +1218,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     else             { setDateFrom(todayStr); setDateTo(todayStr) }
   }
 
-  // Does a customer contact match one customer-type key?
+  // Does a customer contact match one contact-type key?
   function customerMatchesType(c, type) {
     if (!c) return false
-    if (type === 'credit')   return c.credit_debit_allowed === true
-    if (type === 'regular')  return contactHasType(c, 'customer') && c.credit_debit_allowed !== true
     if (type === 'partner')  return contactHasType(c, 'partner')
     if (type === 'supplier') return contactHasType(c, 'supplier')
     return false
@@ -1223,7 +1229,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // its customer is ANY of the selected types.
   function matchCategory(o, c) {
     if (c.categoryFilter.length === 0) return true
-    return c.categoryFilter.some(t => customerMatchesType(o.customer, t))
+    return c.categoryFilter.some(t => {
+      // Credit and cash are properties of the ACCOUNT this order bills to
+      // (fix144), so they are asked of the order; partner and supplier are
+      // properties of the contact, so they are asked of the customer.
+      if (t === 'credit')  return isCreditOrder(o)
+      if (t === 'regular') return !isCreditOrder(o) && contactHasType(o.customer, 'customer')
+      return customerMatchesType(o.customer, t)
+    })
   }
   function toggleCategory(v) {
     setCategoryFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
@@ -1637,14 +1650,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   function applyCustomer(c, knownAccounts = null) {
     const isCompany   = c.entity_type === 'company' || contactHasType(c, 'partner')
     const displayName = (isCompany && c.company_name) ? c.company_name : customerName(c)
-    // Default to the contact's primary account; the picker below can change it.
+    /* The account is NOT defaulted (fix144). Which account an order bills to —
+       and therefore whether it is cash or credit — is a decision, so the picker
+       below opens empty and the save refuses until someone makes it. The single
+       exception is a customer with exactly one account, where there is nothing
+       to decide and a forced click would only be ceremony. */
     const pool = knownAccounts ?? subAccounts
-    const primary = resolveSubAccount(null, pool.filter(s => s.contact_id === c.id))
+    const mine = pool.filter(s => s.contact_id === c.id)
+    const only = mine.length === 1 ? mine[0] : null
     setForm(f => ({
       ...f,
       customer_id:        c.id,
-      sub_account_id:     primary?.id ?? '',
-      main_account:       primary?.code ?? c.account_number ?? '',
+      sub_account_id:     only?.id   ?? '',
+      main_account:       only?.code ?? '',
       recipient_name:     isCompany ? '' : (customerName(c) || f.recipient_name),
       recipient_mobile:   isCompany ? '' : (c.mobile ?? f.recipient_mobile),
       recipient_whatsapp: isCompany ? '' : (c.whatsapp_number ?? c.mobile ?? f.recipient_whatsapp),
@@ -2200,6 +2218,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       collected_by:      currentUser?.user_id || null,
       collected_by_name: currentUserName,
       collection_group:  'Call center',   // recorded by an office user
+      // The account being settled is the order's, whichever way the payment is
+      // taken — this quick Pay reaches the same account as the form (fix144).
+      sub_account_id:    o.sub_account_id || null,
+      main_account:      o.main_account   || null,
+      account_nature:    o.account_nature || null,
     }])
     if (pe) { setPayError(pe.message); setPaySaving(false); return }
 
@@ -2294,6 +2317,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     if (!isStory && !form.recipient_mobile.trim()) return setError('Recipient mobile is required.')
     if (!isStory && !form.delivery_address.trim()) return setError('Delivery address is required.')
     if (!form.customer_id)             return setError('Please select a customer.')
+    /* The account number is required (fix144). It decides which account carries
+       the charge and whether the order counts as cash or credit everywhere else
+       in the app, so it is asked for here rather than guessed later. A customer
+       with no account at all cannot be billed to one — that is a contact to fix,
+       and the message says so instead of failing at the database. */
+    if (!form.sub_account_id) {
+      return setError(customerAccounts.length === 0
+        ? 'This customer has no account number. Add one on the contact (Accounts tab) before taking the order.'
+        : 'Select the account number this order is billed to.')
+    }
     // Closing is what puts a charge on the account, so the account's terms (cash
     // vs credit, limit, expiry) are enforced here rather than on every save. The
     // Mark Closed button is already disabled in this case — this is the guard
@@ -2376,6 +2409,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       customer_id:          form.customer_id,
       main_account:         form.main_account || null,
       sub_account_id:       form.sub_account_id || null,
+      /* The nature of the chosen account, stamped onto the order (fix144). It is
+         written from the account rather than typed, so it can never disagree
+         with the account number beside it; the database trigger stamps it again
+         for anything that reaches the table another way. */
+      account_nature:       selectedAccount ? accountNature(selectedAccount) : null,
       is_credit_order:      modal !== 'add' && modal?.is_credit_order === true,   // preserved on edit; credit handling now keys off the customer
       pickup_address:       form.pickup_address?.trim()  || null,
       delivery_address:     form.delivery_address.trim(),
@@ -2598,6 +2636,16 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       if (de) { setError(de.message); setSaving(false); return }
     }
 
+    /* A payment settles the account the order charged, so it carries the same
+       account (fix144) — the number, the link and the nature. Written from the
+       form's chosen account rather than looked up later, so a payment recorded
+       today still names the right account if the order is re-pointed tomorrow. */
+    const paymentAccount = {
+      sub_account_id: form.sub_account_id || null,
+      main_account:   form.main_account   || null,
+      account_nature: selectedAccount ? accountNature(selectedAccount) : null,
+    }
+
     for (const p of persistable) {
       const amt  = round2(p.amount)
       const row = {
@@ -2606,6 +2654,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         currency:        p.currency || 'USD',
         collected_at:    p.paid_at || new Date().toISOString(),
         notes:           p.notes?.trim() || null,
+        ...paymentAccount,
       }
       // New payments are stamped with the signed-in user as the collector (paid to
       // office); edits keep whatever collector the row already had.
@@ -2644,7 +2693,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
     // ── Credit customer: on close with an unpaid balance, record a sales
     //    invoice so the customer shows up in v_credit_customer_balances. ───────
-    if (close && selCustomer?.credit_debit_allowed === true) {
+    // The invoice follows the ACCOUNT this order billed to (fix144): a balance
+    // left on a credit account is a receivable, one left on a cash account is
+    // not something we agreed to wait for.
+    if (close && (selectedAccount ? accountNature(selectedAccount) === CREDIT
+                                  : selCustomer?.credit_debit_allowed === true)) {
       const cur     = form.currency
       const total   = round2(totals[cur] || 0)
       const paid    = round2(paidCur[cur] || 0)
@@ -3069,13 +3122,21 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // A zero-total order has nothing to collect, so payment can never gate its close.
   const zeroTotal = !CURRENCIES.some(c => round2(totals[c] || 0) > 0)
 
-  /* ── the account this order bills to (fix81) ──────────────────
+  /* ── the account this order bills to (fix81, made explicit by fix144) ────────
      Every contact's account numbers, the one this order is charged to, and what
      that account already owes. A contact with no sub_accounts rows yet (e.g. the
      migration hasn't run) yields null, and every check below no-ops — so the old
-     credit_debit_allowed behaviour stands until accounts actually exist. */
+     credit_debit_allowed behaviour stands until accounts actually exist.
+
+     The chosen account is read STRICTLY from the form: before fix144 a blank
+     picker silently meant "the primary account", which is the assumption this
+     change exists to remove. Nothing is billed to an account nobody named — the
+     save refuses instead, so the form can never show terms for an account the
+     order was not actually charged to. */
   const customerAccounts = subAccounts.filter(s => s.contact_id === form.customer_id)
-  const selectedAccount  = resolveSubAccount(form.sub_account_id || null, customerAccounts)
+  const selectedAccount  = form.sub_account_id
+    ? (customerAccounts.find(a => a.id === form.sub_account_id) || null)
+    : null
   // What the account owes BEFORE this order. The current order is excluded so
   // that reopening an already-closed order doesn't count its own charge twice.
   const accountOutstanding = selectedAccount
@@ -3091,11 +3152,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     : 0
   // The unpaid balance this order would leave on that account, in its currency.
   const orderOwing = round2((totals[form.currency] || 0) - (paidByCur[form.currency] || 0))
+  /* The same balance in EVERY currency the order carries. A cash account has to
+     be clear in all of them before the order can close: an order whose USD was
+     collected but whose LBP was not has not been paid, and checking only the
+     order's primary currency would let that through. */
+  const owingByCurrency = Object.fromEntries(
+    CURRENCIES.map(c => [c, round2((totals[c] || 0) - (paidByCur[c] || 0))]))
   const accountCheck = checkSubAccountCharge({
     account: selectedAccount,
     amount: orderOwing,
     currency: form.currency,
     outstanding: accountOutstanding,
+    owingByCurrency,
   })
 
   // "Mark Closed" eligibility: order status Completed + delivery Delivered, and
@@ -3109,8 +3177,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // no accounts yet.
   if (selectedAccount) {
     // Terse here because this list renders as "must be: a, b" — the full
-    // explanation is on the form under the account, and in the save guard.
-    if (!accountCheck.ok) closeRequirements.push('within the account’s terms')
+    // explanation is on the form under the account, and in the save guard. The
+    // two natures fail for different reasons, so they say different things.
+    if (!accountCheck.ok) {
+      closeRequirements.push(accountNature(selectedAccount) === CREDIT
+        ? 'within the account’s credit terms'
+        : 'fully paid (cash account)')
+    }
   } else if (paymentStatus !== 'paid_to_office' && !customerAllowsCredit && !zeroTotal) {
     closeRequirements.push('fully paid (no pending dues)')
   }
@@ -4188,40 +4261,72 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       )}
                     </div>
 
-                    {/* Account — which of the contact's account numbers this order
-                        is billed to. With one account it's the read-only line it
-                        has always been; with several, a picker. */}
-                    {customerAccounts.length > 1 ? (
+                    {/* Account — which of the customer's account numbers this order
+                        is billed to, and therefore whether it is a cash or a credit
+                        order (fix144). Always a picker, always required: the list is
+                        the accounts of the customer chosen above, each labelled with
+                        its nature so the choice can be made without leaving the form. */}
+                    {form.customer_id && (
                       <div className="mt-1.5">
-                        <label className="label text-[10px]">Account</label>
-                        <select className="input" value={form.sub_account_id || ''}
-                          disabled={orderLocked}
+                        <label className="label text-[10px]">
+                          Account number <span className="text-red-400">*</span>
+                        </label>
+                        <select
+                          className={`input ${!form.sub_account_id ? 'border-amber-500/60' : ''}`}
+                          value={form.sub_account_id || ''}
+                          disabled={orderLocked || customerAccounts.length === 0}
                           onChange={e => {
                             const acct = customerAccounts.find(a => a.id === e.target.value)
                             setForm(f => ({
                               ...f,
                               sub_account_id: e.target.value,
-                              main_account: acct?.code ?? f.main_account,
+                              main_account: acct?.code ?? '',
                             }))
                             setError('')
                           }}>
+                          <option value="">
+                            {customerAccounts.length === 0
+                              ? '— this customer has no account number —'
+                              : '— select an account number —'}
+                          </option>
                           {customerAccounts.map(a => (
                             <option key={a.id} value={a.id}>
                               {formatAccountNumber(a.code)}
                               {a.name ? ` — ${a.name}` : ''}
-                              {` · ${a.account_type === 'credit' ? 'Credit' : 'Cash'}`}
-                              {a.account_type === 'credit' && !isUnlimited(a)
+                              {` · ${accountNature(a)}`}
+                              {accountNature(a) === CREDIT && !isUnlimited(a)
                                 ? ` ${Number(a.credit_limit).toLocaleString()} ${a.currency}` : ''}
                               {isSubAccountExpired(a) ? ' · EXPIRED' : ''}
                               {a.is_active === false ? ' · INACTIVE' : ''}
                             </option>
                           ))}
                         </select>
+                        {/* What was chosen, in the two words that decide how every
+                            report will count this order. */}
+                        {selectedAccount ? (
+                          <p className="mt-1 text-[11px] flex items-center gap-1.5">
+                            <span className={`px-1.5 py-0.5 rounded font-semibold ${
+                              accountNature(selectedAccount) === CREDIT
+                                ? 'bg-fuchsia-500/15 text-fuchsia-300'
+                                : 'bg-emerald-500/15 text-emerald-300'}`}>
+                              {accountNature(selectedAccount)} account
+                            </span>
+                            <span className="text-slate-500">
+                              {accountNature(selectedAccount) === CREDIT
+                                ? 'billed to the account — may close unpaid'
+                                : 'collected with the delivery'}
+                            </span>
+                          </p>
+                        ) : customerAccounts.length === 0 ? (
+                          <p className="mt-1 text-[11px] text-amber-400">
+                            Add an account number on this contact before taking the order.
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-amber-400">
+                            Choose the account this order is billed to.
+                          </p>
+                        )}
                       </div>
-                    ) : form.main_account && (
-                      <p className="mt-1 text-[11px] text-slate-500 font-mono tracking-wider">
-                        Main account: {formatAccountNumber(form.main_account)}
-                      </p>
                     )}
 
                     {/* What the chosen account allows, and what it already owes —
@@ -5420,7 +5525,6 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   onChange={e => setCustomerSearch(e.target.value)}
                   placeholder="Search by name, mobile, email, address…"
                 />
-                />
                 {customerSearch && (
                   <button type="button" onClick={() => setCustomerSearch('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
@@ -5598,6 +5702,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   <span className="font-mono text-brand-400">{payModal.order_number}</span>
                   {payModal.customer && <span className="text-slate-500"> · {customerListName(payModal.customer)}</span>}
                 </p>
+                {/* The account this money settles — the order's, not a choice made
+                    here, so the payment can never land on a different one (fix144). */}
+                {payModal.main_account && (
+                  <p className="text-[11px] mt-0.5 text-slate-500">
+                    Account <span className="font-mono tracking-wider text-slate-400">{formatAccountNumber(payModal.main_account)}</span>
+                    {payModal.account_nature && (
+                      <span className={payModal.account_nature === CREDIT ? ' text-fuchsia-300' : ' text-emerald-300'}>
+                        {' · '}{payModal.account_nature}
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
               <button onClick={closePay} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>

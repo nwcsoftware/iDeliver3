@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import { AmountSummaryContent, placeHoverPanel, orderDriverCollectedByCurrency, orderOfficeCollectedByCurrency, orderCollectedByCurrency, orderDriverCollectByCurrency, orderTotalsByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { isCancelledOrder } from '../lib/orderStatus'
+import { isCreditOrder } from '../lib/subAccounts'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -99,11 +100,12 @@ function isSettlementEligible(o) {
      exactly the kind of thing this guard is for. */
   if (isCancelledOrder(o)) return false
   if (o?.is_free_order === true) return false
-  // Credit-customer orders carry no cash by default, but if the driver actually
+  // Orders billed to a CREDIT account carry no cash by default (fix144 — the
+  // account decides, not the customer), but if the driver actually
   // collected from the customer, that cash must still be reconciled here — so the
   // call center can see whatever the driver holds regardless of the customer type.
   // Include a credit order only when the driver genuinely collected something.
-  if (o?.customer?.credit_debit_allowed === true) {
+  if (isCreditOrder(o)) {
     const dc = orderDriverCollectedByCurrency(o)
     return CURRENCIES.some(c => round2(dc[c]) > 0)
   }

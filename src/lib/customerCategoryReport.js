@@ -1,17 +1,26 @@
 import { orderTotalsByCurrency, orderCollectedByCurrency } from './orderAmounts'
 import { buildBuckets, bucketKeyOf, ymd, parseDay, daysBetween } from './reportPeriods'
+import { isCreditOrder } from './subAccounts'
 
 /* The arithmetic behind the Customer Categories report: what the two kinds of
-   customer — credit and regular — were billed for, what came in, and what is
+   account — credit and cash — were billed for, what came in, and what is
    still owed outwards to the partners and shops whose goods moved.
 
    Kept out of the page for the usual reason: these are decisions about what a
    figure MEANS. Three of them are worth reading before trusting a number here.
 
-   ── 1. A category is a property of the CUSTOMER, not the order ──────────────
-   contacts.credit_debit_allowed is the same flag the Credit Customers page and
-   the order form read, so an order appears under "Credit Customers" here
-   exactly when it appears on that customer's credit statement.
+   ── 1. A category is a property of the ACCOUNT the order bills to ───────────
+   Since fix144 every order names one of its customer's account numbers, and
+   that account is either cash or credit. The order's category is its account's
+   nature — read off delivery_orders.account_nature, stamped when the order was
+   taken.
+
+   So a customer holding both a cash account and a credit account appears in
+   BOTH categories here, split by which account each order was billed to. That
+   is the point of the change: the old contacts.credit_debit_allowed flag is a
+   property of the PERSON and could only ever put them in one bucket. It is
+   still the fallback for orders taken before fix144, which carry no stamp —
+   those were taken under the flag, so the flag is what they mean.
 
    ── 2. Money collected is not recorded per category of charge ───────────────
    A payment is taken against the ORDER — the driver hands over one sum, not a
@@ -61,22 +70,24 @@ const norm    = c => c || 'USD'
    part faded, so state is lightness and identity stays colour. */
 export const CATEGORIES = [
   {
-    key: 'credit', label: 'Credit Customers', short: 'Credit',
+    key: 'credit', label: 'Credit Accounts', short: 'Credit',
     color: '#d55181', faded: 'rgba(213,81,129,0.30)',
-    note: 'Customers allowed to run a balance (credit / debit allowed on their contact).',
+    note: 'Orders billed to a credit account — allowed to run a balance and settle later.',
   },
   {
-    key: 'regular', label: 'Regular Customers', short: 'Regular',
+    key: 'regular', label: 'Cash Accounts', short: 'Cash',
     color: '#3987e5', faded: 'rgba(57,135,229,0.30)',
-    note: 'Everyone else — expected to settle the order as it is delivered.',
+    note: 'Orders billed to a cash account — expected to settle as the order is delivered.',
   },
 ]
 
 export const CATEGORY_KEYS = CATEGORIES.map(c => c.key)
 
-/* Which category an order belongs to. The same flag the Credit Customers page
-   filters on, read off the joined customer contact. */
-export const categoryOf = o => (o?.customer?.credit_debit_allowed === true ? 'credit' : 'regular')
+/* Which category an order belongs to: the nature of the account it bills to
+   (fix144), falling back to the customer's old credit flag for orders taken
+   before accounts were stamped. Same rule the Credit Customers page filters on,
+   so an order appears here exactly when it appears on that account's statement. */
+export const categoryOf = o => (isCreditOrder(o) ? 'credit' : 'regular')
 
 /* ── the three money streams ──────────────────────────────────────────────── */
 export const STREAMS = [

@@ -18,14 +18,16 @@ import ContactCombobox from '../components/orders/ContactCombobox'
 import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 
 /* Customer Categories report — the same three money streams read twice, once
-   for customers who may run a balance and once for everybody else.
+   for orders billed to a credit account and once for orders billed to a cash one.
 
-   Credit and regular customers are not two slices of one business; they are two
-   different promises. A regular order is money that should already be in the
-   drawer, so anything outstanding on it is a problem today. A credit order is
-   money we agreed to wait for, so the same figure is a plan. Totalling the two
-   together hides both, which is why this report never adds them up — and never
-   adds two currencies together either.
+   The split follows the ACCOUNT NUMBER the order was billed to (fix144), not the
+   customer: a customer holding both kinds of account appears on both sides, each
+   order counted where its account says. Cash and credit are not two slices of one
+   business; they are two different promises. A cash order is money that should
+   already be in the drawer, so anything outstanding on it is a problem today. A
+   credit order is money we agreed to wait for, so the same figure is a plan.
+   Totalling the two together hides both, which is why this report never adds them
+   up — and never adds two currencies together either.
 
    Each category is read down three streams:
      Delivery fees  — ours outright: charged, collected, pending.
@@ -342,6 +344,18 @@ export default function CustomerCategoryReportPage() {
   }, [orders])
   const chosenCustomer = customerId ? customers.find(c => c.id === customerId) : null
 
+  /* A customer no longer HAS one category (fix144). The category belongs to the
+     account each order bills to, so someone holding both a cash account and a
+     credit account appears in both halves of this report — and the badge below
+     reports which of them their orders actually use, rather than claiming a
+     single label the data no longer supports. */
+  const chosenCategories = useMemo(() => {
+    if (!customerId) return []
+    const seen = new Set()
+    for (const o of orders) if (o.customer_id === customerId) seen.add(categoryOf(o))
+    return CATEGORIES.filter(c => seen.has(c.key))
+  }, [orders, customerId])
+
   const totalsFor = k => groupMoney(model.totals[k], cur) || ZERO()
   const hasData   = model.orderCount > 0
 
@@ -586,16 +600,19 @@ export default function CustomerCategoryReportPage() {
             {chosenCustomer.account_number && (
               <span className="font-mono text-slate-500">{formatAccountNumber(chosenCustomer.account_number)}</span>
             )}
-            <span
-              className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider"
-              style={{
-                color: categoryOf({ customer: chosenCustomer }) === 'credit' ? CATEGORIES[0].color : CATEGORIES[1].color,
-                background: categoryOf({ customer: chosenCustomer }) === 'credit' ? CATEGORIES[0].faded : CATEGORIES[1].faded,
-              }}
-            >
-              <CreditCard className="h-3 w-3" />
-              {categoryOf({ customer: chosenCustomer }) === 'credit' ? 'Credit' : 'Regular'}
-            </span>
+            {chosenCategories.map(c => (
+              <span
+                key={c.key}
+                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider"
+                style={{ color: c.color, background: c.faded }}
+              >
+                <CreditCard className="h-3 w-3" />
+                {c.short}
+              </span>
+            ))}
+            {chosenCategories.length > 1 && (
+              <span className="text-slate-600">— orders on both kinds of account.</span>
+            )}
             <span className="text-slate-600">
               — only this customer’s orders are counted below.
             </span>
@@ -643,7 +660,7 @@ export default function CustomerCategoryReportPage() {
           {/* ── each stream, settled against outstanding ─────────────────── */}
           <ChartCard
             title={`Each stream, collected against outstanding · ${cur}`}
-            note="Two bars per stream — credit customers and regular ones. The solid part is money in; the faded part above it is still out. Money the customer settled straight with the partner or shop is not shown: it was never ours to collect."
+            note="Two bars per stream — orders on credit accounts and orders on cash accounts. The solid part is money in; the faded part above it is still out. Money the customer settled straight with the partner or shop is not shown: it was never ours to collect."
           >
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={streamRows} margin={{ top: 5, right: 8, left: -12, bottom: 0 }}>
