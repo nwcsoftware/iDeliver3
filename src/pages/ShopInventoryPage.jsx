@@ -10,12 +10,15 @@ import { fetchShopCategoryNames } from '../lib/shopCategories'
 import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
 import { itemOptions, inStockValues, legacyMirror, choiceGroups } from '../lib/shopOptions'
 import SearchField from '../components/ui/SearchField'
+import { uploadShopImage, removeShopImage } from '../lib/shopMedia'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 // `categories` is the tag list (multiple per item); it is chosen from the
 // admin-managed product_categories lookup — suppliers can't invent new ones.
-// Up to MAX_IMAGES photos per item, stored as data URLs in `images`.
+// Up to MAX_IMAGES photos per item. They go to the `shop-media` bucket and the
+// row keeps their URLs (fix143) — they used to be base64 inside the row, which
+// is what made the customer app's gallery take the best part of a minute.
 const MAX_IMAGES = 3
 /* Options (fix129): the shop names them — Size, Color, Flavor, Weight — and
    each value can be marked sold out on its own, so 43 can be finished while 44
@@ -125,9 +128,17 @@ export default function ShopInventoryPage({ partyContactId = null }) {
   }
   function closeModal() { setModal(null); setForm(EMPTY); setFormErr('') }
 
-  // Photos are read as data URLs and appended to `images` (same approach the
-  // customer app uses for profile photos). Several can be picked at once.
-  function onPickImage(e) {
+  /* Photos go to storage and the row keeps the URL (fix143).
+
+     The old rule was "each image under 750 KB", which is a rule about the FILE:
+     a shop owner meets it by hunting for a smaller photograph rather than by
+     making the right one smaller. uploadShopImage redraws whatever is picked at
+     1600px first, so a 4 MB camera photograph becomes ~150 KB that looks
+     identical at the size a card shows it, and the owner just uses the picture
+     they wanted. */
+  const [imgBusy, setImgBusy] = useState(null)   // { done, total, pct }
+
+  async function onPickImage(e) {
     const files = [...(e.target.files || [])]
     e.target.value = ''
     if (files.length === 0) return
@@ -138,18 +149,27 @@ export default function ShopInventoryPage({ partyContactId = null }) {
     if (files.length > room) setFormErr(`Only ${room} more photo${room === 1 ? '' : 's'} could be added (max ${MAX_IMAGES}).`)
     else setFormErr('')
 
+    let done = 0
     for (const file of chosen) {
-      if (!file.type.startsWith('image/')) { setFormErr('Please choose image files only.'); continue }
-      if (file.size > 750 * 1024)          { setFormErr('Each image must be under 750 KB.'); continue }
-      const reader = new FileReader()
-      reader.onload = () => setForm(f => (
-        f.images.length >= MAX_IMAGES ? f : { ...f, images: [...f.images, String(reader.result || '')] }))
-      reader.readAsDataURL(file)
+      setImgBusy({ done, total: chosen.length, pct: 0 })
+      const { url, error } = await uploadShopImage(file, {
+        onProgress: pct => setImgBusy({ done, total: chosen.length, pct: pct ?? 0 }),
+      })
+      done += 1
+      if (error) { setFormErr(error); continue }
+      // Re-read from the setter rather than from `form`: several pictures are
+      // uploaded one after another and each has to see the last one's result.
+      setForm(f => (f.images.length >= MAX_IMAGES ? f : { ...f, images: [...f.images, url] }))
     }
+    setImgBusy(null)
   }
 
   function removeImage(i) {
+    const gone = form.images[i]
     setForm(f => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }))
+    // The file itself, once it is off the item. Deliberately not awaited: an
+    // orphaned object in the bucket is untidy, a form that hangs is a bug.
+    removeShopImage(gone)
   }
   // The first photo is the cover — shown on the card in the customer app.
   function makeCover(i) {
@@ -209,7 +229,9 @@ export default function ShopInventoryPage({ partyContactId = null }) {
       price:            round2(form.price),
       currency:         form.currency || 'USD',
       images:           form.images,
-      // First photo mirrored into the old single-image column for back-compat.
+      // The cover, mirrored into the old single-image column for anything still
+      // reading it. Cheap now that it is a URL — when these were data: URLs
+      // this line was a second copy of a megabyte on every row (fix143).
       image_url:        form.images[0] || null,
       stock_qty:        form.stock_qty === '' ? null : Number(form.stock_qty),
       categories:       form.categories,
@@ -538,7 +560,16 @@ export default function ShopInventoryPage({ partyContactId = null }) {
                       )}
                     </div>
                   ))}
-                  {form.images.length < MAX_IMAGES && (
+                  {imgBusy && (
+                    <div className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-surface-border flex flex-col items-center justify-center gap-1 text-brand-300">
+                      <Loader className="w-4 h-4 animate-spin" />
+                      <span className="text-[10px]">{imgBusy.pct}%</span>
+                      {imgBusy.total > 1 && (
+                        <span className="text-[9px] text-slate-500">{imgBusy.done + 1} of {imgBusy.total}</span>
+                      )}
+                    </div>
+                  )}
+                  {form.images.length < MAX_IMAGES && !imgBusy && (
                     <label className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-dashed border-surface-border flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-500 hover:text-slate-300">
                       <Upload className="w-4 h-4" />
                       <span className="text-[10px]">Add photo</span>
@@ -552,8 +583,9 @@ export default function ShopInventoryPage({ partyContactId = null }) {
                   )}
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1.5">
-                  Up to {MAX_IMAGES} photos per item, max 750 KB each. The first one is the cover
-                  shown in the customer app.
+                  Up to {MAX_IMAGES} photos per item. The first is the cover shown in the customer
+                  app. Pictures are resized and stored as files, so a photograph straight off a
+                  phone is fine — there is no size to worry about.
                 </p>
               </div>
               {/* Options, sold-out values and the combinations grid — the same

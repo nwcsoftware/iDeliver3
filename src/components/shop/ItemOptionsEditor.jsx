@@ -5,6 +5,7 @@ import {
   MAX_OPTIONS, MAX_OPTION_VALUES, MAX_COMBOS,
   choiceGroups, comboMatrix,
 } from '../../lib/shopOptions'
+import { uploadShopImage } from '../../lib/shopMedia'
 
 /* The options editor, shared by the supplier's My Shop and the office Products
    catalog (supabase-fix129, fix130, fix131).
@@ -63,17 +64,25 @@ export default function ItemOptionsEditor({
   function removeValue(gi, vi) {
     patchGroups(gs => gs.map((g, i) => (i !== gi ? g : { ...g, values: g.values.filter((_, j) => j !== vi) })))
   }
-  // A photo per value, for options shown as swatches. Stored as a data URL like
-  // the item photos, so nothing depends on an upload bucket.
-  function onPickValueImage(gi, vi, e) {
+  /* A photo per value, for options shown as swatches. To storage like the item
+     photos (fix143) — as data URLs these were riding inside the `options`
+     column AND, mirrored, inside `colors`: 101 KB in each on one measured item,
+     for a swatch drawn at 40 pixels. */
+  const [valueImgBusy, setValueImgBusy] = useState(null)   // 'gi:vi' while uploading
+
+  async function onPickValueImage(gi, vi, e) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
     if (!file.type.startsWith('image/')) { onError('Please choose an image file.'); return }
-    if (file.size > 400 * 1024) { onError('An option photo must be under 400 KB.'); return }
-    const reader = new FileReader()
-    reader.onload = () => { setValue(gi, vi, { image: String(reader.result || '') }); onError('') }
-    reader.readAsDataURL(file)
+    setValueImgBusy(`${gi}:${vi}`)
+    // A swatch is never shown large, so it is cut down harder than an item
+    // photo — 400px is more than a 40px circle can ever use.
+    const { url, error } = await uploadShopImage(file, { folder: 'options', maxEdge: 400 })
+    setValueImgBusy(null)
+    if (error) { onError(error); return }
+    setValue(gi, vi, { image: url })
+    onError('')
   }
 
   /* The grid is built from the first two CHOICE options; a third splits it
@@ -183,9 +192,11 @@ export default function ItemOptionsEditor({
                     {g.style === 'swatch' && (
                       <label className="w-10 h-10 flex-shrink-0 rounded-md border border-surface-border bg-surface-hover overflow-hidden cursor-pointer flex items-center justify-center"
                         title="Photo for this value (optional)">
-                        {v.image
-                          ? <img src={v.image} alt="" className="w-full h-full object-cover" />
-                          : <ImageIcon className="w-4 h-4 text-slate-600" />}
+                        {valueImgBusy === `${gi}:${vi}`
+                          ? <span className="w-3.5 h-3.5 rounded-full border-2 border-brand-400 border-t-transparent animate-spin" />
+                          : v.image
+                            ? <img src={v.image} alt="" className="w-full h-full object-cover" />
+                            : <ImageIcon className="w-4 h-4 text-slate-600" />}
                         <input type="file" accept="image/*" className="hidden"
                           onChange={e => onPickValueImage(gi, vi, e)} />
                       </label>

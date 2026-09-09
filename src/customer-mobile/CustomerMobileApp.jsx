@@ -1866,17 +1866,96 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
         .eq('is_active', true)
         .order('created_at', { ascending: false })
 
-      let { data, error: e } = await run(`id,name,description,price,currency,image_url,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER}`)
+      /* 3asari3's own inventory is the office Products catalog — real goods
+         only (services and advertisements aren't shoppable). Mapped into the
+         same shape as a shop item so every card, popup and cart path is shared.
+
+         Fetched ALONGSIDE the shop query rather than after it. These are two
+         independent tables and neither answer depends on the other, but they
+         used to be awaited one after the next — so a shopper waited for the
+         sum of both round trips before the first card appeared. Measured
+         before fix143: 54.9s for the shop, then 3.5s for this. Started here
+         and collected below, they overlap instead of queueing.
+
+         `image_url` is not selected: fix143 backfilled `images` from it, so the
+         cover is in `images` for every row. The legacy branch below still asks
+         for it, because a database missing `images` has nothing else. */
+      const housePromise = (async () => {
+        try {
+          let { data: prods, error: prodErr } = await supabase
+            .from('products')
+            .select('id,name,description,unit_price,currency,images,options,combos,colors,sizes,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
+            .eq('is_active', true)
+            .eq('is_displayed', true)      // published to the customer app (fix115)
+            .eq('is_service', false)
+            .eq('is_advertisement', false)
+            .order('name')
+          if (prodErr && /options|combos|images|colors|sizes/.test(prodErr.message)) {
+            ;({ data: prods } = await supabase
+              .from('products')
+              .select('id,name,description,unit_price,currency,image_url,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
+              .eq('is_active', true).eq('is_displayed', true)
+              .eq('is_service', false).eq('is_advertisement', false)
+              .order('name'))
+          }
+          return (prods ?? []).map((pr) => {
+            const images = Array.isArray(pr.images) && pr.images.length
+              ? pr.images.filter(Boolean)
+              : (pr.image_url ? [pr.image_url] : [])
+            return {
+              id: `prod:${pr.id}`,
+              product_id: pr.id,
+              name: pr.name,
+              description: pr.description,
+              price: pr.unit_price,
+              currency: pr.currency || 'USD',
+              images,
+              // The cover, for the cart lines and popups that read it directly.
+              // Taken from `images` now rather than from its own column.
+              image_url: images[0] || null,
+              categories: pr.category?.name ? [pr.category.name] : [],
+              // The catalog carries the same options as a partner's shop
+              // (fix131); `colors`/`sizes` remain for rows saved before that.
+              options: Array.isArray(pr.options) ? pr.options : [],
+              combos:  Array.isArray(pr.combos)  ? pr.combos  : [],
+              colors:  Array.isArray(pr.colors)  ? pr.colors  : [],
+              sizes:   Array.isArray(pr.sizes)   ? pr.sizes   : [],
+              owner_contact_id: null,
+              owner: { company_name: HOUSE_SHOP_LABEL },
+              _house: true,
+            }
+          })
+        } catch {
+          return []          // the local market still works without the catalog
+        }
+      })()
+
+      /* `image_url` is deliberately NOT selected (fix143). It is a mirror of
+         images[0], and while photographs lived in the row as base64 that mirror
+         was a second copy of a megabyte on every item — 906 KB of the 2423 KB
+         this query used to weigh. fix143 backfills `images` from `image_url`
+         for any row old enough to have only the latter, so `images` is now the
+         one place a picture is listed and itemImages() never needs the mirror.
+
+         `colors` and `sizes` stay, though they carried an identical 101 KB of
+         swatch photographs on one measured item. They are NOT a dead mirror:
+         itemOptions() falls back to them whenever `options` is empty, so a row
+         saved before fix129 keeps its choices only because they are here.
+         Their weight was the base64 in them, and that is what moved to
+         storage — the columns themselves cost a few hundred bytes. */
+      let { data, error: e } = await run(`id,name,description,price,currency,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER}`)
       // `images` (fix105), `categories` (fix103) and `colors`/`sizes` (fix106)
       // are newer columns — on a DB where a migration hasn't run yet, fall back
       // so the shop still lists.
       if (e && /opening_hours|hours_note/.test(e.message)) {
         const OWNER_OLD = OWNER.replace(',opening_hours,hours_note', '')
         ;({ data, error: e } = await supabase.from('shop_inventory')
-          .select(`id,name,description,price,currency,image_url,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER_OLD}`)
+          .select(`id,name,description,price,currency,images,category,categories,options,combos,colors,sizes,is_made_to_order,owner_contact_id, ${OWNER_OLD}`)
           .eq('is_displayed', true).eq('is_active', true)
           .order('created_at', { ascending: false }))
       }
+      // A database old enough to lack `images` altogether: here `image_url` is
+      // the only picture there is, so it comes back into the select.
       if (e && /options|combos|images|categories|colors|sizes|is_made_to_order/.test(e.message)) {
         ;({ data, error: e } = await run(`id,name,description,price,currency,image_url,category,owner_contact_id, ${OWNER}`))
       }
@@ -1885,51 +1964,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
       else { setItems(data || []); setError('') }
       setLoading(false)
 
-      // 3asari3's own inventory is the office Products catalog — real goods only
-      // (services and advertisements aren't shoppable). Mapped into the same
-      // shape as a shop item so every card, popup and cart path is shared.
-      try {
-        let { data: prods, error: prodErr } = await supabase
-          .from('products')
-          .select('id,name,description,unit_price,currency,image_url,images,options,combos,colors,sizes,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
-          .eq('is_active', true)
-          .eq('is_displayed', true)      // published to the customer app (fix115)
-          .eq('is_service', false)
-          .eq('is_advertisement', false)
-          .order('name')
-        if (prodErr && /options|combos|images|colors|sizes/.test(prodErr.message)) {
-          ;({ data: prods } = await supabase
-            .from('products')
-            .select('id,name,description,unit_price,currency,image_url,is_active,is_displayed,is_service,is_advertisement,category:product_categories(name)')
-            .eq('is_active', true).eq('is_displayed', true)
-            .eq('is_service', false).eq('is_advertisement', false)
-            .order('name'))
-        }
-        if (!cancelled) {
-          setHouseItems((prods ?? []).map(pr => ({
-            id: `prod:${pr.id}`,
-            product_id: pr.id,
-            name: pr.name,
-            description: pr.description,
-            price: pr.unit_price,
-            currency: pr.currency || 'USD',
-            image_url: pr.image_url,
-            images: Array.isArray(pr.images) && pr.images.length
-              ? pr.images.filter(Boolean)
-              : (pr.image_url ? [pr.image_url] : []),
-            categories: pr.category?.name ? [pr.category.name] : [],
-            // The catalog carries the same options as a partner's shop (fix131);
-            // `colors`/`sizes` remain for rows saved before that.
-            options: Array.isArray(pr.options) ? pr.options : [],
-            combos:  Array.isArray(pr.combos)  ? pr.combos  : [],
-            colors: Array.isArray(pr.colors) ? pr.colors : [],
-            sizes:  Array.isArray(pr.sizes)  ? pr.sizes  : [],
-            owner_contact_id: null,
-            owner: { company_name: HOUSE_SHOP_LABEL },
-            _house: true,
-          })))
-        }
-      } catch { /* the local market still works without the catalog */ }
+      // The catalogue was started before the shop query above; collect it now.
+      const houseRows = await housePromise
+      if (!cancelled) setHouseItems(houseRows)
 
       // Availability per item (fix113): on hand − what other carts hold.
       // Items with NO stock ledger at all are treated as untracked and stay

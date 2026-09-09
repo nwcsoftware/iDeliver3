@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { uploadShopImage, removeShopImage } from '../lib/shopMedia'
 import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
 import { itemOptions, legacyMirror, choiceGroups } from '../lib/shopOptions'
 import { useApp } from '../context/AppContext'
@@ -179,7 +180,12 @@ export default function ProductsPage() {
   /* Photos, colours and sizes — the same rules as the supplier's shop items, so
      a product presents identically wherever it is sold. */
 
-  function onPickImage(e) {
+  /* To storage, not into the row (fix143). The same uploader the shop pages
+     use, so a product and a partner's item are stored the same way and the
+     customer app can treat them identically. */
+  const [imgBusy, setImgBusy] = useState(null)   // { done, total, pct }
+
+  async function onPickImage(e) {
     const files = [...(e.target.files || [])]
     e.target.value = ''
     if (files.length === 0) return
@@ -188,16 +194,23 @@ export default function ProductsPage() {
     const chosen = files.slice(0, room)
     if (files.length > room) setError(`Only ${room} more photo${room === 1 ? '' : 's'} could be added (max ${MAX_IMAGES}).`)
     else setError('')
+    let done = 0
     for (const file of chosen) {
-      if (!file.type.startsWith('image/')) { setError('Please choose image files only.'); continue }
-      if (file.size > 750 * 1024)          { setError('Each image must be under 750 KB.'); continue }
-      const reader = new FileReader()
-      reader.onload = () => setForm(f => (
-        f.images.length >= MAX_IMAGES ? f : { ...f, images: [...f.images, String(reader.result || '')] }))
-      reader.readAsDataURL(file)
+      setImgBusy({ done, total: chosen.length, pct: 0 })
+      const { url, error: upErr } = await uploadShopImage(file, {
+        onProgress: pct => setImgBusy({ done, total: chosen.length, pct: pct ?? 0 }),
+      })
+      done += 1
+      if (upErr) { setError(upErr); continue }
+      setForm(f => (f.images.length >= MAX_IMAGES ? f : { ...f, images: [...f.images, url] }))
     }
+    setImgBusy(null)
   }
-  const removeImage = i => setForm(f => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }))
+  const removeImage = (i) => {
+    const gone = form.images[i]
+    setForm(f => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }))
+    removeShopImage(gone)          // not awaited: never let tidying block the form
+  }
   // The first photo is the cover shown on the customer app's card.
   const makeCover = i => setForm(f => (i === 0 ? f : { ...f, images: [f.images[i], ...f.images.filter((_, idx) => idx !== i)] }))
 
@@ -644,7 +657,16 @@ export default function ProductsPage() {
                       )}
                     </div>
                   ))}
-                  {form.images.length < MAX_IMAGES && (
+                  {imgBusy && (
+                    <div className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-surface-border flex flex-col items-center justify-center gap-1 text-brand-300">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-[10px]">{imgBusy.pct}%</span>
+                      {imgBusy.total > 1 && (
+                        <span className="text-[9px] text-slate-500">{imgBusy.done + 1} of {imgBusy.total}</span>
+                      )}
+                    </div>
+                  )}
+                  {form.images.length < MAX_IMAGES && !imgBusy && (
                     <label className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-dashed border-surface-border flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-500 hover:text-slate-300">
                       <Upload className="w-4 h-4" />
                       <span className="text-[10px]">Add photo</span>
@@ -658,7 +680,8 @@ export default function ProductsPage() {
                   )}
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1.5">
-                  Up to {MAX_IMAGES} photos, max 750 KB each. The first one is the cover shown in the customer app.
+                  Up to {MAX_IMAGES} photos. The first is the cover shown in the customer app.
+                  Pictures are resized and stored as files, so anything straight off a phone is fine.
                 </p>
               </div>
 
