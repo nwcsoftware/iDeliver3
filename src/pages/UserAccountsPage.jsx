@@ -396,6 +396,28 @@ export default function UserAccountsPage() {
     }
   }, [users, subs, partyContacts])
 
+  /* ONCE AN ACCOUNT HAS BEEN USED, WHAT IT IS IS SETTLED.
+
+     Two fields decide that, and both are locked together: the ROLE, which
+     decides which gate the account passes, and the CONTACT it is linked to,
+     which decides whose orders and whose money it sees. Re-pointing a partner
+     login from one contact to another is the quieter of the two and the larger
+     one: the role on screen never changes, and the account simply starts
+     reading somebody else's business.
+
+     A role is not a label — it decides which gate the account passes through.
+     An account that has signed in has already been let through one of them, and
+     moving it to another category afterwards re-decides, retrospectively, what
+     that person was allowed to do. It is also how a seat gets laundered: a
+     partner made call-centre, or the reverse, carries its history and its
+     password into an arrangement it was never granted.
+
+     So after the first sign-in both are fixed for an administrator. The super
+     admin can still change them — somebody has to be able to repair a genuine
+     mistake — and an account that has never been used stays editable, because
+     nothing has happened under it yet. */
+  const identityLocked = (u) => !!u?.last_login_at && !isSuperAdmin
+
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
     // Start with a ready-to-use strong password so the admin can just create &
@@ -423,6 +445,23 @@ export default function UserAccountsPage() {
        office roles are not gated on a contact at all, so the subscription check
        that governs them would simply stop running. Re-pointing the account is
        refused; a member of staff gets their own login. */
+    /* Refused on save as well as disabled on the form: a select that is greyed
+       out is a courtesy, not a rule. */
+    if (modal !== 'add' && identityLocked(modal)
+        && (form.contact_id || null) !== (modal.contact_id || null)) {
+      setFormErr(`This account has already signed in (${String(modal.last_login_at).slice(0, 10)}), `
+        + 'so the contact it belongs to is fixed. Re-pointing a used login at another contact would give it '
+        + 'somebody else’s orders and statement. Only a super admin can change it.')
+      return
+    }
+    if (modal !== 'add' && identityLocked(modal) && form.role !== modal.role) {
+      setFormErr(`This account has already signed in (${String(modal.last_login_at).slice(0, 10)}), `
+        + `so its category is fixed at ${roleLabel[modal.role] ?? modal.role}. `
+        + 'Only a super admin can move a used account to another category — otherwise deactivate it '
+        + 'and create the new account separately.')
+      return
+    }
+
     const OFFICE_ROLES = ['admin', 'call_center']
     if (modal !== 'add' && modal.contact_id && OFFICE_ROLES.includes(form.role)) {
       setFormErr('This login belongs to a partner or supplier contact and cannot be changed into an office role. '
@@ -524,6 +563,24 @@ export default function UserAccountsPage() {
         p_role:       form.role,
         p_contact_id: form.contact_id || null,
       })
+
+      /* A role change can turn an office login into a party one — a call-centre
+         user made a partner, say. That is the same event as creating a party
+         login, so it opens the same subscription: nothing for a partner inside
+         the ten, a payable seat for one beyond it, the free period for a
+         supplier. Without this the converted login was left subject to a
+         subscription and holding none: refused at sign-in, which is safe, but
+         invisible in the money view — no row, no amount, nothing saying what is
+         owed. That is exactly the state fix148 had to go back and clean up. */
+      if (!e && form.contact_id && (form.role === 'partner' || form.role === 'supplier')) {
+        const { data: c } = await supabase.from('contacts')
+          .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
+        const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
+        const opened = await ensureTrialSubscription(form.contact_id, types, {
+          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
+        })
+        if (opened.error) console.warn('Could not open the subscription:', opened.error)
+      }
       rpcError = e
     }
 
@@ -1097,7 +1154,8 @@ export default function UserAccountsPage() {
               </div>
               <div>
                 <label className="label">Role *</label>
-                <select className="input" value={form.role}
+                <select className="input disabled:opacity-60 disabled:cursor-not-allowed" value={form.role}
+                  disabled={modal !== 'add' && identityLocked(modal)}
                   onChange={e => {
                     const role = e.target.value
                     // Drop any linked contact when leaving a supplier/partner role.
@@ -1107,6 +1165,15 @@ export default function UserAccountsPage() {
                   }}>
                   {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
+                {modal !== 'add' && identityLocked(modal) && (
+                  <p className="text-[11px] mt-1 text-slate-500 leading-relaxed">
+                    <span className="text-slate-300">Category and linked contact are fixed.</span> This account
+                    first signed in on {String(modal.last_login_at).slice(0, 10)}. An account that has been used
+                    cannot be moved to another category, nor re-pointed at another contact — deactivate it and
+                    create a separate account instead. A super admin can still change both.
+                  </p>
+                )}
+
                 {/* Where this role's seats stand, before the save is attempted.
                     An administrator sees the wall coming; a super admin sees the
                     price of stepping over it. */}
@@ -1133,7 +1200,9 @@ export default function UserAccountsPage() {
               {isPartyRole && (
                 <div>
                   <label className="label capitalize">{form.role} contact *</label>
-                  <select className="input" value={form.contact_id || ''}
+                  <select className="input disabled:opacity-60 disabled:cursor-not-allowed"
+                    value={form.contact_id || ''}
+                    disabled={modal !== 'add' && identityLocked(modal)}
                     onChange={e => { setForm(f => ({ ...f, contact_id: e.target.value })); setFormErr('') }}>
                     <option value="">— Select the {form.role} —</option>
                     {roleContacts.map(c => (
@@ -1145,8 +1214,13 @@ export default function UserAccountsPage() {
                       <option value={form.contact_id}>Linked contact</option>
                     )}
                   </select>
-                  <p className="text-[11px] text-slate-500 mt-1">
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
                     Links the login to this contact so they only see their own orders.
+                    {modal !== 'add' && identityLocked(modal) && (
+                      <> <span className="text-slate-300">Fixed since this account first signed in</span> —
+                      re-pointing it would hand this login somebody else’s orders and statement. Only a super
+                      admin can change it.</>
+                    )}
                   </p>
                 </div>
               )}
