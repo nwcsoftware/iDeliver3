@@ -4,6 +4,7 @@ import { supabase, fetchAllRows, fetchAllRowsKeyset, HEAVY_PAGE_SIZE } from '../
 import { fetchInactiveContactIds } from '../lib/contactVisibility'
 import { useAuth } from './AuthContext'
 import { fetchHeaderBackgrounds, pickCurrent } from '../lib/headerBackground'
+import { applyTheme, DEFAULT_THEME } from '../lib/appThemes'
 
 const AppContext = createContext(null)
 
@@ -74,6 +75,11 @@ const DEFAULT_APP_SETTINGS = {
   // touch a driver's (or another user's) collected payment. When false, anyone
   // can edit/delete any payment.
   protectOthersPayments: false,
+  /* Which palette the console is painted in: 'standard' (the dark original),
+     'light' or 'mono'. Per device, like the other preferences here — two people
+     sharing a machine share a screen, and two machines may well want different
+     looks (a bright office, a dim dispatch desk). See src/lib/appThemes.js. */
+  theme: DEFAULT_THEME,
   /* Currency sanity limits, per currency (fix: Currency Check).
 
      An amount below `min` or above `max` for its currency is flagged as
@@ -197,6 +203,14 @@ export function AppProvider({ children }) {
   // `updateAppSettings` accepts a partial object (or updater fn) and routes each
   // key to the right store: restriction keys are written server-side (applying to
   // all users everywhere), everything else stays on this device.
+  /* Paint the chosen palette. This runs wherever AppProvider is mounted — the
+     office console and the partner portal — and never for the public front page
+     or the customer application, which are separate branches of App.jsx with
+     palettes of their own. Writing to the root element rather than to a wrapper
+     is deliberate: the order drawer and the order quick view render into <body>
+     through a portal and would otherwise keep the previous theme. */
+  useEffect(() => { applyTheme(appSettings.theme || DEFAULT_THEME) }, [appSettings.theme])
+
   const updateAppSettings = useCallback((partial) => {
     const patch = typeof partial === 'function' ? partial(appSettings) : partial
     const globalPatch = {}

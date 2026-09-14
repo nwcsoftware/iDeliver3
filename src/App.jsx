@@ -59,6 +59,7 @@ import CashierBoxResetPage      from './pages/CashierBoxResetPage'
 import DriverCollectionsPage   from './pages/DriverCollectionsPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import LandingPage            from './pages/LandingPage'
+import AppearancePage        from './pages/AppearancePage'
 import LandingAdminPage       from './pages/LandingAdminPage'
 import LandingBackgroundPage  from './pages/LandingBackgroundPage'
 import { fetchLandingSettings, isDesktopApp } from './lib/landingPage'
@@ -217,6 +218,7 @@ function AppShell() {
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />
                 <Route path="/settings/app"        element={<AppSettingsPage />} />
+                <Route path="/settings/appearance" element={<AppearancePage />} />
                 <Route path="/settings/messages"   element={<MessagesPage />} />
                 <Route path="/settings/users"      element={<UserAccountsPage />} />
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />

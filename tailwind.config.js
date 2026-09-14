@@ -7,17 +7,37 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        /* Resolved through CSS variables so the office console can be
+           repainted at runtime (src/lib/appThemes.js). The defaults in
+           index.css reproduce the indigo scale exactly, so an installation
+           with no theme chosen looks precisely as it always has. */
         brand: {
-          50:  '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
+          50:  'rgb(var(--brand-50)  / <alpha-value>)',
+          100: 'rgb(var(--brand-100) / <alpha-value>)',
+          200: 'rgb(var(--brand-200) / <alpha-value>)',
+          300: 'rgb(var(--brand-300) / <alpha-value>)',
+          400: 'rgb(var(--brand-400) / <alpha-value>)',
+          500: 'rgb(var(--brand-500) / <alpha-value>)',
+          600: 'rgb(var(--brand-600) / <alpha-value>)',
+          700: 'rgb(var(--brand-700) / <alpha-value>)',
+          800: 'rgb(var(--brand-800) / <alpha-value>)',
+          900: 'rgb(var(--brand-900) / <alpha-value>)',
+        },
+        /* The console's text ramp. Overriding Tailwind's own `slate` means the
+           2,500 `text-slate-N` classes already written across the screens
+           become theme-aware without one of them being edited. */
+        slate: {
+          50:  'rgb(var(--slate-50)  / <alpha-value>)',
+          100: 'rgb(var(--slate-100) / <alpha-value>)',
+          200: 'rgb(var(--slate-200) / <alpha-value>)',
+          300: 'rgb(var(--slate-300) / <alpha-value>)',
+          400: 'rgb(var(--slate-400) / <alpha-value>)',
+          500: 'rgb(var(--slate-500) / <alpha-value>)',
+          600: 'rgb(var(--slate-600) / <alpha-value>)',
+          700: 'rgb(var(--slate-700) / <alpha-value>)',
+          800: 'rgb(var(--slate-800) / <alpha-value>)',
+          900: 'rgb(var(--slate-900) / <alpha-value>)',
+          950: 'rgb(var(--slate-950) / <alpha-value>)',
         },
         /* ── Customer app palette ───────────────────────────────────────
            The app paints with ROLES, not colour names: `shop` carries the
@@ -68,11 +88,118 @@ module.exports = {
           500: 'rgb(var(--accent-500) / <alpha-value>)',
           600: 'rgb(var(--accent-600) / <alpha-value>)',
         },
+        /* Status hues. Only the 100-400 shades are routed through variables:
+           those are the TEXT tints, picked to read on a dark ground, and a
+           light theme has to darken them or "Delivered" turns pale green on
+           white. 500 upwards are solid fills and keep Tailwind's own values in
+           every theme, so a green badge stays the same green. */
+        red: {
+          100: 'rgb(var(--red-100) / <alpha-value>)',
+          200: 'rgb(var(--red-200) / <alpha-value>)',
+          300: 'rgb(var(--red-300) / <alpha-value>)',
+          400: 'rgb(var(--red-400) / <alpha-value>)',
+        },
+        green: {
+          100: 'rgb(var(--green-100) / <alpha-value>)',
+          200: 'rgb(var(--green-200) / <alpha-value>)',
+          300: 'rgb(var(--green-300) / <alpha-value>)',
+          400: 'rgb(var(--green-400) / <alpha-value>)',
+        },
+        amber: {
+          100: 'rgb(var(--amber-100) / <alpha-value>)',
+          200: 'rgb(var(--amber-200) / <alpha-value>)',
+          300: 'rgb(var(--amber-300) / <alpha-value>)',
+          400: 'rgb(var(--amber-400) / <alpha-value>)',
+        },
+        emerald: {
+          100: 'rgb(var(--emerald-100) / <alpha-value>)',
+          200: 'rgb(var(--emerald-200) / <alpha-value>)',
+          300: 'rgb(var(--emerald-300) / <alpha-value>)',
+          400: 'rgb(var(--emerald-400) / <alpha-value>)',
+        },
+        cyan: {
+          100: 'rgb(var(--cyan-100) / <alpha-value>)',
+          200: 'rgb(var(--cyan-200) / <alpha-value>)',
+          300: 'rgb(var(--cyan-300) / <alpha-value>)',
+          400: 'rgb(var(--cyan-400) / <alpha-value>)',
+        },
+        fuchsia: {
+          100: 'rgb(var(--fuchsia-100) / <alpha-value>)',
+          200: 'rgb(var(--fuchsia-200) / <alpha-value>)',
+          300: 'rgb(var(--fuchsia-300) / <alpha-value>)',
+          400: 'rgb(var(--fuchsia-400) / <alpha-value>)',
+        },
+        yellow: {
+          100: 'rgb(var(--yellow-100) / <alpha-value>)',
+          200: 'rgb(var(--yellow-200) / <alpha-value>)',
+          300: 'rgb(var(--yellow-300) / <alpha-value>)',
+          400: 'rgb(var(--yellow-400) / <alpha-value>)',
+        },
+        teal: {
+          100: 'rgb(var(--teal-100) / <alpha-value>)',
+          200: 'rgb(var(--teal-200) / <alpha-value>)',
+          300: 'rgb(var(--teal-300) / <alpha-value>)',
+          400: 'rgb(var(--teal-400) / <alpha-value>)',
+        },
+        rose: {
+          100: 'rgb(var(--rose-100) / <alpha-value>)',
+          200: 'rgb(var(--rose-200) / <alpha-value>)',
+          300: 'rgb(var(--rose-300) / <alpha-value>)',
+          400: 'rgb(var(--rose-400) / <alpha-value>)',
+        },
+        sky: {
+          100: 'rgb(var(--sky-100) / <alpha-value>)',
+          200: 'rgb(var(--sky-200) / <alpha-value>)',
+          300: 'rgb(var(--sky-300) / <alpha-value>)',
+          400: 'rgb(var(--sky-400) / <alpha-value>)',
+        },
+        purple: {
+          100: 'rgb(var(--purple-100) / <alpha-value>)',
+          200: 'rgb(var(--purple-200) / <alpha-value>)',
+          300: 'rgb(var(--purple-300) / <alpha-value>)',
+          400: 'rgb(var(--purple-400) / <alpha-value>)',
+        },
+        orange: {
+          100: 'rgb(var(--orange-100) / <alpha-value>)',
+          200: 'rgb(var(--orange-200) / <alpha-value>)',
+          300: 'rgb(var(--orange-300) / <alpha-value>)',
+          400: 'rgb(var(--orange-400) / <alpha-value>)',
+        },
+        blue: {
+          100: 'rgb(var(--blue-100) / <alpha-value>)',
+          200: 'rgb(var(--blue-200) / <alpha-value>)',
+          300: 'rgb(var(--blue-300) / <alpha-value>)',
+          400: 'rgb(var(--blue-400) / <alpha-value>)',
+        },
+        indigo: {
+          100: 'rgb(var(--indigo-100) / <alpha-value>)',
+          200: 'rgb(var(--indigo-200) / <alpha-value>)',
+          300: 'rgb(var(--indigo-300) / <alpha-value>)',
+          400: 'rgb(var(--indigo-400) / <alpha-value>)',
+        },
+        lime: {
+          100: 'rgb(var(--lime-100) / <alpha-value>)',
+          200: 'rgb(var(--lime-200) / <alpha-value>)',
+          300: 'rgb(var(--lime-300) / <alpha-value>)',
+          400: 'rgb(var(--lime-400) / <alpha-value>)',
+        },
+        violet: {
+          100: 'rgb(var(--violet-100) / <alpha-value>)',
+          200: 'rgb(var(--violet-200) / <alpha-value>)',
+          300: 'rgb(var(--violet-300) / <alpha-value>)',
+          400: 'rgb(var(--violet-400) / <alpha-value>)',
+        },
+        pink: {
+          100: 'rgb(var(--pink-100) / <alpha-value>)',
+          200: 'rgb(var(--pink-200) / <alpha-value>)',
+          300: 'rgb(var(--pink-300) / <alpha-value>)',
+          400: 'rgb(var(--pink-400) / <alpha-value>)',
+        },
         surface: {
-          DEFAULT: '#0f172a',
-          card:    '#1e293b',
-          hover:   '#334155',
-          border:  '#334155',
+          DEFAULT: 'rgb(var(--surface)        / <alpha-value>)',
+          card:    'rgb(var(--surface-card)   / <alpha-value>)',
+          hover:   'rgb(var(--surface-hover)  / <alpha-value>)',
+          border:  'rgb(var(--surface-border) / <alpha-value>)',
         },
       },
       fontFamily: {

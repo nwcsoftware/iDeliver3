@@ -100,6 +100,14 @@ export const navGroups = [
     ],
   },
   {
+    /* Personal, not administrative: every user may repaint their own screen,
+       so this group carries no adminOnly and sits above Administration. */
+    key: 'prefs', label: 'Preferences', icon: Palette,
+    items: [
+      { to: '/settings/appearance', icon: Palette, label: 'Appearance' },
+    ],
+  },
+  {
     key: 'admin', label: 'Administration', icon: Settings, adminOnly: true,
     items: [
       { to: '/settings/app',                    icon: Settings,     label: 'App Settings' },
