@@ -35,6 +35,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
   fetchSubscriptions, saveSubscription, deleteSubscription,
@@ -203,7 +204,11 @@ export default function SubscriptionsPage() {
     ;(async () => {
       const { data } = await supabase
         .from('contacts')
-        .select('id, first_name, last_name, company_name, code, contact_types, created_at, is_active')
+        /* mobile, account_number and contact_type are here for the picker in the
+           New Subscription form: it searches by name, contact code, mobile and
+           account number, and shows the role badges. Without them the search
+           silently matches nothing for two of the four. */
+        .select('id, first_name, last_name, company_name, code, mobile, account_number, contact_type, contact_types, created_at, is_active')
         .overlaps('contact_types', ['supplier', 'partner'])
         .order('first_name')
       setParties(data ?? [])
@@ -876,11 +881,19 @@ export default function SubscriptionsPage() {
             <div className="p-5 space-y-4 overflow-y-auto">
               <div>
                 <label className="label">Supplier / Partner *</label>
-                <select className="input" value={form.contact_id}
-                  onChange={e => { setForm(f => ({ ...f, contact_id: e.target.value })); setFormErr('') }}>
-                  <option value="">— Select the supplier or partner —</option>
-                  {parties.map(c => <option key={c.id} value={c.id}>{contactLabel(c)}</option>)}
-                </select>
+                {/* A plain <select> meant scrolling a list that grows with every
+                    partner taken on. This is the same typeahead the order form
+                    uses: type any part of a name, a contact code, a mobile or an
+                    account number and the list narrows to it. No "add new" is
+                    offered — a subscription is attached to a party that already
+                    exists, and creating a contact from here would be an accident
+                    waiting to happen. */}
+                <ContactCombobox
+                  value={form.contact_id}
+                  options={parties}
+                  onSelect={c => { setForm(f => ({ ...f, contact_id: c?.id || '' })); setFormErr('') }}
+                  placeholder="Type a name, contact code or mobile…"
+                />
               </div>
 
               <div>

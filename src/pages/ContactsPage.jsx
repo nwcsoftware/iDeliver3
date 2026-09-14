@@ -43,7 +43,10 @@ import ContactPartnerPackages from '../components/contacts/ContactPartnerPackage
 import ContactPartnerOrders from '../components/contacts/ContactPartnerOrders'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount, accountNature, CREDIT } from '../lib/subAccounts'
+import { checkPartyTypeChange } from '../lib/subscriptions'
+import { SEATS } from '../lib/billing'
 import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 /* ── type config ─────────────────────────────────────────── */
 
@@ -407,8 +410,17 @@ export default function ContactsPage({ type }) {
         companyId: COMPANY_ID, userId: currentUser?.user_id || null,
       })
       if (trial.created) {
-        setNotice(`Login created — a free ${TRIAL_DAYS}-day subscription starts today. `
-          + 'Renewals are entered by the super admin under Settings → Subscriptions.')
+        /* What was issued depends on who they are: a supplier gets the free
+           period their agreement promises, a partner past the tenth gets a
+           payable seat and no free days at all. Saying "free subscription" for
+           both would promise something that is not true of one of them. */
+        const payable = Number(trial.row?.amount) > 0
+        setNotice(payable
+          ? `Login created — the ten included partner seats are taken, so a payable seat of `
+            + `${RATE_CURRENCY} ${trial.row.amount} a year has been placed against them. It is unpaid, so they `
+            + 'cannot sign in yet: confirm the payment and activate it under Settings → Subscriptions.'
+          : `Login created — a free ${TRIAL_DAYS}-day subscription starts today. `
+            + 'Renewals are entered by the super admin under Settings → Subscriptions.')
       } else if (trial.error) {
         console.warn('Could not issue the free subscription:', trial.error)
       }
@@ -466,6 +478,22 @@ export default function ContactsPage({ type }) {
     const selectedTypes = (Array.isArray(form.contact_types) && form.contact_types.length)
       ? [...new Set(form.contact_types)]
       : [cfg.contactType]
+    /* Turning an ordinary contact into a partner or supplier is a seat decision,
+       not a piece of paperwork (fix146). If the contact holds a login and the
+       seat would fall outside the annual package, the change is refused until a
+       subscription exists — otherwise the portal opens on the strength of a type
+       acquired a moment ago, with nothing behind it. */
+    if (modal !== 'add') {
+      const guard = await checkPartyTypeChange({
+        contactId: modal.id,
+        nextTypes: selectedTypes,
+        currentTypes: Array.isArray(modal.contact_types) && modal.contact_types.length
+          ? modal.contact_types
+          : (modal.contact_type ? [modal.contact_type] : []),
+      })
+      if (!guard.ok) { setError(guard.message); setSaving(false); return }
+    }
+
     // The primary type drives the contact code & account-number prefix. Keep the
     // existing primary when it's still among the selected roles; otherwise fall
     // back to the first selected role (e.g. when a role is switched entirely).
@@ -643,6 +671,32 @@ export default function ContactsPage({ type }) {
 
   const { Icon, title, color, bg } = cfg
 
+  /* What each column sorts by. A cell showing a select's LABEL has to sort by
+     that label rather than the stored value, or the order on screen would not
+     match the order the reader sees. Status sorts as its own words, so A→Z puts
+     the active contacts first. */
+  const sortValue = useCallback((c, key) => {
+    switch (key) {
+      case 'name':
+        return (c.entity_type === 'company' && c.company_name)
+          ? c.company_name
+          : (`${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || null)
+      case 'contact':  return c.mobile || c.email || null
+      case 'location': return c.city || null
+      case 'status':   return c.is_active ? 'Active' : 'Inactive'
+      default: {
+        const ef = cfg.extraFields.find(f => f.key === key)
+        if (!ef) return null
+        const raw = c[key]
+        const shown = ef.type === 'select'
+          ? (normalizeOptions(ef.options).find(o => o.value === raw)?.label ?? raw)
+          : raw
+        return shown === '' || shown === undefined ? null : shown
+      }
+    }
+  }, [cfg.extraFields])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+
   // Entity type (Individual / Company) of the open form — used by the save button.
   const isCompany = form.entity_type === 'company'
 
@@ -699,13 +753,20 @@ export default function ContactsPage({ type }) {
 
   /* ── render ──────────────────────────────────────────────── */
 
+  // The rows as the table shows them: filtered, then sorted by whichever header
+  // the user clicked (unsorted falls back to the query's own order).
+  const rows = sortRows(visible)
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    /* A fixed frame rather than a page that scrolls as a whole: the toolbar and
+       the count stay put while the list moves between them, so the filters and
+       the total are reachable from anywhere in a list of two thousand rows. */
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
 
       {/* Something the save did on its own — currently the login role following
           the contact's roles. Dismissible; it is news, not an error. */}
       {notice && (
-        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-brand-500/10 border border-brand-500/30 rounded-lg">
+        <div className="flex-shrink-0 flex items-start gap-2.5 px-3 py-2.5 bg-brand-500/10 border border-brand-500/30 rounded-lg">
           <KeyRound className="w-4 h-4 text-brand-300 flex-shrink-0 mt-0.5" />
           <p className="text-brand-200 text-xs leading-relaxed flex-1">{notice}</p>
           <button onClick={() => setNotice('')} className="text-slate-400 hover:text-slate-200">
@@ -714,22 +775,10 @@ export default function ContactsPage({ type }) {
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <div className={`w-8 h-8 rounded-lg border flex items-center justify-center ${bg}`}>
-            <Icon className={`w-4 h-4 ${color}`} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {visible.length === contacts.length
-                ? `${contacts.length} total`
-                : `${visible.length} of ${contacts.length}`}
-            </p>
-          </div>
-        </div>
-
-        <div className="relative flex-1 max-w-sm ml-2">
+      {/* Toolbar — frozen. No page icon: the application header already shows
+          which list this is, and repeating it here only costs a row of space. */}
+      <div className="flex items-center gap-3 flex-wrap flex-shrink-0">
+        <div className="relative flex-1 max-w-sm">
           <SearchField
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -780,22 +829,30 @@ export default function ContactsPage({ type }) {
         </button>
       </div>
 
-      {/* Table */}
-      <div className="card overflow-hidden">
+      {/* Table — the header row sticks to the top of the scrolling body, so the
+          column a row belongs to is readable however far down the list you are. */}
+      <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-y-auto">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-surface-border">
-              {['Name', 'Contact', 'Location', ...(cfg.extraFields.map(f => f.label)), 'Status', ''].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-surface-border text-slate-500 text-xs">
+              <SortTh label="Name"     sortKey="name"     sort={sort} onSort={cycle} className="px-4 py-3" />
+              <SortTh label="Contact"  sortKey="contact"  sort={sort} onSort={cycle} className="px-4 py-3" />
+              <SortTh label="Location" sortKey="location" sort={sort} onSort={cycle} className="px-4 py-3" />
+              {cfg.extraFields.map(f => (
+                <SortTh key={f.key} label={f.label} sortKey={f.key} sort={sort} onSort={cycle} className="px-4 py-3" />
               ))}
+              <SortTh label="Status" sortKey="status" sort={sort} onSort={cycle} className="px-4 py-3" />
+              {/* Actions — nothing to sort by. */}
+              <SortTh label="" sort={sort} onSort={cycle} className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
-            ) : visible.length === 0 ? (
+            ) : rows.length === 0 ? (
               <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">No {title.toLowerCase()} found</td></tr>
-            ) : visible.map(c => (
+            ) : rows.map(c => (
               <tr key={c.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${!c.is_active ? 'opacity-50' : ''}`}>
 
                 {/* Name */}
@@ -900,6 +957,28 @@ export default function ContactsPage({ type }) {
             ))}
           </tbody>
         </table>
+        </div>
+
+        {/* Footer — frozen. The count lives here now rather than beside the
+            title: it is a fact about the list, and it belongs at the end of it. */}
+        <div className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-2
+                        border-t border-surface-border bg-surface-card text-xs text-slate-500">
+          <span>
+            {loading ? 'Loading…' : rows.length === contacts.length
+              ? `${contacts.length.toLocaleString()} ${title.toLowerCase()}`
+              : `${rows.length.toLocaleString()} of ${contacts.length.toLocaleString()} ${title.toLowerCase()}`}
+          </span>
+          {sort.key && (
+            <span className="text-slate-600">
+              Sorted by {sort.key === 'name' ? 'Name'
+                : sort.key === 'contact' ? 'Contact'
+                : sort.key === 'location' ? 'Location'
+                : sort.key === 'status' ? 'Status'
+                : (cfg.extraFields.find(f => f.key === sort.key)?.label ?? sort.key)}
+              {sort.dir === 'asc' ? ' A→Z' : ' Z→A'} · click the header again to clear
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Modal */}
@@ -1006,10 +1085,22 @@ export default function ContactsPage({ type }) {
               <div className="border border-green-500/30 bg-green-500/5 rounded-lg p-3 flex items-start gap-2.5">
                 <CalendarCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <span className="text-green-300 font-medium">Free {TRIAL_DAYS}-day subscription.</span>{' '}
-                  Saving this {loginRole} issues one automatically, starting today, so they can sign in
-                  right away. Renewals after that are entered by the super admin under
-                  <span className="text-slate-300"> Settings → Subscriptions</span>.
+                  {loginRole === 'partner' ? (
+                    <>
+                      <span className="text-green-300 font-medium">The first 10 partners are included</span>{' '}
+                      in the annual package and pay nothing. Beyond the tenth there is no free period: saving
+                      this partner places a payable seat of {RATE_CURRENCY} {SEATS.partner.extraRate} a year,
+                      and they cannot sign in until it is paid and activated under
+                      <span className="text-slate-300"> Settings → Subscriptions</span>.
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-green-300 font-medium">Free {TRIAL_DAYS}-day subscription.</span>{' '}
+                      Saving this {loginRole} issues one automatically, starting today, so they can sign in
+                      right away. Renewals after that are entered by the super admin under
+                      <span className="text-slate-300"> Settings → Subscriptions</span>.
+                    </>
+                  )}
                 </p>
               </div>
             )}

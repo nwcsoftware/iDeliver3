@@ -142,7 +142,7 @@ export default function PartnerShell() {
     if (!currentUser) return undefined
     let cancelled = false
     const check = async () => {
-      const gate = await checkSubscriptionAccess(currentUser.contact_id)
+      const gate = await checkSubscriptionAccess(currentUser.contact_id, currentUser.role)
       if (cancelled || gate.allowed) return
       setDenied(accessDeniedMessage(gate.reason, gate.row, gate))
     }

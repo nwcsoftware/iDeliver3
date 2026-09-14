@@ -143,7 +143,7 @@ export function AuthProvider({ children }) {
             // a still-valid cached login.
             const isSecondParty = session.role === 'partner' || session.role === 'supplier'
             if (isSecondParty) {
-              const { allowed } = await checkSubscriptionAccess(session.contact_id)
+              const { allowed } = await checkSubscriptionAccess(session.contact_id, session.role)
               if (cancelled) return
               if (!allowed) {
                 localStorage.removeItem(SESSION_KEY)
@@ -212,7 +212,7 @@ export function AuthProvider({ children }) {
     // in while one is paid, activated and in date (supabase-fix110.sql). The
     // check errs on the side of letting them in if the lookup itself fails.
     if (isSecondParty) {
-      const gate = await checkSubscriptionAccess(user.contact_id)
+      const gate = await checkSubscriptionAccess(user.contact_id, user.role)
       if (!gate.allowed) {
         return { success: false, error: accessDeniedMessage(gate.reason, gate.row, gate) }
       }

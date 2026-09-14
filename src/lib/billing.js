@@ -66,6 +66,31 @@ export const SEATS = {
     period: 'year',
     article: 'A5A',
   },
+  /* Administrators. The agreement does not price these separately, so the
+     allowance below is the operating rule agreed with 3asari3 rather than an
+     article of the licence, and the rate follows the extra call-centre seat
+     until a figure is written into the agreement. Marked so nobody mistakes it
+     for a contractual number. */
+  admin: {
+    label: 'Administrators',
+    included: 4,
+    includedRate: 0,
+    extraRate: 15,             // per additional administrator, per year
+    period: 'year',
+    article: null,
+    provisional: true,
+  },
+}
+
+/* Which seat family a login's role draws from. A super admin draws from none:
+   the account that administers the licence cannot be limited by it. Drivers are
+   seats too, but they are contacts rather than logins and are counted elsewhere. */
+export const SEAT_BY_ROLE = {
+  admin:       'admin',
+  call_center: 'call_center',
+  partner:     'partner',
+  // supplier is not a seat on the package at all — it subscribes on its own
+  // monthly plan (SUPPLIER_SUBSCRIPTION), so it has no allowance to run out of.
 }
 
 /* ── the supplier subscription, outside the package ───────────────────── */

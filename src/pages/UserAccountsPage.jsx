@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   UserCog,
@@ -25,6 +25,9 @@ import {
   ArrowUpAZ,
   ArrowDownZA,
   ChevronsUpDown,
+  ShieldCheck,
+  CalendarClock,
+  BadgeDollarSign,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
@@ -32,6 +35,8 @@ import {
   scanUserReferences, summariseReferences, deleteUserAccount, tableLabel, columnLabel,
 } from '../lib/userDeletion'
 import { useAuth } from '../context/AuthContext'
+import { checkSeat, seatPosition, seatPrice, seatStatus } from '../lib/officeSeats'
+import { rankPartners } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 import SearchField from '../components/ui/SearchField'
@@ -78,9 +83,12 @@ const ASSIGNABLE_ROLES = [
 ]
 const roleLabel = Object.fromEntries(ASSIGNABLE_ROLES.map(r => [r.value, r.label]))
 
-// Maximum number of *active* accounts allowed per role. Adding beyond the cap
-// is blocked with a warning; deactivated accounts don't count (and are hidden).
-const ROLE_LIMITS = { partner: 20, supplier: 20, call_center: 6 }
+/* The per-role caps used to live here as flat numbers (partner 20, supplier 20,
+   call_center 6) that stopped everybody, super admin included, and matched
+   neither the licence nor the seats the company actually pays for. They are now
+   the ALLOWANCES in lib/billing.js — 10 partners, 6 call-centre, 4
+   administrators — enforced through lib/officeSeats.js, which knows the
+   difference between a seat that is included and one that has to be bought. */
 
 /* One filter chip. `cls` lets a chip wear the colour of what it filters —
    green for online, the status colours for statuses — so the bar reads as the
@@ -166,6 +174,10 @@ export default function UserAccountsPage() {
 
   const [resetFor, setResetFor] = useState(null)   // user object
   const [resetPw,  setResetPw]  = useState('')
+  /* Credentials panel inside the edit form (super admin only). `credsPw` is a
+     NEW password being set — never an old one, which cannot be read back. */
+  const [credsOpen, setCredsOpen] = useState(false)
+  const [credsPw,   setCredsPw]   = useState('')
   const [resetErr, setResetErr] = useState('')
   const [resetBusy, setResetBusy] = useState(false)
 
@@ -181,6 +193,20 @@ export default function UserAccountsPage() {
   }
 
   const [busyId, setBusyId] = useState(null)       // row with an in-flight status toggle
+
+  /* Subscriptions, so each row can say whether its seat is included, on a free
+     trial, paid for, or missing. Both shapes are read: a party subscribes as a
+     CONTACT, an over-allowance office seat as the LOGIN itself (fix146). */
+  const [subs, setSubs] = useState([])
+  useEffect(() => {
+    if (!isAdmin) return
+    ;(async () => {
+      const { data, error } = await supabase.from('subscriptions')
+        .select('id,contact_id,user_account_id,description,start_date,end_date,amount,currency,is_paid,is_active')
+      // Not installed yet (fix110/fix146 unrun) → the column simply stays quiet.
+      if (!error && data) setSubs(data)
+    })()
+  }, [isAdmin])
 
   // Supplier & Partner contacts — a login for either role MUST be linked to one
   // (via contact_id) so the 2nd-party user only sees their own orders.
@@ -222,7 +248,9 @@ export default function UserAccountsPage() {
     ;(async () => {
       const { data } = await supabase
         .from('contacts')
-        .select('id, first_name, last_name, company_name, code, contact_types')
+        // created_at, is_active and contact_type are here for the seat column:
+        // rankPartners needs them to work out who holds an included seat.
+        .select('id, first_name, last_name, company_name, code, contact_type, contact_types, created_at, is_active')
         .overlaps('contact_types', ['supplier', 'partner'])
         .order('first_name')
       setPartyContacts(data ?? [])
@@ -347,10 +375,26 @@ export default function UserAccountsPage() {
   const onlineCount = visibleUsers.filter(u => onlineSet.has(String(u.id))).length
   const anyFilter = roleFilter !== 'all' || statusFilter !== 'all' || onlineFilter !== 'all' || !!sort.key || !!q
 
-  // Count active accounts for a role, optionally excluding one user (the row
-  // being edited). Used to enforce the per-role caps in ROLE_LIMITS.
-  const activeRoleCount = (role, excludeId = null) =>
-    users.filter(u => u.role === role && u.status === 'active' && u.id !== excludeId).length
+
+  /* Everything the seat column needs, worked out once for the whole list. */
+  const seatLookups = useMemo(() => {
+    const loginIds = new Set(users.map(u => u.contact_id).filter(Boolean))
+    const subsByContact = new Map()
+    const subsByUser    = new Map()
+    for (const r of subs) {
+      const key = r.contact_id || r.user_account_id
+      if (!key) continue
+      const m = r.contact_id ? subsByContact : subsByUser
+      if (!m.has(key)) m.set(key, [])
+      m.get(key).push(r)
+    }
+    return {
+      partnerRanks: rankPartners(partyContacts, loginIds),
+      subsByContact,
+      subsByUser,
+      users,
+    }
+  }, [users, subs, partyContacts])
 
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
@@ -362,7 +406,9 @@ export default function UserAccountsPage() {
   function openEdit(u) {
     setForm({ username: u.username, email: u.email ?? '', mobile: u.mobile ?? '', role: u.role, status: u.status, password: '', contact_id: u.contact_id ?? '' })
     setFormErr(''); setModal(u)
+    setCredsOpen(false); setCredsPw(''); setCopied('')
   }
+
   function closeModal() { setModal(null); setForm(EMPTY_USER); setFormErr('') }
 
   async function saveUser() {
@@ -371,16 +417,32 @@ export default function UserAccountsPage() {
     if (isPartyRole && !form.contact_id) {
       setFormErr(`Select the ${form.role} contact this login belongs to.`); return
     }
-    // Enforce the per-role active-account cap. Only relevant when the saved
-    // account will be active in a capped role and isn't already counted.
-    const limit = ROLE_LIMITS[form.role]
-    if (limit != null) {
-      const excludeId = modal === 'add' ? null : modal.id
-      if (activeRoleCount(form.role, excludeId) >= limit) {
-        setFormErr(`Limit reached: you can have at most ${limit} active ${roleLabel[form.role]} accounts. Deactivate an existing one to add another.`)
-        return
-      }
+    /* A login that belongs to an outside party cannot be promoted into the
+       office. Changing a partner's role to call-centre or admin would hand a
+       supplier or partner the back office — and would do it quietly, because
+       office roles are not gated on a contact at all, so the subscription check
+       that governs them would simply stop running. Re-pointing the account is
+       refused; a member of staff gets their own login. */
+    const OFFICE_ROLES = ['admin', 'call_center']
+    if (modal !== 'add' && modal.contact_id && OFFICE_ROLES.includes(form.role)) {
+      setFormErr('This login belongs to a partner or supplier contact and cannot be changed into an office role. '
+        + 'Create a separate account for office staff.')
+      return
     }
+
+    /* The seat allowance. Up to it the seat is included in the annual package;
+       beyond it the seat is chargeable and only a super admin may take one.
+       Checked on save rather than only on the form, so it cannot be stepped
+       around by editing a row into a role whose seats are gone. */
+    const seatCheck = form.status === 'active'
+      ? checkSeat({
+          users,
+          role: form.role,
+          excludeId: modal === 'add' ? null : modal.id,
+          isSuperAdmin,
+        })
+      : { ok: true, chargeable: false, pos: null }
+    if (!seatCheck.ok) { setFormErr(seatCheck.message); return }
     if (modal === 'add' && form.password.length < 8) {
       setFormErr('Set a temporary password of at least 8 characters.'); return
     }
@@ -399,10 +461,14 @@ export default function UserAccountsPage() {
         p_contact_id: form.contact_id || null,
       })
 
-      /* A supplier or partner account is what a subscription is FOR, so the
-         free period starts the moment the account exists. `ensureTrialSubscription`
-         issues one only for a 2nd party that is subject to a subscription, and
-         only if they have none already. */
+      /* A supplier or partner account is what a subscription is FOR, so one is
+         opened the moment the account exists — but they are not the same one.
+         A SUPPLIER gets the free 90 days their agreement promises. A PARTNER
+         past the tenth gets no free period at all: the ten included seats are
+         already taken, so an eleventh is a seat somebody has to pay for, and it
+         is placed unpaid and inactive — they cannot sign in until the office
+         confirms the payment. Nothing is issued to a partner inside the ten;
+         they owe nothing, so there is nothing to open. */
       if (!e && form.contact_id) {
         const { data: c } = await supabase.from('contacts')
           .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
@@ -410,7 +476,42 @@ export default function UserAccountsPage() {
         const trial = await ensureTrialSubscription(form.contact_id, types, {
           companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
         })
-        if (trial.error) console.warn('Could not issue the free subscription:', trial.error)
+        if (trial.error) console.warn('Could not open the subscription:', trial.error)
+      }
+
+      /* An OFFICE seat beyond the allowance is recorded so it can be invoiced.
+         A partner or supplier subscribes as a contact and is handled above; a
+         call-centre user or administrator has no contact, so the seat is
+         attached to the login itself (fix146 widened subscriptions for exactly
+         this). The row is left UNPAID and INACTIVE: it is a seat to bill, not a
+         payment anybody has made, and office sign-in is not gated on it — the
+         staff member works from the moment their account exists.
+
+         The create RPC hands back nothing but an error, so the new login is
+         found by its username, which is unique. A failure here is logged and
+         swallowed: the account was created, and losing the billing note is a
+         far smaller harm than an account that half-exists. */
+      if (!e && seatCheck.chargeable && !form.contact_id) {
+        try {
+          const { data: fresh } = await supabase.from('user_accounts')
+            .select('id').eq('username', form.username.trim()).maybeSingle()
+          if (fresh?.id) {
+            const today = new Date().toISOString().slice(0, 10)
+            const until = new Date(); until.setFullYear(until.getFullYear() + 1); until.setDate(until.getDate() - 1)
+            const { error: se } = await supabase.from('subscriptions').insert([{
+              company_id:      currentUser?.company_id ?? null,
+              user_account_id: fresh.id,
+              description:     `${seatCheck.pos.label} seat ${seatCheck.pos.next} — beyond the ${seatCheck.pos.included} included`,
+              start_date:      today,
+              end_date:        until.toISOString().slice(0, 10),
+              amount:          seatCheck.pos.rate,
+              currency:        seatCheck.pos.currency,
+              is_paid:         false,
+              is_active:       false,
+            }])
+            if (se) console.warn('Could not record the chargeable seat:', se.message)
+          }
+        } catch (err) { console.warn('Could not record the chargeable seat:', err?.message) }
       }
       rpcError = e
     } else {
@@ -431,6 +532,23 @@ export default function UserAccountsPage() {
     // On a new account, surface the credentials once so they can be copied and
     // handed to the user — the password can't be retrieved later.
     if (modal === 'add') setCreated({ username: form.username.trim(), password: form.password })
+
+    /* A new password typed into the Credentials panel is applied last, through
+       the same RPC the Reset button uses, so there is one way passwords are
+       written and one place that hashes them. A failure here is reported rather
+       than swallowed: the rest of the edit saved, but the password did not, and
+       an administrator who thinks they changed it and has not is exactly the
+       person who will hand out the old one. */
+    if (modal !== 'add' && credsPw) {
+      if (credsPw.length < 8) { setFormErr('The new password must be at least 8 characters.'); setSaving(false); return }
+      const { error: pe } = await supabase.rpc('admin_reset_password', {
+        p_actor_id:     currentUser.user_id,
+        p_user_id:      modal.id,
+        p_new_password: credsPw,
+      })
+      if (pe) { setFormErr(`Details saved, but the password was not changed: ${friendlyError(pe.message)}`); setSaving(false); return }
+      setCredsPw('')
+    }
     closeModal()
     fetchUsers()
   }
@@ -630,7 +748,30 @@ export default function UserAccountsPage() {
                   </td>
                   <td className="px-4 py-3 text-slate-400">{u.email || '—'}</td>
                   <td className="px-4 py-3 text-slate-400">{u.mobile ? formatMobile(u.mobile) : '—'}</td>
-                  <td className="px-4 py-3 text-slate-300">{roleLabel[u.role] ?? u.role}</td>
+                  <td className="px-4 py-3 text-slate-300">
+                    <span className="inline-flex items-center gap-1.5">
+                      {roleLabel[u.role] ?? u.role}
+                      {/* What this seat costs. Included and Free trial are both
+                          free today, which is exactly why they are drawn apart:
+                          only one of them is still free next month. */}
+                      {(() => {
+                        const st = seatStatus(u, seatLookups)
+                        if (st.key === 'na') return null
+                        const until = st.row?.end_date ? ` · to ${String(st.row.end_date).slice(0, 10)}` : ''
+                        const look = {
+                          included: { Icon: ShieldCheck,     cls: 'text-slate-400' },
+                          trial:    { Icon: CalendarClock,   cls: 'text-amber-400' },
+                          paid:     { Icon: BadgeDollarSign, cls: 'text-green-400' },
+                          none:     { Icon: ShieldAlert,     cls: 'text-red-400' },
+                        }[st.key]
+                        const Icon = look.Icon
+                        return (
+                          <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${look.cls}`}
+                            title={`${st.label} — ${st.note}${until}`} />
+                        )
+                      })()}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] capitalize border rounded px-2 py-0.5 ${STATUS_STYLES[u.status] ?? STATUS_STYLES.pending}`}>
                       {u.status}
@@ -966,14 +1107,23 @@ export default function UserAccountsPage() {
                   }}>
                   {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
-                {ROLE_LIMITS[form.role] != null && (() => {
-                  const used = activeRoleCount(form.role, modal === 'add' ? null : modal.id)
-                  const cap  = ROLE_LIMITS[form.role]
-                  const full = used >= cap
+                {/* Where this role's seats stand, before the save is attempted.
+                    An administrator sees the wall coming; a super admin sees the
+                    price of stepping over it. */}
+                {(() => {
+                  const pos = seatPosition({
+                    users, role: form.role, excludeId: modal === 'add' ? null : modal.id,
+                  })
+                  if (!pos) return null
+                  const over = !pos.free
                   return (
-                    <p className={`text-[11px] mt-1 ${full ? 'text-red-400' : 'text-slate-500'}`}>
-                      {used} of {cap} {roleLabel[form.role]} accounts used
-                      {full && ' — limit reached'}
+                    <p className={`text-[11px] mt-1 ${
+                      over ? (isSuperAdmin ? 'text-amber-400' : 'text-red-400') : 'text-slate-500'}`}>
+                      {pos.used} of {pos.included} included {pos.label.toLowerCase()} seats used
+                      {over && (isSuperAdmin
+                        ? ` — seat ${pos.next} is chargeable at ${seatPrice(pos)}`
+                        : ` — seat ${pos.next} needs a super admin (${seatPrice(pos)})`)}
+                      {over && pos.provisional && ' · allowance agreed with the client, not an article of the licence'}
                     </p>
                   )
                 })()}
@@ -998,6 +1148,89 @@ export default function UserAccountsPage() {
                   <p className="text-[11px] text-slate-500 mt-1">
                     Links the login to this contact so they only see their own orders.
                   </p>
+                </div>
+              )}
+
+              {/* ── Credentials (super admin, editing an existing account) ──
+                  Reveal shows the USERNAME, which is stored as typed. It cannot
+                  show the current password, and neither can anything else: the
+                  column holds a bcrypt hash — crypt(pw, gen_salt('bf', 12)) —
+                  which is one-way by design. Nobody, including the super admin
+                  and including whoever runs the database, can read an existing
+                  password back. What the panel offers instead is the thing that
+                  is actually useful: set a new one, read it in clear, copy it,
+                  hand it over. */}
+              {modal !== 'add' && isSuperAdmin && (
+                <div className="rounded-lg border border-surface-border bg-surface-hover/30 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="label mb-0 flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5 text-slate-400" /> Credentials
+                    </span>
+                    <button type="button"
+                      onClick={() => setCredsOpen(o => !o)}
+                      className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
+                      {credsOpen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {credsOpen ? 'Hide' : 'Reveal'}
+                    </button>
+                  </div>
+
+                  {credsOpen && (
+                    <div className="mt-2.5 space-y-2.5">
+                      {/* Username — readable and copyable as it stands. */}
+                      <div>
+                        <label className="label text-[10px]">Username</label>
+                        <div className="relative">
+                          <input readOnly className="input pr-9 font-mono" value={form.username} />
+                          <button type="button" title="Copy username"
+                            onClick={() => copy(form.username, 'creds-user')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 btn-ghost p-1.5 text-slate-500 hover:text-slate-200">
+                            {copied === 'creds-user' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Password — a NEW one, or nothing. */}
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <label className="label text-[10px] mb-0">New password</label>
+                          <button type="button"
+                            onClick={() => { setCredsPw(generatePassword()); setShowPw(true); setFormErr('') }}
+                            className="inline-flex items-center gap-1 text-[11px] text-brand-400 hover:text-brand-300">
+                            <RefreshCw className="w-3 h-3" /> Generate
+                          </button>
+                        </div>
+                        <div className="relative mt-1">
+                          <input type={showPw ? 'text' : 'password'} className="input pr-16 font-mono"
+                            value={credsPw} placeholder="Leave blank to keep the current password"
+                            onChange={e => { setCredsPw(e.target.value); setFormErr('') }} />
+                          <button type="button" title={showPw ? 'Hide' : 'Show'}
+                            onClick={() => setShowPw(v => !v)}
+                            className="absolute right-8 top-1/2 -translate-y-1/2 btn-ghost p-1.5 text-slate-500 hover:text-slate-200">
+                            {showPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <button type="button" title="Copy password" disabled={!credsPw}
+                            onClick={() => copy(credsPw, 'creds-pw')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 btn-ghost p-1.5 text-slate-500 hover:text-slate-200 disabled:opacity-30">
+                            {copied === 'creds-pw' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                          The current password cannot be shown — only a one-way hash of it is stored, so it is
+                          unreadable to everyone including you. Set a new one here and it is applied when you save.
+                        </p>
+                      </div>
+
+                      {credsPw && (
+                        <button type="button"
+                          onClick={() => copy(`Username: ${form.username}
+Password: ${credsPw}`, 'creds-both')}
+                          className="inline-flex items-center gap-1.5 text-[11px] text-brand-400 hover:text-brand-300">
+                          {copied === 'creds-both' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          Copy username and password together
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1141,7 +1374,7 @@ export default function UserAccountsPage() {
               <button
                 onClick={() => copy(`Username: ${created.username}\nPassword: ${created.password}`, 'both')}
                 className="btn-ghost px-4 py-2 text-sm border border-surface-border inline-flex items-center gap-2">
-                {copied === 'both' ? <><Check className="w-4 h-4 text-green-400" /> Copied</> : <><Copy className="w-4 h-4" /> Copy both</>}
+                {copied === 'creds-both' ? <><Check className="w-4 h-4 text-green-400" /> Copied</> : <><Copy className="w-4 h-4" /> Copy both</>}
               </button>
               <button onClick={() => setCreated(null)} className="btn-primary px-4 py-2 text-sm">Done</button>
             </div>
