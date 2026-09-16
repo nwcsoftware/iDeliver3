@@ -9,6 +9,7 @@ import {
   Tag,
   DollarSign,
   Package,
+  TrendingUp,
   Barcode,
   Circle,
   Loader2,
@@ -18,6 +19,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ProductHistory from '../components/products/ProductHistory'
 import { uploadShopImage, removeShopImage } from '../lib/shopMedia'
 import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
 import { itemOptions, legacyMirror, choiceGroups } from '../lib/shopOptions'
@@ -49,6 +51,13 @@ function FlagToggle({ active, onClick, color = 'cyan', children }) {
   )
 }
 
+/* The two panes of the product form. History only exists for a product that
+   has been saved — there is nothing to trade before it exists. */
+const PRODUCT_TABS = [
+  { value: 'details', label: 'Details',        Icon: Package },
+  { value: 'history', label: 'Price history',  Icon: TrendingUp },
+]
+
 const EMPTY_FORM = {
   code: '', name: '', description: '', barcode: '',
   unit_of_measure: 'pcs', unit_cost: '', unit_price: '',
@@ -74,6 +83,7 @@ export default function ProductsPage() {
   const [search,      setSearch]      = useState('')
   const [filter,      setFilter]      = useState('active')   // 'active' | 'inactive' | 'all'
   const [modal,       setModal]       = useState(null)        // null | 'add' | product row
+  const [tab,         setTab]         = useState('details')   // details | history
   const [form,        setForm]        = useState(EMPTY_FORM)
   const [saving,      setSaving]      = useState(false)
   const [error,       setError]       = useState('')
@@ -161,8 +171,13 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal, form.is_retail, form.is_returnable, form.is_service, form.is_advertisement])
 
-  function openAdd()    { setForm(EMPTY_FORM); setError(''); setProgress(null); setModal('add'); setAddingCat(false); setNewCatName('') }
+  /* Adding has no history, so the tab bar is hidden and details is the only
+     pane; guarding here means a stale 'history' can never leave a blank form. */
+  const activeTab = (modal !== 'add' && tab === 'history') ? 'history' : 'details'
+
+  function openAdd()    { setTab('details'); setForm(EMPTY_FORM); setError(''); setProgress(null); setModal('add'); setAddingCat(false); setNewCatName('') }
   function openEdit(p)  {
+    setTab('details')
     setForm({
       ...EMPTY_FORM, ...p,
       category_id: p.category_id ?? '',
@@ -175,7 +190,7 @@ export default function ProductsPage() {
     })
     setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName(''); setSizeInput('')
   }
-  function closeModal() { setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('') }
+  function closeModal() { setTab('details'); setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('') }
 
   /* Photos, colours and sizes — the same rules as the supplier's shop items, so
      a product presents identically wherever it is sold. */
@@ -505,7 +520,12 @@ export default function ProductsPage() {
       {/* Modal */}
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="card w-full max-w-lg p-6 space-y-4 overflow-y-auto max-h-[90vh]">
+          {/* Editing shows what the item has cost and sold for beside the form,
+              so the two standing prices can be judged against what actually
+              happened. That needs room, so the card widens — Add has no history
+              to show and stays the narrow form it always was. */}
+          <div className={`card w-full p-6 space-y-4 overflow-y-auto max-h-[90vh] transition-[max-width] duration-200 ${
+            activeTab === 'history' ? 'max-w-4xl' : 'max-w-lg'}`}>
 
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100">
@@ -514,7 +534,25 @@ export default function ProductsPage() {
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
 
-            <div className="space-y-3">
+            {/* Tabs — the details are one thing and the item's trading history is
+                another, and side by side they crowded each other. Validation and
+                the Save button live outside the tabs, so they are reachable from
+                either. Add has no history yet, so it shows no tab bar at all. */}
+            {modal !== 'add' && (
+              <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6 overflow-x-auto">
+                {PRODUCT_TABS.map(t => (
+                  <button key={t.value} type="button" onClick={() => setTab(t.value)}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${
+                      activeTab === t.value
+                        ? 'text-brand-300 border-brand-500'
+                        : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
+                    <t.Icon className="w-3.5 h-3.5" /> {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className={activeTab === 'details' ? 'space-y-3' : 'hidden'}>
               {/* Code + Name */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -738,6 +776,13 @@ export default function ProductsPage() {
                 )}
               </div>
             </div>
+
+            {/* What this item has actually cost and sold for. Mounted only while
+                its tab is open, so opening a product does not fetch a history
+                nobody asked to see. */}
+            {modal !== 'add' && activeTab === 'history' && (
+              <ProductHistory product={modal} />
+            )}
 
             {error && (
               <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">

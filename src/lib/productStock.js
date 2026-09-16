@@ -125,3 +125,110 @@ export async function deleteProductMovement(id) {
   const { error } = await supabase.from('product_movements').delete().eq('id', id)
   return error ? error.message : null
 }
+
+/* ── an order's stock, kept in step with the order itself ─────────────────
+ *
+ * Selling used to move no stock at all: order_items was written and this ledger
+ * was never touched, so "sold" and "out" stayed at zero however much went out
+ * of the door, and on-hand was only ever what somebody typed by hand.
+ *
+ * WHEN. Stock moves when the order is CLOSED, not when the line is typed. A
+ * line on an open order is an intention; the goods leave when the order is
+ * finished. Reopen it and the movement is withdrawn again.
+ *
+ * WHAT. Retail products only. A service and an advert are not goods and carry
+ * no stock; a RETURNABLE has its own cycle — it goes out and comes back — and
+ * is handled on the Returnable Items page rather than here, so it is left
+ * alone on purpose.
+ *
+ * HOW — and this is the part that matters. Rather than trying to catch every
+ * event (closed, edited, a line changed from 3 to 2, a line deleted, cancelled,
+ * reopened) and post the difference, this recomputes what the order SHOULD have
+ * posted and makes the ledger match. Deltas drift the first time an event is
+ * missed and never recover; a function that can be run twice and change nothing
+ * the second time cannot drift. It is safe to call after any save.
+ */
+export async function syncOrderStock(orderId, { companyId = null, userId = null, userName = '' } = {}) {
+  if (!orderId) return null
+  try {
+    const { data: order, error: oe } = await supabase
+      .from('delivery_orders')
+      .select('id, order_number, isclosed, status, closed_at, scheduled_date')
+      .eq('id', orderId).maybeSingle()
+    if (oe || !order) return oe?.message || null
+
+    /* A cancelled order never happened, so it moves nothing even if it somehow
+       carries the closed flag. */
+    const shouldPost = order.isclosed === true && !['cancelled', 'failed'].includes(order.status)
+
+    let wanted = []
+    if (shouldPost) {
+      const { data: lines, error: le } = await supabase
+        .from('order_items')
+        .select('product_id, quantity, unit_price, currency, is_deleted')
+        .eq('order_id', orderId)
+      if (le) return le.message
+      const live = (lines ?? []).filter(l => !l.is_deleted && l.product_id)
+      if (live.length) {
+        const { data: prods } = await supabase
+          .from('products')
+          .select('id, is_retail, is_returnable, is_service, is_advertisement')
+          .in('id', [...new Set(live.map(l => l.product_id))])
+        const stocked = new Map((prods ?? [])
+          .filter(p => p.is_retail && !p.is_returnable && !p.is_service && !p.is_advertisement)
+          .map(p => [p.id, p]))
+
+        /* Several lines of the same product on one order become ONE movement:
+           the ledger records what left, not how it was typed. */
+        const byProduct = new Map()
+        for (const l of live) {
+          if (!stocked.has(l.product_id)) continue
+          const cur = byProduct.get(l.product_id) || { qty: 0, currency: l.currency || 'USD', unit: null }
+          cur.qty += num(l.quantity)
+          if (cur.unit == null) cur.unit = num(l.unit_price)
+          byProduct.set(l.product_id, cur)
+        }
+        const when = order.closed_at
+          || (order.scheduled_date ? `${String(order.scheduled_date).slice(0, 10)}T12:00:00Z` : new Date().toISOString())
+        wanted = [...byProduct.entries()]
+          .filter(([, v]) => v.qty > 0)
+          .map(([product_id, v]) => ({
+            product_id,
+            movement_type: 'sold',
+            quantity:  round2(v.qty),
+            unit_cost: v.unit,
+            currency:  v.currency,
+            reference: order.order_number || null,
+            notes:     'Posted automatically when the order was closed',
+            order_id:  orderId,
+            moved_at:  when,
+          }))
+      }
+    }
+
+    // What this order has already posted. Only its own 'sold' rows are touched:
+    // a hand-posted adjustment against the same product is somebody's decision.
+    const { data: existing, error: ee } = await supabase
+      .from('product_movements')
+      .select('id, product_id, quantity, moved_at')
+      .eq('order_id', orderId).eq('movement_type', 'sold')
+    if (ee) return isMissingLedger(ee.message) ? null : ee.message
+
+    const same = (a, b) => a.product_id === b.product_id && round2(a.quantity) === round2(b.quantity)
+    const toDelete = (existing ?? []).filter(e => !wanted.some(w => same(e, w)))
+    const toInsert = wanted.filter(w => !(existing ?? []).some(e => same(e, w)))
+
+    if (toDelete.length) {
+      const { error } = await supabase.from('product_movements')
+        .delete().in('id', toDelete.map(r => r.id))
+      if (error) return error.message
+    }
+    for (const row of toInsert) {
+      const err = await saveProductMovement(row, { companyId, userId, userName })
+      if (err) return err
+    }
+    return null
+  } catch (e) {
+    return e?.message || 'Could not update stock for this order.'
+  }
+}

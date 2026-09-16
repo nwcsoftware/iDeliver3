@@ -36,6 +36,7 @@ import OrderPackages, { EMPTY_PACKAGE } from '../components/orders/OrderPackages
 import { saveOrderPackages, buildTrackingNumber } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
+import { syncOrderStock } from '../lib/productStock'
 import TagLocationField from '../components/orders/TagLocationField'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { getSavedLocations, addSavedLocation, renameSavedLocation, removeSavedLocation, getHiddenLocations, hideLocation } from '../lib/savedLocations'
@@ -2688,6 +2689,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
     if (svcErr) { setError(svcErr); setSaving(false); return }
 
+    /* Stock, last, once the lines are written. Called on EVERY save rather than
+       only on close: a closed order whose quantity is edited, or whose line is
+       removed, has to move the ledger with it. syncOrderStock recomputes from
+       the order as it now stands, so running it again changes nothing — an open
+       order simply withdraws whatever it had posted. A failure here is reported
+       but does not fail the save: the order and its money are right, and the
+       ledger can be corrected, which is the better way round. */
+    const stockErr = await syncOrderStock(orderId, {
+      companyId: orderCompanyId, userId: currentUser?.user_id || null, userName: currentUserName,
+    })
+    if (stockErr) console.warn('Could not update stock for this order:', stockErr)
+
     // On "Mark Closed" the order is simply locked via the isclosed flag (set in
     // the update payload above). No account_transactions are posted.
 
@@ -2935,6 +2948,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       closed_by: currentUser?.user_id || null,
       closed_by_name: currentUserName,
     }).eq('id', o.id)
+    /* The goods leave when the order is closed. syncOrderStock recomputes what
+       this order should have posted and makes the ledger match, so calling it
+       after any change to the order — closing, reopening, editing a line — is
+       always correct and never double-counts. */
+    const stockErr = await syncOrderStock(o.id, {
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null, userName: currentUserName,
+    })
+    if (stockErr) console.warn('Could not update stock for this order:', stockErr)
     await refreshOrder(o.id)
     setToggling(null)
   }
@@ -2952,6 +2973,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       closed_by: null,
       closed_by_name: null,
     }).eq('id', o.id)
+    /* The goods leave when the order is closed. syncOrderStock recomputes what
+       this order should have posted and makes the ledger match, so calling it
+       after any change to the order — closing, reopening, editing a line — is
+       always correct and never double-counts. */
+    const stockErr = await syncOrderStock(o.id, {
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null, userName: currentUserName,
+    })
+    if (stockErr) console.warn('Could not update stock for this order:', stockErr)
     await refreshOrder(o.id)
     setToggling(null)
   }

@@ -16,6 +16,7 @@ import {
   Filter,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
+import ProductMonthlySales from '../components/products/ProductMonthlySales'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
 import {
@@ -249,7 +250,16 @@ export default function ProductInventoryPage() {
                 const zero = p.stock.onHand <= 0
                 return (
                   <tr key={p.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/30 ${p.is_active === false ? 'opacity-60' : ''}`}>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-400 whitespace-nowrap">{p.code || '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {/* The code is what everyone points at, so it is what opens
+                          the item. The button in the last column still does the
+                          same thing, for anyone who learned it there. */}
+                      <button type="button" onClick={() => setHistory(p)}
+                        title={`${p.name} — movements and monthly sales`}
+                        className="font-mono text-xs text-slate-400 hover:text-brand-300 hover:underline transition-colors">
+                        {p.code || '—'}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-slate-100">{p.name}</td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{p.category?.name || '—'}</td>
                     <td className="px-3 py-2">
@@ -292,7 +302,7 @@ export default function ProductInventoryPage() {
       {history && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4"
           onClick={() => setHistory(null)}>
-          <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="card w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-5 py-3 border-b border-surface-border">
               <History className="w-4 h-4 text-brand-300" />
               <span className="text-sm font-medium text-slate-100">{history.name}</span>
@@ -309,6 +319,11 @@ export default function ProductInventoryPage() {
               </button>
             </div>
             <div className="overflow-y-auto">
+              {/* How much of it moves, before the list of every time it moved. */}
+              <div className="p-4 pb-0">
+                <ProductMonthlySales product={history} />
+              </div>
+              <h3 className="text-xs font-semibold text-slate-300 px-4 pt-4 pb-1">Movements</h3>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-border sticky top-0 bg-surface-card">
