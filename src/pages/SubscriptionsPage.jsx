@@ -12,6 +12,8 @@ import {
   Circle,
   Power,
   PowerOff,
+  Hourglass,
+  ShieldAlert,
   Building,
   Handshake,
   CalendarRange,
@@ -39,13 +41,13 @@ import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
   fetchSubscriptions, saveSubscription, deleteSubscription,
-  subscriptionStatus, STATUS_STYLES, contactLabel, todayStr,
+  subscriptionStatus, STATUS_STYLES, contactLabel, todayStr, graceDaysLeft,
   subscriptionsSummary, coveredContactIds, renewalStage, RENEWAL_STAGES,
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
   isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
   rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
 } from '../lib/subscriptions'
-import { SEATS } from '../lib/billing'
+import { SEATS, UNPAID_GRACE_DAYS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
 import SearchField from '../components/ui/SearchField'
@@ -112,6 +114,9 @@ export default function SubscriptionsPage() {
   const { hasRole, currentUser } = useAuth()
   const { COMPANY_ID } = useApp()
   const isSuperAdmin = hasRole('super_admin')
+  // Whoever grants an indulgence is recorded against it.
+  const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim()
+    || currentUser?.username || null
   const canView      = hasRole('super_admin', 'admin')
 
   const [rows,       setRows]       = useState([])
@@ -772,7 +777,9 @@ export default function SubscriptionsPage() {
                   <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
                   <td className="px-4 py-3">
                     {isSuperAdmin ? (
-                      <button onClick={() => patch(r, { is_paid: !r.is_paid, is_active: r.is_paid ? false : r.is_active })}
+                      <button onClick={() => patch(r, r.is_paid
+                        ? { is_paid: false, is_active: false, grace_started_on: null, grace_granted_by: null }
+                        : { is_paid: true,  grace_started_on: null, grace_granted_by: null })}
                         disabled={busyId === r.id}
                         title={r.is_paid ? 'Money received — click to mark unpaid' : 'Confirm money received'}
                         className={`inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-lg px-2.5 py-1 transition-colors ${
@@ -793,6 +800,24 @@ export default function SubscriptionsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${cfg.cls}`}>{cfg.label}</span>
+                    {/* An indulgence is running, or has run out. Either way it is
+                        counted down in the open: a party let in without paying is
+                        the one thing on this page that quietly becomes permanent
+                        if nobody is looking at it (fix149). */}
+                    {r.grace_started_on && !r.is_paid && (() => {
+                      const left = graceDaysLeft(r, today)
+                      const over = left <= 0
+                      return (
+                        <span className={`mt-1 flex items-center gap-1 text-[11px] ${over ? 'text-red-400' : 'text-amber-400'}`}
+                          title={over
+                            ? `Switched on unpaid on ${String(r.grace_started_on).slice(0, 10)}${r.grace_granted_by ? ` by ${r.grace_granted_by}` : ''} — the ${UNPAID_GRACE_DAYS} days have run out and sign-in is blocked again`
+                            : `Switched on unpaid on ${String(r.grace_started_on).slice(0, 10)}${r.grace_granted_by ? ` by ${r.grace_granted_by}` : ''} — access closes on its own when this reaches zero`}>
+                          {over ? <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                                : <Hourglass className="w-3.5 h-3.5 flex-shrink-0" />}
+                          {over ? 'Unpaid — access closed' : `${left} day${left === 1 ? '' : 's'} left to pay`}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     {(() => {
@@ -826,11 +851,31 @@ export default function SubscriptionsPage() {
                   {isSuperAdmin && (
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => patch(r, { is_active: !r.is_active })}
-                          disabled={busyId === r.id || (!r.is_paid && !r.is_active)}
-                          title={!r.is_paid && !r.is_active
-                            ? 'Confirm the payment first'
-                            : (r.is_active ? 'Deactivate — blocks their sign-in' : 'Activate — lets them sign in')}
+                        {/* Activating an UNPAID subscription is allowed, on a clock
+                            (fix149). It is asked for explicitly, because letting
+                            somebody in without payment is a decision, and the
+                            clock is what keeps it from becoming permanent.
+                            Switching a row off, or paying it, clears the clock. */}
+                        <button onClick={() => {
+                          if (r.is_active) { patch(r, { is_active: false, grace_started_on: null, grace_granted_by: null }); return }
+                          if (r.is_paid)   { patch(r, { is_active: true }); return }
+                          const ok = window.confirm(
+                            `${contactLabel(r.contact)} has NOT paid this subscription.
+
+`
+                            + `Switching it on now lets them sign in for ${UNPAID_GRACE_DAYS} days. If the money has not `
+                            + `arrived by then, access closes again on its own.
+
+`
+                            + 'The subscription stays marked Unpaid throughout. Continue?')
+                          if (ok) patch(r, { is_active: true, grace_started_on: todayStr(), grace_granted_by: currentUserName })
+                        }}
+                          disabled={busyId === r.id}
+                          title={r.is_active
+                            ? 'Deactivate — blocks their sign-in'
+                            : (r.is_paid
+                                ? 'Activate — lets them sign in'
+                                : `Activate on trust — ${UNPAID_GRACE_DAYS} days, then it closes again`)}
                           className={`btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed ${
                             r.is_active ? 'text-green-400 hover:text-red-400' : 'text-slate-400 hover:text-green-400'}`}>
                           {r.is_active ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}

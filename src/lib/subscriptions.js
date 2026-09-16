@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import {
-  SEATS, SUPPLIER_SUBSCRIPTION, rateFor, perMonth, CURRENCY,
+  SEATS, SUPPLIER_SUBSCRIPTION, rateFor, perMonth, CURRENCY, UNPAID_GRACE_DAYS,
   DAYS_PER_MONTH, RATE_TOLERANCE,
 } from './billing'
 
@@ -227,21 +227,45 @@ export function subscriptionStatus(row, today = todayStr()) {
 
      Access is unchanged either way — isSubscriptionActive() admits only
      'active', and neither of these is. */
-  if (!row.is_paid)            return 'unpaid'
+  if (!row.is_paid) {
+    /* ACTIVATED ON TRUST. A super admin may switch an unpaid subscription on so
+       the party can work while a payment is in flight (fix149) — but on a clock.
+       While it runs the row is treated as live; when it lapses the door closes
+       again, without anybody having to remember to close it. The row goes on
+       saying UNPAID throughout, because it is. */
+    if (row.is_active && row.grace_started_on) {
+      return graceDaysLeft(row, today) > 0 ? 'grace' : 'grace_over'
+    }
+    return 'unpaid'
+  }
   if (row.is_active === false) return 'deactivated'
   if (row.start_date && today < row.start_date) return 'scheduled'
   if (row.end_date   && today > row.end_date)   return 'expired'
   return 'active'
 }
 
+/* Days left on an indulgence — positive while it runs, 0 or less once it has
+   lapsed. Counted in whole days from the day it was granted. */
+export function graceDaysLeft(row, today = todayStr()) {
+  if (!row?.grace_started_on) return 0
+  const start = new Date(`${String(row.grace_started_on).slice(0, 10)}T00:00:00`)
+  const now   = new Date(`${today}T00:00:00`)
+  const used  = Math.floor((now - start) / 86400000)
+  return UNPAID_GRACE_DAYS - used
+}
+
+/* A subscription admits its party while it is genuinely active OR inside an
+   indulgence. Those are the only two ways in. */
 export const isSubscriptionActive = (row, today = todayStr()) =>
-  subscriptionStatus(row, today) === 'active'
+  ['active', 'grace'].includes(subscriptionStatus(row, today))
 
 export const STATUS_STYLES = {
   active:      { label: 'Active',       cls: 'bg-green-500/10 text-green-300 border-green-500/30' },
   scheduled:   { label: 'Scheduled',    cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
   expired:     { label: 'Expired',      cls: 'bg-red-500/10 text-red-300 border-red-500/30' },
   unpaid:      { label: 'Unpaid',       cls: 'bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30' },
+  grace:       { label: 'Unpaid — on trust', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
+  grace_over:  { label: 'Trust expired', cls: 'bg-red-500/10 text-red-300 border-red-500/30' },
   deactivated: { label: 'Deactivated',  cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' },
 }
 
@@ -349,7 +373,7 @@ export async function checkSubscriptionAccess(contactId, role = null) {
     // (the one that ran/runs latest) so the message can name real dates.
     const byEnd = rows.slice().sort((a, b) => String(b.end_date || '').localeCompare(String(a.end_date || '')))
     const pick = st => byEnd.find(r => subscriptionStatus(r) === st)
-    for (const st of ['unpaid', 'scheduled', 'expired', 'deactivated']) {
+    for (const st of ['grace_over', 'unpaid', 'scheduled', 'expired', 'deactivated']) {
       const row = pick(st)
       if (row) return { allowed: false, reason: st, row }
     }
@@ -365,6 +389,8 @@ export const ACCESS_MESSAGES = {
   unpaid:      'Your subscription is awaiting payment confirmation. Please contact the administrator.',
   scheduled:   'Your subscription hasn’t started yet. Please contact the administrator.',
   expired:     'Your subscription has expired. Please contact the administrator to renew it.',
+  grace_over:  'Your subscription was opened while payment was still outstanding, and that period has ended. '
+               + 'Please contact the administrator to settle it.',
   deactivated: 'Your subscription is not active. Please contact the administrator.',
   'no-contact': 'Your login isn’t linked to a supplier/partner contact. Please contact the administrator.',
   'role-mismatch': 'Your contact is no longer registered as a partner or supplier, so this portal is closed to you. Please contact the administrator.',

@@ -31,6 +31,12 @@
 
 export const CURRENCY = 'USD'
 
+/* How long a subscription may run after being switched on WITHOUT payment
+   (fix149). A super admin can let a party in on trust; this is how long that
+   trust lasts before the door closes again by itself. An indulgence with no end
+   date is a discount nobody approved. */
+export const UNPAID_GRACE_DAYS = 15
+
 /* The annual platform subscription — invoice NX-IDL3-INV-0002. */
 export const ANNUAL_PACKAGE = {
   price: 600,

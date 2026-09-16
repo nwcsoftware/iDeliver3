@@ -98,6 +98,32 @@ const BASE_FORM = {
   partner_percentage: '', partner_percentage_type: '', shop_type: '', contact_category: '',
 }
 
+/* Does this party hold a login to the portal, and is it usable?
+ *
+ * Three states rather than two. A contact with a login that has been switched
+ * off is not the same as one that never had access: the first is somebody you
+ * stopped, the second is somebody you never started, and only the second is an
+ * onboarding job. The tooltip carries the username and whether it has ever been
+ * used, because "has a login" and "has actually signed in" are different facts
+ * and the second is the one that decides whether a seat is really in use.
+ */
+function PortalBadge({ login }) {
+  if (!login) {
+    return (
+      <KeyRound className="w-3.5 h-3.5 text-slate-600 flex-shrink-0"
+        title="No portal login — this contact cannot sign in, and holds no seat" />
+    )
+  }
+  const off = login.status !== 'active'
+  const used = login.last_login_at
+    ? `signed in ${String(login.last_login_at).slice(0, 10)}`
+    : 'never signed in'
+  return (
+    <KeyRound className={`w-3.5 h-3.5 flex-shrink-0 ${off ? 'text-amber-400' : 'text-green-400'}`}
+      title={`Portal login: ${login.username}${off ? ` — ${login.status}` : ''} · ${used}`} />
+  )
+}
+
 /* One account number on a contact row: the number, whether it is the contact's
    MAIN account or a SUB one beneath it, and — the thing this list exists to show
    — whether it is a CASH or a CREDIT account. The nature decides how every order
@@ -205,8 +231,28 @@ export default function ContactsPage({ type }) {
     setAllAccounts(data ?? [])
   }, [])
 
+  /* Portal logins, for the badge on each row. Only suppliers and partners can
+     hold one — the portal is theirs — so the customer page does not ask. */
+  const [logins, setLogins] = useState([])
+  const fetchLogins = useCallback(async () => {
+    if (type === 'customer') { setLogins([]); return }
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('id, contact_id, username, role, status, last_login_at')
+      .not('contact_id', 'is', null)
+    if (!error && data) setLogins(data)
+  }, [type])
+
   useEffect(() => { fetchContacts() }, [fetchContacts])
   useEffect(() => { fetchAllAccounts() }, [fetchAllAccounts])
+  useEffect(() => { fetchLogins() }, [fetchLogins])
+
+  // contact_id -> its login. One each in practice; the first wins if ever two.
+  const loginByContact = useMemo(() => {
+    const m = new Map()
+    for (const l of logins) if (!m.has(l.contact_id)) m.set(l.contact_id, l)
+    return m
+  }, [logins])
 
   // contact_id → their accounts, main first (the order the fetch already applied).
   const accountsByContact = useMemo(() => {
@@ -867,6 +913,7 @@ export default function ContactsPage({ type }) {
                           <p className="text-slate-100 font-medium flex items-center gap-1.5">
                             {c.company_name}
                             {hasCreditAccount(c) && <CreditCard className="w-3.5 h-3.5 text-fuchsia-400 flex-shrink-0" title="Holds a credit account (may owe a balance)" />}
+                            {type !== 'customer' && <PortalBadge login={loginByContact.get(c.id)} />}
                           </p>
                           <p className="text-slate-400 text-xs">{c.first_name} {c.last_name}</p>
                         </>
@@ -874,6 +921,7 @@ export default function ContactsPage({ type }) {
                         <p className="text-slate-100 font-medium flex items-center gap-1.5">
                           {c.first_name} {c.last_name}
                           {hasCreditAccount(c) && <CreditCard className="w-3.5 h-3.5 text-fuchsia-400 flex-shrink-0" title="Holds a credit account (may owe a balance)" />}
+                          {type !== 'customer' && <PortalBadge login={loginByContact.get(c.id)} />}
                         </p>
                       )}
                       {c.code && <p className="text-slate-500 text-xs font-mono">{c.code}</p>}
