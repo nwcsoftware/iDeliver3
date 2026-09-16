@@ -60,6 +60,7 @@ import DriverCollectionsPage   from './pages/DriverCollectionsPage'
 import CustomerMobileApp       from './customer-mobile/CustomerMobileApp'
 import LandingPage            from './pages/LandingPage'
 import AppearancePage        from './pages/AppearancePage'
+import TopItemsReportPage   from './pages/TopItemsReportPage'
 import LandingAdminPage       from './pages/LandingAdminPage'
 import LandingBackgroundPage  from './pages/LandingBackgroundPage'
 import { fetchLandingSettings, isDesktopApp } from './lib/landingPage'
@@ -127,6 +128,21 @@ function PublicShell() {
 function AppShell() {
   const { currentUser, loading, hasRole } = useAuth()
 
+  /* Signing in lands on the dashboard, always.
+     Two reasons it did not before. The hash is still #/signin at the moment the
+     session appears — the sign-in screen is a hash route — and no Route matches
+     /signin inside the console, so the main area came up empty. And someone who
+     had been on, say, #/deliveries when their session ended was dropped straight
+     back there, which is a page rather than a starting point.
+     Only the TRANSITION into a session is redirected. Navigating inside the app
+     afterwards is untouched, so the header's "open this order" links and the
+     back button still work. */
+  const wasSignedIn = React.useRef(!!currentUser)
+  useEffect(() => {
+    if (currentUser && !wasSignedIn.current) window.location.hash = '#/'
+    wasSignedIn.current = !!currentUser
+  }, [currentUser])
+
   const isCustomerMobileRoute =
     window.location.hash.startsWith('#/customer') ||
     window.location.pathname === '/customer' ||
@@ -193,6 +209,7 @@ function AppShell() {
                 <Route path="/customer-categories" element={<CustomerCategoryReportPage />} />
                 <Route path="/closed-orders-report" element={<ClosedOrdersReportPage />} />
                 <Route path="/story-orders-report" element={<StoryOrdersReportPage />} />
+                <Route path="/top-items" element={<TopItemsReportPage />} />
                 <Route path="/company"   element={<CompanyPage    />} />
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/inventory"      element={<ProductInventoryPage  />} />

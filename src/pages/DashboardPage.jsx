@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { OrderNumber } from '../components/orders/OrderQuickView'
 import { Package, Users, Truck, CheckCircle } from 'lucide-react'
 import {
@@ -34,29 +34,77 @@ function lifecycleStep(status) {
   return 'scheduled'   // pending, confirmed, scheduled, or anything unknown
 }
 
-function buildTrend(orders) {
-  const days = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    days.push({
-      name:      d.toLocaleDateString('en', { weekday: 'short' }),
-      date:      d.toISOString().slice(0, 10),
-      delivered: 0,
-      failed:    0,
-      cancelled: 0,
-    })
+/* The day an order belongs to: when it was meant to happen, else when it did,
+   else when it was raised. */
+const orderDay = o =>
+  o.scheduled_date?.slice(0, 10) || o.delivered_at?.slice(0, 10) || o.created_at?.slice(0, 10)
+
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December']
+
+/* The last seven days, or every day of a month.
+ *
+ * `compareMonth` adds a second delivered line from another month of the same
+ * year, aligned by DAY OF THE MONTH — the 3rd against the 3rd — which is the
+ * only alignment that lets two months of different lengths be read together.
+ * Months are of different lengths, so the shorter one simply stops; its line
+ * ends rather than being stretched to fit, because a 30-day month has no 31st
+ * and pretending otherwise would invent a day.
+ */
+function buildTrend(orders, { mode = '7d', month = null, compareMonth = null, year = new Date().getFullYear() } = {}) {
+  const buckets = []
+  const byDate = new Map()
+
+  if (mode === '7d') {
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const row = { name: d.toLocaleDateString('en', { weekday: 'short' }), date: ymd(d),
+        delivered: 0, failed: 0, cancelled: 0 }
+      buckets.push(row); byDate.set(row.date, row)
+    }
+  } else {
+    const m = month ?? new Date().getMonth()
+    const last = new Date(year, m + 1, 0).getDate()
+    for (let day = 1; day <= last; day++) {
+      const row = { name: String(day), date: ymd(new Date(year, m, day)),
+        delivered: 0, failed: 0, cancelled: 0 }
+      buckets.push(row); byDate.set(row.date, row)
+    }
   }
-  orders.forEach(o => {
-    const date = o.scheduled_date?.slice(0, 10) || o.delivered_at?.slice(0, 10) || o.created_at?.slice(0, 10)
-    const day  = days.find(d => d.date === date)
-    if (!day) return
+
+  // The comparison month, indexed by day number so it can sit beside the main one.
+  const compare = new Map()
+  if (mode === 'month' && compareMonth != null) {
+    const last = new Date(year, compareMonth + 1, 0).getDate()
+    for (let day = 1; day <= last; day++) compare.set(ymd(new Date(year, compareMonth, day)), day)
+  }
+
+  for (const o of orders) {
+    const date = orderDay(o)
+    if (!date) continue
     const step = lifecycleStep(o.status)
-    if (step === 'completed')      day.delivered++
-    else if (step === 'failed')    day.failed++
-    else if (step === 'cancelled') day.cancelled++
-  })
-  return days
+
+    const row = byDate.get(date)
+    if (row) {
+      if (step === 'completed')      row.delivered++
+      else if (step === 'failed')    row.failed++
+      else if (step === 'cancelled') row.cancelled++
+    }
+    const dayNo = compare.get(date)
+    if (dayNo && step === 'completed') {
+      const slot = buckets[dayNo - 1]
+      if (slot) slot.compared = (slot.compared || 0) + 1
+    }
+  }
+
+  // A day the comparison month does not have stays undefined rather than zero,
+  // so its line ends there instead of dropping to the floor.
+  if (compare.size) {
+    for (const b of buckets) if (b.compared == null && compare.size >= Number(b.name)) b.compared = 0
+  }
+  return buckets
 }
 
 export default function DashboardPage() {
@@ -65,9 +113,32 @@ export default function DashboardPage() {
      show them, and it counts them as their own category rather than folding them
      into any figure: the stat cards, the Recent Orders table and every other page
      stay live-only. */
-  const { stats, orders, cancelledOrders, drivers } = useApp()
+  const { stats, orders, cancelledOrders, drivers, loadFullOrderHistory, ordersFullyLoaded } = useApp()
 
-  const trend = buildTrend([...orders, ...cancelledOrders])
+  const [trendMode, setTrendMode] = useState('7d')      // '7d' | 'month'
+  const [compareMonth, setCompareMonth] = useState('')  // '' | '0'..'11', same year
+  const thisYear  = new Date().getFullYear()
+  const thisMonth = new Date().getMonth()
+
+  /* The shared order load only reaches back a few days (ordersWindowDays), which
+     is enough for seven days and nowhere near enough for a month — let alone a
+     month earlier in the year. Asking for a month therefore asks for the whole
+     history first, the same way the financial pages do. Seven days costs
+     nothing extra. */
+  useEffect(() => {
+    if (trendMode === 'month' || compareMonth !== '') loadFullOrderHistory?.()
+  }, [trendMode, compareMonth, loadFullOrderHistory])
+
+  const trend = useMemo(
+    () => buildTrend([...orders, ...cancelledOrders], {
+      mode: trendMode,
+      month: thisMonth,
+      compareMonth: compareMonth === '' ? null : Number(compareMonth),
+      year: thisYear,
+    }),
+    [orders, cancelledOrders, trendMode, compareMonth, thisMonth, thisYear])
+
+  const loadingMonth = trendMode === 'month' && !ordersFullyLoaded
 
   const counts = { scheduled: 0, inProgress: 0, completed: 0, failed: 0, cancelled: 0 }
   for (const o of orders) counts[lifecycleStep(o.status)]++
@@ -92,7 +163,38 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Trend chart */}
         <div className="card p-5 lg:col-span-2">
-          <h2 className="text-sm font-semibold text-slate-200 mb-4">Delivery Trend (Last 7 Days)</h2>
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            <h2 className="text-sm font-semibold text-slate-200">
+              Delivery Trend {trendMode === '7d' ? '(Last 7 Days)' : `(${MONTH_NAMES[thisMonth]} ${thisYear})`}
+            </h2>
+
+            <div className="flex items-center gap-1 ml-auto">
+              {[['7d', 'Last 7 days'], ['month', 'This month']].map(([k, label]) => (
+                <button key={k} type="button"
+                  onClick={() => { setTrendMode(k); if (k === '7d') setCompareMonth('') }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+                    trendMode === k ? 'bg-brand-500/15 text-brand-300 border-brand-500/30'
+                                    : 'text-slate-400 border-surface-border hover:bg-surface-hover'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Compare against another month of the same year. Only offered on
+                the month view: seven days and a whole month have no common
+                x-axis, so there is nothing to lay one over the other. */}
+            {trendMode === 'month' && (
+              <select className="input py-1 text-[11px] w-auto" value={compareMonth}
+                onChange={e => setCompareMonth(e.target.value)}>
+                <option value="">Compare with…</option>
+                {MONTH_NAMES.map((m, i) => i === thisMonth ? null : (
+                  <option key={m} value={i}>{m} {thisYear}</option>
+                ))}
+              </select>
+            )}
+
+            {loadingMonth && <span className="text-[11px] text-slate-500">loading the year…</span>}
+          </div>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={trend} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
               <defs>
@@ -120,6 +222,14 @@ export default function DashboardPage() {
               <Area type="monotone" dataKey="delivered" stroke="#6366f1" fill="url(#deliveredGrad)" strokeWidth={2} name="Delivered" />
               <Area type="monotone" dataKey="failed"    stroke="#ef4444" fill="url(#failedGrad)"    strokeWidth={2} name="Failed"    />
               <Area type="monotone" dataKey="cancelled" stroke="#94a3b8" fill="url(#cancelledGrad)" strokeWidth={2} name="Cancelled" />
+              {/* The month being compared against: delivered only, drawn as a
+                  dashed line with no fill so it reads as a reference behind this
+                  month rather than a fourth thing that happened. */}
+              {trendMode === 'month' && compareMonth !== '' && (
+                <Area type="monotone" dataKey="compared" stroke="#f59e0b" fill="none"
+                  strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false}
+                  name={`${MONTH_NAMES[Number(compareMonth)]} delivered`} />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>

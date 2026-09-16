@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow, Ban,
-  ArrowRightLeft, Palette, UserX, TrendingUp, Scale, Globe, Film,
+  ArrowRightLeft, Palette, Trophy, UserX, TrendingUp, Scale, Globe, Film,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -86,6 +86,7 @@ export const navGroups = [
   {
     key: 'reports', label: 'Reports', icon: BarChart3,
     items: [
+      { to: '/top-items', icon: Trophy, label: 'Most Sold Items' },
       { to: '/reports', icon: BarChart3, label: 'Reports' },
       // Finished work only, per currency: fees, stories, packages, invoices —
       // with the split by order type and by month.
