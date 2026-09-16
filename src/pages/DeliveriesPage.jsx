@@ -3761,14 +3761,25 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     <div>
                       <p className="text-slate-300 flex items-center gap-1.5">
                         {customerListName(o.customer)}
-                        {o.customer.credit_debit_allowed && (
-                          <span title="Credit customer (may owe a balance)" className="inline-flex text-amber-400">
+                        {/* Credit is a property of the ACCOUNT THIS ORDER BILLS TO,
+                            not of the customer (fix144). The same customer can hold
+                            a cash account and a credit one, so reading the contact's
+                            old flag marked every one of their orders credit — or
+                            none of them — whichever the flag happened to say. */}
+                        {isCreditOrder(o) && (
+                          <span title="Billed to a credit account — may close with a balance owing"
+                            className="inline-flex text-fuchsia-400">
                             <CreditCard className="w-3.5 h-3.5" />
                           </span>
                         )}
                       </p>
-                      {o.customer.account_number && (
-                        <p className="text-slate-500 text-[11px] font-mono tracking-wider">{formatAccountNumber(o.customer.account_number)}</p>
+                      {/* The number the ORDER was billed to, for the same reason.
+                          Falls back to the contact's own number for orders taken
+                          before an account was named on them. */}
+                      {(o.main_account || o.customer.account_number) && (
+                        <p className="text-slate-500 text-[11px] font-mono tracking-wider">
+                          {formatAccountNumber(o.main_account || o.customer.account_number)}
+                        </p>
                       )}
                       {/* The contact code (CST-000123, PTN-000004) under the
                           account number — the reference people quote on
