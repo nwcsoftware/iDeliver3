@@ -1,10 +1,23 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react'
-import { ChevronDown, CheckCircle2, Circle, X } from 'lucide-react'
+import { ChevronDown, CheckCircle2, Circle, X, ListChecks, XCircle } from 'lucide-react'
 import SearchField from './ui/SearchField'
 
 /**
  * A filter dropdown that combines a search box with multi-selection, for lists
  * long enough that a plain <select> is unusable (customers, drivers…).
+ *
+ * TWO WAYS TO ARRIVE AT THE SAME ANSWER. Wanting three of forty things, you tick
+ * three. Wanting all of them but two, ticking thirty-eight is absurd — so
+ * "Select all" fills the list and you untick the two you do not want. The button
+ * then says so: "All except Shein, taxi", because that is the filter the user
+ * has in mind, and reading "41 selected" back would not confirm it.
+ *
+ * Every option ticked is left as a full list rather than quietly folded back to
+ * [] — folding it would clear the ticks the moment they were set and leave
+ * nothing to untick, which is the whole point of the button.
+ *
+ * While a search is typed, the two buttons act on WHAT IS ON SCREEN and say so
+ * ("Select 6 matching"), so a search can build a selection a piece at a time.
  *
  * Props:
  *   label     - field label above the control
@@ -31,15 +44,28 @@ export default function SearchMultiSelect({
     [options, q])
 
   const selected = new Set(value)
+
   function toggle(v) {
     onChange(selected.has(v) ? value.filter(x => x !== v) : [...value, v])
   }
 
-  const buttonText = value.length === 0
+  /* Adds what the search currently shows to the selection, leaving anything
+     already chosen but filtered out of view alone. */
+  function selectShown() {
+    onChange([...new Set([...value, ...shown.map(o => o.value)])])
+  }
+
+  const label_of = v => options.find(o => o.value === v)?.label ?? v
+  const missing  = value.length ? options.filter(o => !selected.has(o.value)) : []
+
+  const buttonText = value.length === 0 || value.length === options.length
     ? allLabel
     : value.length === 1
-      ? (options.find(o => o.value === value[0])?.label || '1 selected')
-      : `${value.length} selected`
+      ? (label_of(value[0]) || '1 selected')
+      /* Named, not counted, while the exceptions are few enough to read. */
+      : missing.length > 0 && missing.length <= 3
+        ? `All except ${missing.map(o => o.label).join(', ')}`
+        : `${value.length} selected`
 
   function close() { setOpen(false); setQuery('') }
 
@@ -74,6 +100,23 @@ export default function SearchMultiSelect({
               </button>
             )}
           </div>
+
+          {/* Start from everything, then take away — the short road to "all
+              except one or two". */}
+          {options.length > 1 && (
+            <div className="flex items-center gap-1 px-1 pb-1">
+              <button type="button" onClick={selectShown}
+                className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1 text-[11px] text-slate-300 bg-surface-hover/60 hover:bg-surface-hover">
+                <ListChecks className="w-3 h-3" />
+                {q ? `Select ${shown.length} matching` : 'Select all'}
+              </button>
+              <button type="button" onClick={() => onChange([])}
+                disabled={value.length === 0}
+                className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1 text-[11px] text-slate-400 bg-surface-hover/60 hover:bg-surface-hover disabled:opacity-40 disabled:hover:bg-surface-hover/60">
+                <XCircle className="w-3 h-3" /> Clear
+              </button>
+            </div>
+          )}
 
           <div className="max-h-64 overflow-y-auto">
             <button type="button" onClick={() => onChange([])}

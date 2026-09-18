@@ -58,6 +58,10 @@ const STATUS_DELIVERY_MAP = {
   scheduled:   'Awaiting Pickup',
 }
 // Business/merchant category of the order
+/* Stands in for an order with no type at all, so that "no type" can be ticked
+   like any other value. Nothing is ever stored under this name. */
+const NO_ORDER_TYPE = '__no_type__'
+
 const ORDER_TYPES = [
   { value: 'restaurant',  label: 'Restaurant' },
   { value: 'supermarket', label: 'Supermarket' },
@@ -975,7 +979,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [categoryFilter,       setCategoryFilter]       = useState([])   // [] = all; else subset of credit|regular|partner|supplier
   const [catMenuOpen,          setCatMenuOpen]          = useState(false)
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
-  const [orderTypeFilter,      setOrderTypeFilter]      = useState('')   // order_type (string)
+  const [orderTypeFilter,      setOrderTypeFilter]      = useState([])   // order_type values; empty = all
   // Scheduled-date range filter. Defaults to today so the list opens on
   // today's scheduled orders; the "Today" toggle sets/clears both boxes.
   const [dateFrom,             setDateFrom]             = useState(localTodayStr())
@@ -1321,7 +1325,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         && (!c.flagFilter     || (c.flagFilter === 'flagged' ? isFlagged(o) : !isFlagged(o)))
         && (c.driverFilter.length   === 0 || c.driverFilter.includes(o.driver_id))
         && (c.customerFilter.length === 0 || c.customerFilter.includes(o.customer_id))
-        && (!c.orderTypeFilter || o.order_type === c.orderTypeFilter)
+        && (c.orderTypeFilter.length === 0
+            || c.orderTypeFilter.includes(String(o.order_type ?? '').trim() || NO_ORDER_TYPE))
         && matchCategory(o, c)
         && matchSource(o, c)
         && matchScheduledDate(o, c)
@@ -1389,13 +1394,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     (payFilter ? 1 : 0) + (flagFilter ? 1 : 0) +
     (driverFilter.length ? 1 : 0) + (customerFilter.length ? 1 : 0) +
     (categoryFilter.length ? 1 : 0) + (sourceFilter ? 1 : 0) +
-    (orderTypeFilter ? 1 : 0) + (dateFrom || dateTo ? 1 : 0)
+    (orderTypeFilter.length ? 1 : 0) + (dateFrom || dateTo ? 1 : 0)
 
-  const hasAdvancedFilters = driverFilter.length || customerFilter.length || categoryFilter.length || sourceFilter || orderTypeFilter || dateFrom || dateTo
+  const hasAdvancedFilters = driverFilter.length || customerFilter.length || categoryFilter.length || sourceFilter || orderTypeFilter.length || dateFrom || dateTo
   function clearAdvancedFilters() {
-    setDriverFilter([]); setCustomerFilter([]); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter(''); setDateFrom(''); setDateTo('')
+    setDriverFilter([]); setCustomerFilter([]); setCategoryFilter([]); setSourceFilter(''); setOrderTypeFilter([]); setDateFrom(''); setDateTo('')
   }
 
+  // Orders carrying no type at all are a real group — they exist, and they are
+  // deliveries like any other — so they get an option of their own. Without it,
+  // "Select all" and then unticking one type would silently drop them: the user
+  // asked for everything except one thing and would quietly lose a second.
   // Order-type filter options as { value, label }. `value` is exactly what's
   // stored on the order (built-in value like 'restaurant', or a custom name);
   // `label` is a friendly display. Sourced from built-in + custom (DB) types +
@@ -1410,7 +1419,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     ORDER_TYPES.forEach(t => add(t.value))
     orderTypes.forEach(t => add(t.name))
     ;(orders ?? []).forEach(o => add(o.order_type))
-    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+    const list = [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+    if ((orders ?? []).some(o => !String(o.order_type ?? '').trim()))
+      list.push({ value: NO_ORDER_TYPE, label: '(No type)' })
+    return list
   })()
 
   // Sortable column header → value extractor. Headers not listed here aren't sortable.
@@ -3467,13 +3479,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {sourceOptions.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div>
-            <label className="label flex items-center gap-1"><Tag className="w-3 h-3" /> Order type</label>
-            <select className="input py-1.5 text-xs w-40" value={orderTypeFilter} onChange={e => setOrderTypeFilter(e.target.value)}>
-              <option value="">All order types</option>
-              {orderTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </div>
+          {/* Several types at once: a day is rarely one kind of work, and asking
+              "restaurant AND bakery" used to mean looking twice. Empty = all,
+              which is the same meaning the single select had. */}
+          <SearchMultiSelect
+            label="Order type" Icon={Tag} width="w-44"
+            allLabel="All order types" searchPlaceholder="Search type…"
+            options={orderTypeOptions}
+            value={orderTypeFilter} onChange={setOrderTypeFilter}
+          />
           <div className="flex flex-col justify-end">
             <button type="button" onClick={toggleToday}
               title={todayActive ? "Showing today's scheduled orders — click to clear" : "Set the scheduled date range to today"}
