@@ -4,12 +4,13 @@ import {
 } from 'recharts'
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import { Wallet, ArrowDownCircle, ArrowUpCircle, Scale, Download, Calendar, RefreshCw, UserCheck, Handshake, Store, ChevronDown, ChevronRight, EyeOff } from 'lucide-react'
+import { Wallet, ArrowDownCircle, ArrowUpCircle, Scale, Download, Calendar, RefreshCw, UserCheck, Handshake, Store, ChevronDown, ChevronRight, EyeOff, Megaphone } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { fmtAmount, paymentByDriver } from '../lib/orderAmounts'
 import { buildPartnerDues, partnerName as partnerDisplayName } from '../lib/partnerDues'
+import { isStoryOrder } from '../lib/closedOrdersReport'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 
@@ -45,6 +46,12 @@ function partyName(p) {
 // Which party type an order belongs to, from its customer contact — used to split
 // the day's cash into Customers / Partners / Suppliers.
 function partyCategory(o) {
+  /* Ads stand on their own. An advert is not a delivery: nobody drives, nothing
+     is handed over, and the money arrives when the office sells it rather than
+     when a driver settles up. Mixed in with the day's deliveries it distorted
+     both — a single advert could dwarf a whole day of runs. So it is counted
+     apart, whoever the customer happens to be. */
+  if (isStoryOrder(o)) return 'ads'
   const types = Array.isArray(o?.customer?.contact_types) ? o.customer.contact_types : []
   if (types.includes('partner'))  return 'partner'
   if (types.includes('supplier')) return 'supplier'
@@ -55,6 +62,7 @@ const PARTY_CATS = [
   { key: 'customer', label: 'Customers', Icon: UserCheck, cls: 'text-brand-400' },
   { key: 'partner',  label: 'Partners',  Icon: Handshake, cls: 'text-purple-400' },
   { key: 'supplier', label: 'Suppliers', Icon: Store,     cls: 'text-amber-400' },
+  { key: 'ads',      label: 'Ads & Services', Icon: Megaphone, cls: 'text-fuchsia-400' },
 ]
 
 /* Daily Cashier Box — the cash that moved through the office for CLOSED orders.
@@ -126,23 +134,43 @@ export default function CashierBoxPage() {
   const allLines = useMemo(() => {
     const out = []
     for (const o of orders) {
-      if (!o.isclosed) continue
-      const day = o.closed_at ? String(o.closed_at).slice(0, 10) : null
-      if (!day) continue
-      // Hidden by an active reset checkpoint (movements on/before reset_through).
-      if (resetThrough && day <= resetThrough) continue
+      const ads      = isStoryOrder(o)
+      const closeDay = o.closed_at ? String(o.closed_at).slice(0, 10) : null
 
-      const cat      = partyCategory(o)   // Customers / Partners / Suppliers
+      /* A delivery's cash reaches the box when the order closes, because that is
+         when the driver hands it over — so a delivery waits to be closed.
+
+         AN ADVERT DOES NOT WAIT. It is sold over a counter or a phone and paid
+         for there and then, by the office, with no driver in between. Its money
+         is therefore dated by the day it was TAKEN, and it is admitted whether
+         or not the order has been closed: the cash is in the drawer either way,
+         and holding it back until someone remembers to close the order would
+         leave the box understating what it holds. */
+      if (!ads && (!o.isclosed || !closeDay)) continue
+
+      const cat      = partyCategory(o)   // Customers / Partners / Suppliers / Ads
       const partyNm  = partyName(o.customer) || o.main_account || '—'
       const partyId  = o.customer?.id || o.customer_id || partyNm
 
-      // IN — every payment collected on the order. The order is closed, so all of
-      // its cash (driver- and office-collected) is now in the box. The office
-      // portion (collected directly by a call-center user, not the driver) is
-      // tracked separately on each line for the "collected by call center" column.
+      // IN — every payment collected on the order. For a delivery the order is
+      // closed by now, so all of its cash (driver- and office-collected) is in
+      // the box; for an advert the office took it directly. The office portion
+      // (collected by a call-center user, not a driver) is tracked separately on
+      // each line for the "collected by call center" column.
       for (const p of (o.payment_collections ?? [])) {
         const amt = round2(p.amount)
         if (!amt) continue
+        /* The day the money moved. For an advert that is the collection itself,
+           independent of the order's date and of the advert's own run dates — an
+           advert booked in March for a campaign in June, paid for in April, is
+           April's money. Older rows predate collected_at, so the close date
+           stands in rather than dropping the line. */
+        const day = ads
+          ? String(p.collected_at || o.closed_at || o.created_at || '').slice(0, 10)
+          : closeDay
+        if (!day) continue
+        // Hidden by an active reset checkpoint (movements on/before reset_through).
+        if (resetThrough && day <= resetThrough) continue
         const byDriver = paymentByDriver(p, o)
         const who = (p.collected_by_name || '').trim()
           || (byDriver ? (`${o.driver?.first_name ?? ''} ${o.driver?.last_name ?? ''}`.trim() || 'Driver') : 'Office')
@@ -152,6 +180,13 @@ export default function CashierBoxPage() {
           cur: norm(p.currency), amount: amt, office: byDriver ? 0 : amt,
         })
       }
+      /* What the box PAYS OUT on an order still belongs to the close: it is spent
+         when the order is finished and settled, and an unclosed order has not
+         spent anything yet. */
+      if (!o.isclosed || !closeDay) continue
+      if (resetThrough && closeDay <= resetThrough) continue
+      const day = closeDay
+
       // OUT — petty-cash retail purchases. Invoices flagged "paid" (exclude_calculation)
       // were settled directly by the customer with the shop, so the box never paid
       // them — they're skipped here.
@@ -319,7 +354,7 @@ export default function CashierBoxPage() {
   // Per-individual-party breakdown within each category — one entry per specific
   // customer / partner / supplier, with their own per-currency totals.
   const partyBreakdown = useMemo(() => {
-    const cats = { customer: {}, partner: {}, supplier: {} }
+    const cats = { customer: {}, partner: {}, supplier: {}, ads: {} }
     for (const l of lines) {
       const catKey = cats[l.cat] ? l.cat : 'customer'
       const bucket = cats[catKey]
@@ -369,7 +404,7 @@ export default function CashierBoxPage() {
     doc.setFontSize(9); doc.setTextColor(110)
     doc.text(`Period: ${rangeLabel}`, marginX, 23)
     doc.text(`Generated: ${now.toLocaleString()}${currentUser ? `  by ${currentUser.first_name ?? ''} ${currentUser.last_name ?? ''}`.trimEnd() : ''}`, marginX, 28)
-    doc.text('Closed orders only.  IN = office-collected payments.  OUT = retail invoices + services + payouts to partners.', marginX, 33)
+    doc.text('Closed orders, plus ads dated by the day they were collected.  IN = payments.  OUT = retail invoices + services + payouts to partners.', marginX, 33)
     doc.text('Partner packages are a due, not a spend, until the partner is paid; unpaid dues stay in the box and carry forward.', marginX, 36.5)
 
     autoTable(doc, {
