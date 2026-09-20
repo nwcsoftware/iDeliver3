@@ -227,20 +227,27 @@ export async function saveSubAccounts({ contactId, accounts, origIds = [], compa
  * Without this, contacts created after the migration would be the only ones with
  * no accounts at all — the backfill is a one-time catch-up, not a trigger.
  *
- * No-ops when the contact has no account number, or already has an account (the
- * user built one by hand on the Account Numbers tab). Failures are swallowed:
- * this must never block saving a contact, and the tab can add one later.
+ * No-ops when the contact has no account number. Failures are swallowed: this
+ * must never block saving a contact, and the tab can add one later.
  *
- * Returns the created row (so callers holding an in-memory list can add it
- * without a refetch), or null when nothing was created.
+ * Returns the contact's primary account row — the one it just created, or the
+ * one that was already there (built by hand on the Account Numbers tab, or
+ * seeded by the fix144 trigger) — so a caller holding an in-memory list can add
+ * it without a refetch. Null only when there is genuinely no account to show.
  */
 export async function ensurePrimarySubAccount({ contactId, accountNumber, creditAllowed = false, companyId = null, userId = null }) {
   const number = String(accountNumber ?? '').replace(/\s/g, '')
   if (!contactId || !number) return null
   try {
+    /* The account may already be there: fix144 put a trigger on contacts that
+       seeds it the moment the contact is inserted, so by the time this runs the
+       row usually exists. Hand it BACK rather than returning null — the caller
+       uses what comes back to show the new customer's account number, and a
+       null left the order form insisting the customer had no account at all. */
     const { data: existing } = await supabase
-      .from('sub_accounts').select('id').eq('contact_id', contactId).limit(1)
-    if (existing?.length) return null
+      .from('sub_accounts').select('*').eq('contact_id', contactId)
+      .order('is_primary', { ascending: false }).limit(1)
+    if (existing?.length) return existing[0]
     const majorId = await contactsMajorAccountId(companyId)
     if (!majorId) return null            // fix81 not run — the tab can add one later
     const { data } = await supabase.from('sub_accounts').insert([{

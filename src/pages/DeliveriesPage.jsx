@@ -1860,9 +1860,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
     if (addrErr) { setCustomerError(addrErr); setSavingCustomer(false); return }
 
-    // Seed the contact's primary account number, like the fix81 backfill did for
-    // existing contacts. It must land in state before applyCustomer runs below,
-    // or the order would resolve to no account at all.
+    /* The contact's primary account number. It may have been created here or by
+       the fix144 trigger the moment the contact was inserted; either way what
+       comes back is the row that exists, and it MUST land in state before
+       applyCustomer runs below — otherwise the account picker opens on a
+       customer it believes has no account number, which is exactly what it used
+       to do. Merged by id, since the row may already be known. */
     const seeded = await ensurePrimarySubAccount({
       contactId: data.id,
       accountNumber: data.account_number,
@@ -1870,8 +1873,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       companyId: COMPANY_ID,
       userId: currentUser?.user_id || null,
     })
-    const nextAccounts = seeded ? [...subAccounts, seeded] : subAccounts
-    if (seeded) setSubAccounts(nextAccounts)
+    const nextAccounts = seeded && !subAccounts.some(a => a.id === seeded.id)
+      ? [...subAccounts, seeded]
+      : subAccounts
+    if (nextAccounts !== subAccounts) setSubAccounts(nextAccounts)
 
     setCustomers(prev => [...prev, data])
     setAllContacts(prev => [...prev, data])
