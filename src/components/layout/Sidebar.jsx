@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
   ChevronDown, BookUser, Building, UserCheck, Handshake, Settings, UserCog, BookText, Menu, X, ClipboardList, RotateCcw, HandCoins, Trash2, Wallet, PackageX, Megaphone, MessageSquare, CreditCard, ShieldCheck, Store, Truck, CalendarRange, Boxes, Banknote, Tags, Image as ImageIcon, ClipboardPen, AppWindow, Ban,
-  ArrowRightLeft, Palette, Trophy, UserX, TrendingUp, Scale, Globe, Film,
+  ArrowRightLeft, Palette, Trophy, UserX, TrendingUp, Scale, Globe, Film, Archive,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
@@ -137,6 +137,8 @@ export const navGroups = [
       { to: '/settings/delete-order',        icon: PackageX,      label: 'Delete Order' },
       { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
       { to: '/settings/delete-driver',       icon: UserX,         label: 'Delete Driver' },
+      // The shelf deactivation puts contacts on, and the only door out of it.
+      { to: '/settings/retired-contacts',    icon: Archive,       label: 'Retired Contacts' },
       { to: '/settings/reset-cashier-box',   icon: Wallet,        label: 'Reset Cashier Box' },
       { to: '/settings/reset',               icon: Trash2,        label: 'Reset Data' },
     ],
