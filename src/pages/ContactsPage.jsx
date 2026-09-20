@@ -696,23 +696,21 @@ export default function ContactsPage({ type }) {
     setToggling(null); setDeactivate(null)
   }
 
-  /* Super-admin hard delete — only offered for already-deactivated contacts. If the
-     contact is still referenced (orders, packages, invoices, accounts), the DB
-     rejects the delete and the error is surfaced rather than silently failing. */
-  async function deleteContact(c) {
+  /* Super-admin delete — handed to the Retired Contacts page.
+
+     This used to be a bare DELETE, which the database refuses the moment
+     anything still points at the contact — and every contact has at least its
+     own account number, so it refused almost always, with nothing to show for
+     it but "still linked to orders or other records". Which records, it never
+     said.
+
+     That work now lives in one place (fix151): the footprint is read out of
+     the database, shown, and removed with the contact. So this button takes
+     the super admin there with the contact already open, rather than keeping
+     a second, worse copy of the same job. */
+  function deleteContact(c) {
     if (!isSuperAdmin || c.is_active) return
-    const name = contactDisplayName(c)
-    if (!window.confirm(`Permanently delete “${name}”?\n\nThis cannot be undone. It will fail if the contact is still linked to any orders or records.`)) return
-    setToggling(c.id)
-    const { error: err } = await supabase.from('contacts').delete().eq('id', c.id)
-    setToggling(null)
-    if (err) {
-      window.alert(/foreign key|violates|referenced/i.test(err.message)
-        ? `Can’t delete “${name}” — it’s still linked to orders or other records.`
-        : `Could not delete “${name}”: ${err.message}`)
-      return
-    }
-    fetchContacts()
+    navigate(`/settings/retired-contacts?contact=${c.id}`)
   }
 
   const { Icon, title, color, bg } = cfg

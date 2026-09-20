@@ -3,6 +3,7 @@ import {
   AlertTriangle, CheckCircle2, Loader, Trash2, X, ShieldAlert,
   UserX, KeyRound, CheckSquare, Square, Search, RefreshCw, Archive,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -59,6 +60,12 @@ export default function RetiredContactsPage() {
   const [deleteOrders, setDeleteOrders] = useState(false)
   const [error,        setError]        = useState('')
 
+  /* Arriving from the Contacts page's delete button, which hands the contact
+     over rather than keeping its own worse copy of this job. The review opens
+     on that contact straight away — the super admin already said which one. */
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get('contact')
+
   const load = useCallback(async () => {
     setLoading(true)
     // Retired contacts only. Paged like every other contact read — the list is
@@ -72,6 +79,16 @@ export default function RetiredContactsPage() {
   }, [])
 
   useEffect(() => { if (isSuper) load() }, [isSuper, load])
+
+  useEffect(() => {
+    if (!wanted || !list.length || target) return
+    const c = list.find(x => x.id === wanted)
+    // Drop the parameter either way, so a reload does not reopen the review
+    // and the back button does not walk into it again.
+    setParams({}, { replace: true })
+    if (c) review(c)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, list])
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase()
