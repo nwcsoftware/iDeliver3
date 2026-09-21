@@ -40,6 +40,12 @@
 -- orders already carries a stamp that matches the account it names. This
 -- migration only touches contacts.
 --
+-- A NOTE ON NULL. credit_debit_allowed allows NULL, and 27 contacts held one:
+-- the flag had simply never been answered. NULL is not FALSE, so those contacts
+-- read as "disagreeing" while no update touched them. Both updates below test
+-- IS DISTINCT FROM rather than IS TRUE / IS FALSE, so an unanswered flag is
+-- written down as an answer instead of being stepped over.
+--
 -- Run once in the Supabase SQL editor, after fix144/fix145.
 -- Safe to re-run: it sets the flag to what the accounts already say.
 -- ============================================================================
@@ -72,12 +78,18 @@ UPDATE public.contacts c
                   AND s.account_type = 'credit'
                   AND s.is_active IS NOT FALSE);
 
--- Holds accounts, none of them credit → credit is not allowed. A contact with
--- NO accounts at all is deliberately left alone: there is nothing to read the
--- answer from, and the flag is the only thing the order form has to go on.
+/* Holds accounts, none of them credit → credit is not allowed. A contact with
+   NO accounts at all is deliberately left alone: there is nothing to read the
+   answer from, and the flag is the only thing the order form has to go on.
+
+   IS DISTINCT FROM FALSE, not IS TRUE. The column allows NULL and 27 contacts
+   hold one — the flag was never set either way. NULL is not TRUE, so `IS TRUE`
+   walked straight past them while the check below counts them as disagreeing,
+   because NULL IS DISTINCT FROM FALSE. An unanswered flag is not the same as a
+   flag that says no, and it has to be written down as one. */
 UPDATE public.contacts c
    SET credit_debit_allowed = FALSE
- WHERE c.credit_debit_allowed IS TRUE
+ WHERE c.credit_debit_allowed IS DISTINCT FROM FALSE
    AND EXISTS (SELECT 1 FROM public.sub_accounts s WHERE s.contact_id = c.id)
    AND NOT EXISTS (SELECT 1 FROM public.sub_accounts s
                     WHERE s.contact_id = c.id
