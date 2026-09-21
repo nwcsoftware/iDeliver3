@@ -833,16 +833,22 @@ export default function CreditCustomersPage() {
         </div>
 
         {/* ── Statement ──────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 space-y-4 min-h-0 overflow-y-auto pr-1">
+        {/* A column, not a scroller. The whole right side used to scroll AND
+            the statement scrolled inside it, so the page had two bars doing
+            the same job: the outer one moved the balance cards away while the
+            inner one moved the entries, and which bar you had hold of was a
+            guess. The cards are fixed now and the statement takes whatever
+            height is left, so there is one scroller and it is the list. */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
           {!selected ? (
-            <div className="bg-surface-card border border-surface-border rounded-xl p-10 text-center text-slate-500">
+            <div className="bg-surface-card border border-surface-border rounded-xl p-10 text-center text-slate-500 flex-shrink-0">
               <ChevronRight className="w-6 h-6 mx-auto mb-2 opacity-50" />
               Select a credit customer to view their account statement.
             </div>
           ) : (
             <>
               {/* Header + balance cards */}
-              <div className="bg-surface-card border border-surface-border rounded-xl p-4">
+              <div className="bg-surface-card border border-surface-border rounded-xl p-4 flex-shrink-0">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-100">{customerName(selected.customer)}</h2>
@@ -900,8 +906,8 @@ export default function CreditCustomersPage() {
               </div>
 
               {/* Statement table */}
-              <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between gap-3 flex-wrap">
+              <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden flex-1 min-h-0 flex flex-col">
+                <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
                   <span className="text-sm font-semibold text-slate-200">Statement</span>
                   <div className="flex items-center gap-3">
                     {cutoff && (
@@ -919,7 +925,7 @@ export default function CreditCustomersPage() {
                     <span className="text-xs text-slate-500">{statement.length} entr{statement.length === 1 ? 'y' : 'ies'}{(dateFrom || dateTo) ? ' (filtered)' : ''}</span>
                   </div>
                 </div>
-                <div className="max-h-[60vh] overflow-auto">
+                <div className="flex-1 min-h-0 overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="z-20">
                     <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
