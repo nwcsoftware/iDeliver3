@@ -921,14 +921,14 @@ export default function CreditCustomersPage() {
                 </div>
                 <div className="max-h-[60vh] overflow-auto">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 z-10 bg-surface-card">
+                  <thead className="z-20">
                     <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
-                      <SortTh label="Date"        sortKey="date"    sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
-                      <SortTh label="Reference"   sortKey="ref"     sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
-                      <SortTh label="Description" sortKey="desc"    sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
-                      <SortTh label="Charge"      sortKey="charge"  sort={sort} onSort={cycle} className="px-4 bg-surface-card" align="right" />
-                      <SortTh label="Payment"     sortKey="payment" sort={sort} onSort={cycle} className="px-4 bg-surface-card" align="right" />
-                      {isAdmin && <th className="px-4 py-2 font-medium text-right w-12 bg-surface-card"></th>}
+                      <SortTh label="Date"        sortKey="date"    sort={sort} onSort={cycle} className="px-4 bg-surface-card sticky top-0 z-20" />
+                      <SortTh label="Reference"   sortKey="ref"     sort={sort} onSort={cycle} className="px-4 bg-surface-card sticky top-0 z-20" />
+                      <SortTh label="Description" sortKey="desc"    sort={sort} onSort={cycle} className="px-4 bg-surface-card sticky top-0 z-20" />
+                      <SortTh label="Charge"      sortKey="charge"  sort={sort} onSort={cycle} className="px-4 bg-surface-card sticky top-0 z-20" align="right" />
+                      <SortTh label="Payment"     sortKey="payment" sort={sort} onSort={cycle} className="px-4 bg-surface-card sticky top-0 z-20" align="right" />
+                      {isAdmin && <th className="px-4 py-2 font-medium text-right w-12 bg-surface-card sticky top-0 z-20"></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -973,12 +973,12 @@ export default function CreditCustomersPage() {
                       sticky row's own background is painted behind the cells,
                       so entries scroll through the gaps between them. */}
                   {statement.length > 0 && (
-                    <tfoot className="sticky bottom-0 z-10">
+                    <tfoot className="z-20">
                       <tr className="font-semibold text-slate-200">
-                        <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover" colSpan={3}>Totals shown{(dateFrom || dateTo) ? ' (filtered)' : ''}</td>
-                        <td className="px-4 py-2.5 text-right border-t border-surface-border bg-surface-hover">{fmtCurMap(statementTotals.charged)}</td>
-                        <td className="px-4 py-2.5 text-right text-green-400 border-t border-surface-border bg-surface-hover">{fmtCurMap(statementTotals.paid)}</td>
-                        {isAdmin && <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover"></td>}
+                        <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover sticky bottom-0 z-20" colSpan={3}>Totals shown{(dateFrom || dateTo) ? ' (filtered)' : ''}</td>
+                        <td className="px-4 py-2.5 text-right border-t border-surface-border bg-surface-hover sticky bottom-0 z-20">{fmtCurMap(statementTotals.charged)}</td>
+                        <td className="px-4 py-2.5 text-right text-green-400 border-t border-surface-border bg-surface-hover sticky bottom-0 z-20">{fmtCurMap(statementTotals.paid)}</td>
+                        {isAdmin && <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover sticky bottom-0 z-20"></td>}
                       </tr>
                     </tfoot>
                   )}
