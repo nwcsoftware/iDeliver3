@@ -50,6 +50,7 @@ export default function RetiredContactsPage() {
 
   const [list,    setList]    = useState([])
   const [loading, setLoading] = useState(true)
+  const [listError, setListError] = useState('')
   const [search,  setSearch]  = useState('')
 
   const [target,       setTarget]       = useState(null)   // the contact under review
@@ -68,13 +69,20 @@ export default function RetiredContactsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    // Retired contacts only. Paged like every other contact read — the list is
-    // small today, but nothing here should be the one query that truncates.
-    const data = await fetchAllRows(() => supabase.from('contacts')
+    /* Retired contacts only. Paged like every other contact read — the list is
+       small today, but nothing here should be the one query that truncates.
+
+       fetchAllRows hands back { data, error, partial }, not the rows. Taking
+       the whole object for the list put a plain object where an array belongs,
+       and the spread in `shown` below threw on the next render — which, with
+       no error boundary anywhere in this app, blanked the screen rather than
+       saying anything. */
+    const { data, error: e, partial } = await fetchAllRows(() => supabase.from('contacts')
       .select('id, code, company_name, first_name, last_name, mobile, email, contact_types, account_number, updated_at, created_at')
       .eq('is_active', false)
       .order('id'))
-    setList(data ?? [])
+    setList(Array.isArray(data) ? data : [])
+    setListError(e ? `${e.message}${partial ? ' — showing what arrived.' : ''}` : '')
     setLoading(false)
   }, [])
 
@@ -188,6 +196,13 @@ export default function RetiredContactsPage() {
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
+
+          {listError && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30">
+              <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="text-red-300 text-xs">{listError}</p>
+            </div>
+          )}
 
           {loading ? (
             /* Rows in outline rather than a bare line of text: arriving here
