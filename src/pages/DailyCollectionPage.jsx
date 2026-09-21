@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Banknote, Search, FilterX, AlertCircle, Calendar, X, Shield, AlertTriangle, Landmark } from 'lucide-react'
+import { Banknote, Search, FilterX, AlertCircle, Calendar, X, Shield, AlertTriangle, Landmark, Tag, Package } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency, orderCollectedByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
 import { isCancelledOrder } from '../lib/orderStatus'
 import { useAuth } from '../context/AuthContext'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
+import SearchMultiSelect from '../components/SearchMultiSelect'
 import { OrderNumber, useOrderQuickView } from '../components/orders/OrderQuickView'
 
 /* Daily Collection — every recorded payment (payment_collections) with the order
@@ -23,6 +24,12 @@ const NATURES = [
   { key: 'Cash',   label: 'Cash' },
   { key: 'Credit', label: 'Credit' },
 ]
+
+/* Stands in for a payment whose order names no type, or no source, so that
+   "not set" can be ticked like any other value. Without it, Select all
+   followed by unticking one type would quietly drop those rows too — the user
+   asked to lose one thing and would lose a second. */
+const NO_VALUE = '__none__'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
@@ -63,7 +70,7 @@ async function fetchOrders(ids) {
   const results = await Promise.all(slices.map(slice =>
     supabase.from('delivery_orders')
       .select(`
-        id, order_number, order_source, status, closed_at, scheduled_date,
+        id, order_number, order_source, order_type, status, closed_at, scheduled_date,
         currency, delivery_fee, discount_amount, discount_currency, vat_amount, is_free_order,
         driver:contacts!driver_id(first_name, last_name),
         order_items(line_total, currency, is_deleted),
@@ -128,6 +135,9 @@ export default function DailyCollectionPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
   const [nature,   setNature]   = useState('')     // '' = all, else Cash | Credit
+  // Both empty = all, the same meaning they carry on the Deliveries page.
+  const [typeFilter,   setTypeFilter]   = useState([])
+  const [sourceFilter, setSourceFilter] = useState([])
 
 
   const fetchCollections = useCallback(async () => {
@@ -162,6 +172,8 @@ export default function DailyCollectionPage() {
         currency:     p.currency || 'USD',
         driver:       driverName(o?.driver),
         source:       o?.order_source ?? '—',
+        orderType:    String(o?.order_type ?? '').trim(),
+        sourceKey:    String(o?.order_source ?? '').trim(),
         collectedBy:  p.collected_by_name || '—',
         group:        p.collection_group || '—',
         /* The stamp the payment carries, falling back to its order's — every
@@ -186,14 +198,34 @@ export default function DailyCollectionPage() {
       if (dateFrom && (!r.deliveryDate || r.deliveryDate < dateFrom)) return false
       if (dateTo   && (!r.deliveryDate || r.deliveryDate > dateTo))   return false
       if (nature && r.nature !== nature) return false
+      if (typeFilter.length   && !typeFilter.includes(r.orderType || NO_VALUE))   return false
+      if (sourceFilter.length && !sourceFilter.includes(r.sourceKey || NO_VALUE)) return false
       if (!q) return true
       const hay = [
         r.deliveryDate, r.orderNumber, r.amount, fmtMoney(r.amount, r.currency),
-        r.driver, r.source, r.collectedBy, r.group, r.account, r.nature,
+        r.driver, r.source, r.collectedBy, r.group, r.account, r.nature, r.orderType,
       ].map(v => String(v ?? '').toLowerCase()).join(' ')
       return hay.includes(q)
     })
-  }, [rows, search, dateFrom, dateTo, nature])
+  }, [rows, search, dateFrom, dateTo, nature, typeFilter, sourceFilter])
+
+  /* The values actually present in these collections, rather than every type
+     the company has ever defined — a filter offering something that cannot
+     match anything here is only noise. Sorted, with "not set" last. */
+  const optionsFrom = (key) => {
+    const seen = new Map()
+    let blanks = false
+    for (const r of rows) {
+      const v = r[key]
+      if (!v) { blanks = true; continue }
+      if (!seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), { value: v, label: v })
+    }
+    const list = [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+    if (blanks) list.push({ value: NO_VALUE, label: '(Not set)' })
+    return list
+  }
+  const typeOptions   = useMemo(() => optionsFrom('orderType'), [rows])
+  const sourceOptions = useMemo(() => optionsFrom('sourceKey'), [rows])
 
   // Per-currency total of the filtered collections.
   const totals = useMemo(() => {
@@ -203,8 +235,11 @@ export default function DailyCollectionPage() {
   }, [filtered])
   const totalCurs = CURRENCIES.filter(c => totals[c])
 
-  const hasFilters = search || dateFrom || dateTo || nature
-  function clearFilters() { setSearch(''); setDateFrom(''); setDateTo(''); setNature('') }
+  const hasFilters = search || dateFrom || dateTo || nature || typeFilter.length || sourceFilter.length
+  function clearFilters() {
+    setSearch(''); setDateFrom(''); setDateTo(''); setNature('')
+    setTypeFilter([]); setSourceFilter([])
+  }
 
   /* ── access gate ─────────────────────────────────────────── */
   if (!isSuperAdmin) {
@@ -296,6 +331,18 @@ export default function DailyCollectionPage() {
             })}
           </div>
         </div>
+        <SearchMultiSelect
+          label="Order type" Icon={Tag} width="w-44"
+          allLabel="All order types" searchPlaceholder="Search type…"
+          options={typeOptions}
+          value={typeFilter} onChange={setTypeFilter}
+        />
+        <SearchMultiSelect
+          label="Order source" Icon={Package} width="w-40"
+          allLabel="All sources" searchPlaceholder="Search source…"
+          options={sourceOptions}
+          value={sourceFilter} onChange={setSourceFilter}
+        />
         {hasFilters && (
           <button type="button" onClick={clearFilters}
             className="h-[34px] px-3 rounded-lg text-xs font-medium border border-surface-border text-slate-400 hover:text-slate-200 inline-flex items-center gap-1.5">
