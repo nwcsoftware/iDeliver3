@@ -80,15 +80,27 @@ export default function RetiredContactsPage() {
 
   useEffect(() => { if (isSuper) load() }, [isSuper, load])
 
+  /* Opening the named contact WITHOUT waiting for the shelf to load. Reading
+     every retired contact first meant the page sat empty for as long as that
+     query took, which read as the screen blinking blank on the way over. One
+     row is all this needs, and it is fetched alongside the list rather than
+     after it. */
   useEffect(() => {
-    if (!wanted || !list.length || target) return
-    const c = list.find(x => x.id === wanted)
-    // Drop the parameter either way, so a reload does not reopen the review
-    // and the back button does not walk into it again.
-    setParams({}, { replace: true })
-    if (c) review(c)
+    if (!isSuper || !wanted) return undefined
+    let alive = true
+    ;(async () => {
+      const { data } = await supabase.from('contacts')
+        .select('id, code, company_name, first_name, last_name, mobile, email, contact_types, account_number')
+        .eq('id', wanted).maybeSingle()
+      if (!alive) return
+      // Drop the parameter either way, so a reload does not reopen the review
+      // and the back button does not walk into it again.
+      setParams({}, { replace: true })
+      if (data) review(data)
+    })()
+    return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, list])
+  }, [isSuper, wanted])
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -116,7 +128,7 @@ export default function RetiredContactsPage() {
   async function review(c) {
     setTarget(c); setPhase('scanning'); setRows([]); setReport([])
     setTyped(''); setError(''); setDeleteOrders(false)
-    const { rows: found, error: e } = await scanContactReferences(c.id, { actorId: currentUser.user_id })
+    const { rows: found, error: e } = await scanContactReferences(c.id, { actorId: currentUser?.user_id })
     setRows(found)
     setError(e || '')
     setPhase('review')
@@ -125,7 +137,7 @@ export default function RetiredContactsPage() {
   async function confirmDelete() {
     setPhase('working'); setError('')
     const { report: rep, error: e } = await deleteContact(target.id, {
-      actorId: currentUser.user_id,
+      actorId: currentUser?.user_id,
       deleteOrders,
     })
     if (e) { setError(e); setPhase('review'); return }
@@ -178,7 +190,18 @@ export default function RetiredContactsPage() {
           </div>
 
           {loading ? (
-            <p className="text-xs text-slate-500 py-6 text-center">Reading the shelf…</p>
+            /* Rows in outline rather than a bare line of text: arriving here
+               from the Contacts page replaces a full screen in one frame, and
+               an almost-empty page reads as a blink. */
+            <div className="rounded-lg border border-surface-border overflow-hidden divide-y divide-surface-border/50">
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2.5 animate-pulse">
+                  <div className="h-3 w-20 rounded bg-surface-hover" />
+                  <div className="h-3 w-40 rounded bg-surface-hover" />
+                  <div className="h-3 w-16 rounded bg-surface-hover ml-auto" />
+                </div>
+              ))}
+            </div>
           ) : shown.length === 0 ? (
             <p className="text-xs text-slate-500 py-6 text-center">
               {list.length === 0
