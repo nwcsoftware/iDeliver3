@@ -923,11 +923,11 @@ export default function CreditCustomersPage() {
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10 bg-surface-card">
                     <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-surface-border">
-                      <SortTh label="Date"        sortKey="date"    sort={sort} onSort={cycle} className="px-4" />
-                      <SortTh label="Reference"   sortKey="ref"     sort={sort} onSort={cycle} className="px-4" />
-                      <SortTh label="Description" sortKey="desc"    sort={sort} onSort={cycle} className="px-4" />
-                      <SortTh label="Charge"      sortKey="charge"  sort={sort} onSort={cycle} className="px-4" align="right" />
-                      <SortTh label="Payment"     sortKey="payment" sort={sort} onSort={cycle} className="px-4" align="right" />
+                      <SortTh label="Date"        sortKey="date"    sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
+                      <SortTh label="Reference"   sortKey="ref"     sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
+                      <SortTh label="Description" sortKey="desc"    sort={sort} onSort={cycle} className="px-4 bg-surface-card" />
+                      <SortTh label="Charge"      sortKey="charge"  sort={sort} onSort={cycle} className="px-4 bg-surface-card" align="right" />
+                      <SortTh label="Payment"     sortKey="payment" sort={sort} onSort={cycle} className="px-4 bg-surface-card" align="right" />
                       {isAdmin && <th className="px-4 py-2 font-medium text-right w-12 bg-surface-card"></th>}
                     </tr>
                   </thead>
@@ -964,13 +964,21 @@ export default function CreditCustomersPage() {
                       </tr>
                     ))}
                   </tbody>
+                  {/* The totals stay in view like the headings do. A long
+                      statement otherwise pushes the one line the reader came
+                      for — what it all adds up to — off the bottom, and the
+                      figures have to be chased by scrolling to the end.
+
+                      The backgrounds sit on the CELLS, not on the row: a
+                      sticky row's own background is painted behind the cells,
+                      so entries scroll through the gaps between them. */}
                   {statement.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t border-surface-border bg-surface-hover/30 font-semibold text-slate-200">
-                        <td className="px-4 py-2.5" colSpan={3}>Totals shown{(dateFrom || dateTo) ? ' (filtered)' : ''}</td>
-                        <td className="px-4 py-2.5 text-right">{fmtCurMap(statementTotals.charged)}</td>
-                        <td className="px-4 py-2.5 text-right text-green-400">{fmtCurMap(statementTotals.paid)}</td>
-                        {isAdmin && <td className="px-4 py-2.5"></td>}
+                    <tfoot className="sticky bottom-0 z-10">
+                      <tr className="font-semibold text-slate-200">
+                        <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover" colSpan={3}>Totals shown{(dateFrom || dateTo) ? ' (filtered)' : ''}</td>
+                        <td className="px-4 py-2.5 text-right border-t border-surface-border bg-surface-hover">{fmtCurMap(statementTotals.charged)}</td>
+                        <td className="px-4 py-2.5 text-right text-green-400 border-t border-surface-border bg-surface-hover">{fmtCurMap(statementTotals.paid)}</td>
+                        {isAdmin && <td className="px-4 py-2.5 border-t border-surface-border bg-surface-hover"></td>}
                       </tr>
                     </tfoot>
                   )}
