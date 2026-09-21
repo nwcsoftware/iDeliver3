@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Banknote, Search, FilterX, AlertCircle, Calendar, X, Shield, AlertTriangle } from 'lucide-react'
+import { Banknote, Search, FilterX, AlertCircle, Calendar, X, Shield, AlertTriangle, Landmark } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { orderTotalsByCurrency, orderCollectedByCurrency } from '../lib/orderAmounts'
 import { useApp } from '../context/AppContext'
@@ -13,6 +13,16 @@ import { OrderNumber, useOrderQuickView } from '../components/orders/OrderQuickV
    who collected it and the collection group (Driver / Call center). Free-text
    search matches any column, including the amount. Super-admin only. Clicking an
    order number opens a popup with the full order data. */
+
+/* Cash or credit is a property of the ACCOUNT the money was billed to, not of
+   the customer — the same person can hold one of each and put some work on
+   either. Every payment carries the nature it inherited from its order
+   (fix144), so this reads the stamp rather than inferring anything. */
+const NATURES = [
+  { key: '',       label: 'All accounts' },
+  { key: 'Cash',   label: 'Cash' },
+  { key: 'Credit', label: 'Credit' },
+]
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
@@ -117,6 +127,7 @@ export default function DailyCollectionPage() {
   const [search,   setSearch]   = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [nature,   setNature]   = useState('')     // '' = all, else Cash | Credit
 
 
   const fetchCollections = useCallback(async () => {
@@ -124,7 +135,7 @@ export default function DailyCollectionPage() {
     setLoading(true); setError('')
     const { data: pcs, error: err } = await fetchAllRows(() =>
       supabase.from('payment_collections')
-        .select('id, order_id, amount, currency, collected_at, collected_by_name, collection_group, collection_type')
+        .select('id, order_id, amount, currency, collected_at, collected_by_name, collection_group, collection_type, account_nature, main_account')
         .order('collected_at', { ascending: false }))
     if (err) { setError(err.message); setRows([]); setLoading(false); return }
 
@@ -153,6 +164,11 @@ export default function DailyCollectionPage() {
         source:       o?.order_source ?? '—',
         collectedBy:  p.collected_by_name || '—',
         group:        p.collection_group || '—',
+        /* The stamp the payment carries, falling back to its order's — every
+           row has one today, and the fallback is there for anything written
+           before the trigger that fills it. */
+        nature:       p.account_nature || o?.account_nature || '',
+        account:      p.main_account || o?.main_account || '',
         mismatch,
         mismatchWhy,
         orderTotal:     o ? fmtCurMap(orderTotalsByCurrency(o))   : '—',
@@ -169,14 +185,15 @@ export default function DailyCollectionPage() {
     return rows.filter(r => {
       if (dateFrom && (!r.deliveryDate || r.deliveryDate < dateFrom)) return false
       if (dateTo   && (!r.deliveryDate || r.deliveryDate > dateTo))   return false
+      if (nature && r.nature !== nature) return false
       if (!q) return true
       const hay = [
         r.deliveryDate, r.orderNumber, r.amount, fmtMoney(r.amount, r.currency),
-        r.driver, r.source, r.collectedBy, r.group,
+        r.driver, r.source, r.collectedBy, r.group, r.account, r.nature,
       ].map(v => String(v ?? '').toLowerCase()).join(' ')
       return hay.includes(q)
     })
-  }, [rows, search, dateFrom, dateTo])
+  }, [rows, search, dateFrom, dateTo, nature])
 
   // Per-currency total of the filtered collections.
   const totals = useMemo(() => {
@@ -186,8 +203,8 @@ export default function DailyCollectionPage() {
   }, [filtered])
   const totalCurs = CURRENCIES.filter(c => totals[c])
 
-  const hasFilters = search || dateFrom || dateTo
-  function clearFilters() { setSearch(''); setDateFrom(''); setDateTo('') }
+  const hasFilters = search || dateFrom || dateTo || nature
+  function clearFilters() { setSearch(''); setDateFrom(''); setDateTo(''); setNature('') }
 
   /* ── access gate ─────────────────────────────────────────── */
   if (!isSuperAdmin) {
@@ -212,6 +229,7 @@ export default function DailyCollectionPage() {
       case 'source':  return (r.source || '').toLowerCase()
       case 'by':      return (r.collectedBy || '').toLowerCase()
       case 'group':   return (r.group || '').toLowerCase()
+      case 'account': return `${r.nature || 'zz'} ${r.account || ''}`.toLowerCase()
       // The flag is called `mismatch` on the row: a collection that does not
       // agree with the order's own total.
       case 'warning': return r.mismatch ? 1 : 0
@@ -258,6 +276,26 @@ export default function DailyCollectionPage() {
           <label className="label">Date to</label>
           <input type="date" className="input py-1.5 text-xs" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
+        <div>
+          <label className="label flex items-center gap-1"><Landmark className="w-3 h-3" /> Account</label>
+          <div className="flex items-center gap-1">
+            {NATURES.map(nt => {
+              const on = nature === nt.key
+              const tone = nt.key === 'Credit'
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                : nt.key === 'Cash'
+                  ? 'bg-green-500/15 text-green-300 border-green-500/40'
+                  : 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+              return (
+                <button key={nt.key || 'all'} type="button" onClick={() => setNature(nt.key)}
+                  className={`h-[34px] px-3 rounded-lg text-xs font-medium border transition-all ${
+                    on ? tone : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'}`}>
+                  {nt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
         {hasFilters && (
           <button type="button" onClick={clearFilters}
             className="h-[34px] px-3 rounded-lg text-xs font-medium border border-surface-border text-slate-400 hover:text-slate-200 inline-flex items-center gap-1.5">
@@ -293,14 +331,15 @@ export default function DailyCollectionPage() {
               <SortTh label="Order Source"     sortKey="source"  sort={sort} onSort={cycle} />
               <SortTh label="Collected by"     sortKey="by"      sort={sort} onSort={cycle} />
               <SortTh label="Collection group" sortKey="group"   sort={sort} onSort={cycle} />
+              <SortTh label="Account"          sortKey="account" sort={sort} onSort={cycle} />
               <SortTh label="Warning"          sortKey="warning" sort={sort} onSort={cycle} align="center" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-600">No collections match these filters.</td></tr>
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-600">No collections match these filters.</td></tr>
             ) : visible.map(r => (
               <tr key={r.id} className="border-t border-surface-border/40 hover:bg-surface-hover/30">
                 <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
@@ -323,6 +362,16 @@ export default function DailyCollectionPage() {
                       {r.group}
                     </span>
                   )}
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {r.nature ? (
+                    <span className={`text-[11px] font-medium border rounded px-2 py-0.5 ${
+                      r.nature === 'Credit' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                                            : 'bg-green-500/10 text-green-300 border-green-500/30'}`}>
+                      {r.nature}
+                    </span>
+                  ) : <span className="text-slate-600">—</span>}
+                  {r.account && <span className="font-mono text-[10px] text-slate-500 ml-1.5">{r.account}</span>}
                 </td>
                 <td className="px-3 py-2 text-center">
                   {r.mismatch ? (
