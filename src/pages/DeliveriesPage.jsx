@@ -574,6 +574,12 @@ const TOTALS_BREAKDOWN_ROWS = [
   // Collected split by the payment's collection_group.
   { key: 'collectedByDriver', label: 'Collected from customer by driver',        tone: 'emerald' },
   { key: 'collectedByOffice', label: 'Collected from customer at the call center', tone: 'sky' },
+  /* Driver + call centre, before anything is netted off. This is the figure the
+     Cashier Box calls "Collected", so on the same dates and the same basis the
+     two pages show the same number here and a user can tie them out without
+     arithmetic. Everything below this line is a deduction the Box reports
+     separately, as an OUT movement rather than as less money in. */
+  { key: 'collectedGross',    label: 'Collected in total (cash into the box)', tone: 'emerald' },
   // Petty cash reimbursement also nets into the collections subtotal.
   { key: 'pettyReimbCollections', label: 'Petty Cash Reimbursement', tone: 'rose', neg: true, labelCls: 'text-rose-300/90' },
   { key: 'totalCollections',  label: 'Total collections',        tone: 'emerald', strong: true },
@@ -980,6 +986,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [catMenuOpen,          setCatMenuOpen]          = useState(false)
   const [sourceFilter,         setSourceFilter]         = useState('')   // LOCAL|EXTERNAL
   const [orderTypeFilter,      setOrderTypeFilter]      = useState([])   // order_type values; empty = all
+  /* WHICH DAY AN ORDER BELONGS TO. Two honest answers, and the page has to say
+     which one it is giving.
+
+       scheduled  the day the delivery was FOR. How the day is run.
+       closed     the day the order was settled and locked. When the driver
+                  handed his cash over, which is the day the Cashier Box files
+                  that money under.
+
+     Closed Orders is a record of finished work, so it opens on the close date
+     and reconciles with the Cashier Box without anyone doing anything. The
+     daily list opens on the scheduled date, because that is the day being
+     worked. Either page can be switched. */
+  const [dateBasis,           setDateBasis]           = useState(closed ? 'closed' : 'scheduled')
   // Scheduled-date range filter. Defaults to today so the list opens on
   // today's scheduled orders; the "Today" toggle sets/clears both boxes.
   const [dateFrom,             setDateFrom]             = useState(localTodayStr())
@@ -1190,10 +1209,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      lets React tell "still applying" from "done". */
   const criteria = useMemo(() => ({
     search, filter, confirmFilter, payFilter, flagFilter,
-    driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter,
+    driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter, dateBasis,
     dateFrom, dateTo, sort,
   }), [search, filter, confirmFilter, payFilter, flagFilter,
-       driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter,
+       driverFilter, customerFilter, categoryFilter, sourceFilter, orderTypeFilter, dateBasis,
        dateFrom, dateTo, sort])
   const applied = useDeferredValue(criteria)
   // True while the list on screen is still the previous criteria — drives the
@@ -1207,7 +1226,12 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     // work, so there the date range applies to them like anything else.
     if (isStoryOrder(o) && !closed) return true
     if (!c.dateFrom && !c.dateTo) return true
-    const sd = o.scheduled_date ? o.scheduled_date.slice(0, 10) : ''
+    /* The day this order counts under, per the chosen basis. On 'closed', an
+       order that has not been closed has no day at all and drops out — which is
+       the honest answer: it has not happened yet as far as the money goes. */
+    const sd = c.dateBasis === 'closed'
+      ? (o.closed_at ? String(o.closed_at).slice(0, 10) : '')
+      : (o.scheduled_date ? o.scheduled_date.slice(0, 10) : '')
     if (!sd) return false                              // no date → excluded once a date filter is set
     if (c.dateFrom && c.dateTo) return sd >= c.dateFrom && sd <= c.dateTo  // between two dates (inclusive)
     if (c.dateFrom)             return sd === c.dateFrom   // single scheduled date
@@ -1578,6 +1602,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // Petty cash reimbursement also shown in the collections section (same value).
       out.pettyReimbCollections = round2(acc[c].usedPettyCash || 0)
       // Total collections = collected by driver + at the call center − petty cash reimbursement.
+      // What physically arrived, before petty cash is netted off it.
+      out.collectedGross   = round2((acc[c].collectedByDriver || 0) + (acc[c].collectedByOffice || 0))
       out.totalCollections = round2((acc[c].collectedByDriver || 0) + (acc[c].collectedByOffice || 0) - (acc[c].usedPettyCash || 0))
       // Pending balance = Orders net amount − Total collections.
       out.balance = round2(out.ordersNet - out.totalCollections)
@@ -3504,8 +3530,29 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               <Calendar className="w-3.5 h-3.5" /> Today
             </button>
           </div>
+          {/* Which day the dates below mean. Named rather than assumed: the
+              Cashier Box files money under the CLOSE date, so a user comparing
+              the two needs to be able to ask both the same question. */}
           <div>
-            <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Scheduled date</label>
+            <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Dates mean</label>
+            <div className="flex items-center gap-1">
+              {[{ k: 'scheduled', l: 'Scheduled', t: 'The day the delivery was for — how the day is run.' },
+                { k: 'closed',    l: 'Closed',    t: 'The day the order was settled and locked — the day the Cashier Box files its money under.' },
+              ].map(b => (
+                <button key={b.k} type="button" onClick={() => setDateBasis(b.k)} title={b.t}
+                  className={`h-[30px] px-2.5 rounded-lg text-xs font-medium border transition-all ${
+                    dateBasis === b.k
+                      ? 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+                      : 'border-surface-border text-slate-500 hover:text-slate-100 hover:bg-surface-hover'}`}>
+                  {b.l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="label flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> {dateBasis === 'closed' ? 'Closed date' : 'Scheduled date'}
+            </label>
             <input type="date" className="input py-1.5 text-xs w-40" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           </div>
           <div>
