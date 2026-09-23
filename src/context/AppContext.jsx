@@ -555,6 +555,20 @@ export function AppProvider({ children }) {
   // payload only carries delivery_orders columns (not the nested relations we
   // render), so for insert/update we fetch just that one row; delete removes by id.
   // Insert/update fetches are debounced per id to coalesce edit bursts.
+  /* Refresh one order, but not immediately and not twice. Shared by the order
+     subscription and the ads one, so an advert saved alongside its order costs
+     a single fetch rather than one per table. */
+  const scheduleOrderRefresh = useCallback((id) => {
+    if (id == null) return
+    const timers = orderRefreshTimers.current
+    const existing = timers.get(id)
+    if (existing) clearTimeout(existing)
+    timers.set(id, setTimeout(() => {
+      timers.delete(id)
+      refreshOrderIntoState(id)
+    }, ORDER_REFRESH_DEBOUNCE_MS))
+  }, [refreshOrderIntoState])
+
   const applyOrderChange = useCallback((payload) => {
     const timers = orderRefreshTimers.current
     if (payload.eventType === 'DELETE') {
@@ -565,15 +579,8 @@ export function AppProvider({ children }) {
       setAllOrders(prev => prev.filter(o => o.id !== id))
       return
     }
-    const id = payload.new?.id
-    if (id == null) return
-    const existing = timers.get(id)
-    if (existing) clearTimeout(existing)             // reset the window on each new event → coalesce
-    timers.set(id, setTimeout(() => {
-      timers.delete(id)
-      refreshOrderIntoState(id)
-    }, ORDER_REFRESH_DEBOUNCE_MS))
-  }, [refreshOrderIntoState])
+    scheduleOrderRefresh(payload.new?.id)           // coalesced; see above
+  }, [scheduleOrderRefresh])
 
   const fetchZones = useCallback(async () => {
     let q = supabase
@@ -606,13 +613,35 @@ export function AppProvider({ children }) {
         applyOrderChange)
       .subscribe()
 
+    /* ADS, watched in their own right.
+
+       An advert lives in its own table, so activating one writes to `ads` and
+       touches no delivery_orders row — which means the subscription above
+       hears nothing. Every other screen carried on showing the "ready to
+       start" reminder for an advert a colleague had already started, and the
+       only way out of it was to ignore a popup about work already done.
+
+       Activation belongs to the ADVERT, not to whoever noticed it first, so
+       the change is followed here and the order it belongs to is refreshed —
+       which re-reads its embedded ads and takes the reminder down everywhere. */
+    const adsChannel = supabase
+      .channel('ads-changes')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'ads' },
+        (payload) => {
+          const orderId = payload?.new?.order_id || payload?.old?.order_id
+          if (orderId) scheduleOrderRefresh(orderId)
+        })
+      .subscribe()
+
     return () => {
       supabase.removeChannel(driversChannel)
       supabase.removeChannel(ordersChannel)
+      supabase.removeChannel(adsChannel)
       orderRefreshTimers.current.forEach(clearTimeout)   // drop any pending debounced refreshes
       orderRefreshTimers.current.clear()
     }
-  }, [fetchDrivers, fetchOrders, fetchZones, applyOrderChange])
+  }, [fetchDrivers, fetchOrders, fetchZones, applyOrderChange, scheduleOrderRefresh])
 
   /* The live orders — a cancelled order never happened, so this is what every
      page, report and settlement works from. Pages that must still show one

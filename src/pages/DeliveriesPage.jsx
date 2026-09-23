@@ -1392,8 +1392,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return rows
   }, [filtered, appSettings?.currencyLimits])
 
-  // Ads whose start time has arrived but aren't activated yet — the app reminds the
-  // user to start them. Excludes already-confirmed, expired, and session-ignored ads.
+  /* Ads whose start time has arrived but aren't activated yet.
+
+     ACTIVATION BELONGS TO THE ADVERT. `confirmed_ads` is read straight off the
+     ad, so the moment any user activates one it stops being due for everyone —
+     the ads realtime subscription (fix155) refreshes the order that owns it and
+     this recomputes. Nobody is left dismissing a reminder about work a
+     colleague has already done.
+
+     `adsIgnored` is the other half and is deliberately NOT shared: "not now" is
+     one person putting a popup aside for this session, not a decision about the
+     advert. */
   const adsDue = useMemo(() => {
     if (closed || partyContactId) return []
     const out = []
@@ -1411,16 +1420,26 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     return out
   }, [orders, now, adsIgnored, closed, partyContactId])
 
-  // Activate an ad now: mark it confirmed (locks its start) and refresh. The ad is
-  // dropped from the reminder IMMEDIATELY and UNCONDITIONALLY (before/ regardless of
-  // the network round-trip) so the popup closes at once and never re-shows this
-  // session — the DB write + refetch then persist the confirmation.
+  /* Activate an ad now: mark it confirmed and refresh.
+
+     It leaves THIS screen at once, before the round trip, so the popup never
+     hangs on the network. It leaves every OTHER screen a moment later, when
+     the ads subscription carries the change — which is the point: the advert
+     is started, not "started by me".
+
+     A failed write puts it back rather than leaving it hidden. Losing sight of
+     an advert that never actually started is the one outcome worth guarding
+     against, since the reminder is the only thing that would have caught it. */
   async function activateAd(adId, orderId) {
     setAdsIgnored(prev => new Set(prev).add(adId))
     setAdActivating(adId)
     const { error } = await supabase.from('ads').update({ confirmed_ads: true }).eq('id', adId)
     setAdActivating(null)
-    if (error) { setError(`Could not activate the ad: ${error.message}`) }
+    if (error) {
+      setError(`Could not activate the ad: ${error.message}`)
+      setAdsIgnored(prev => { const next = new Set(prev); next.delete(adId); return next })
+      return
+    }
     await refreshOrder(orderId)
   }
   const ignoreAd = adId => setAdsIgnored(prev => new Set(prev).add(adId))
