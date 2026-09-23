@@ -89,6 +89,7 @@ export default function ProductInventoryPage() {
   const [saving,    setSaving]    = useState(false)
   const [formErr,   setFormErr]   = useState('')
   const [busyId,    setBusyId]    = useState(null)
+  const [moveTypeFilter, setMoveTypeFilter] = useState('')   // '' = every kind
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -117,6 +118,12 @@ export default function ProductInventoryPage() {
 
   const byId = useMemo(() => summarise(movements), [movements])
 
+  /* Where an adjustment starts from and where it would land — read live off
+     the ledger for the product being moved, so the guidance below the field is
+     this shelf's arithmetic rather than a worked example about somebody else's. */
+  const adjustFrom = moveFor ? (byId.get(moveFor.id)?.onHand || 0) : 0
+  const adjustTo   = Math.round((adjustFrom + num(draft.quantity)) * 100) / 100
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return products
@@ -135,20 +142,28 @@ export default function ProductInventoryPage() {
     return { lowCount, outCount, units, value: stockValue(products, byId) }
   }, [products, byId])
 
-  const productMoves = useMemo(
+  /* Every movement for the product whose ledger is open, and the filtered view
+     of it. Both are needed: the chips count from the whole list, the table
+     shows the chosen kind. */
+  const allProductMoves = useMemo(
     () => (history ? movements.filter(m => m.product_id === history.id) : []),
     [movements, history])
+  const productMoves = useMemo(
+    () => (moveTypeFilter ? allProductMoves.filter(m => m.movement_type === moveTypeFilter) : allProductMoves),
+    [allProductMoves, moveTypeFilter])
 
   function openMove(product, type = 'in') {
     setDraft({ ...emptyMove(product), movement_type: type })
     setFormErr('')
+    setMoveTypeFilter('')      // a fresh ledger shows everything
     setMoveFor(product)
   }
 
   async function postMovement() {
     if (!num(draft.quantity)) { setFormErr('Enter a quantity.'); return }
     if (draft.movement_type !== 'adjust' && num(draft.quantity) < 0) {
-      setFormErr('Only an adjustment may be negative — use Stock out to take goods away.'); return
+      setFormErr('Only an adjustment may be negative — use Stock out to take goods away, '
+        + 'or switch to Adjustment if you are correcting a count.'); return
     }
     setSaving(true); setFormErr('')
     const err = await saveProductMovement(draft, {
@@ -336,7 +351,30 @@ export default function ProductInventoryPage() {
               <div className="p-4 pb-0">
                 <ProductMonthlySales product={history} />
               </div>
-              <h3 className="text-xs font-semibold text-slate-300 px-4 pt-4 pb-1">Movements</h3>
+              <div className="flex items-center gap-2 flex-wrap px-4 pt-4 pb-1">
+                <h3 className="text-xs font-semibold text-slate-300">Movements</h3>
+                {/* A product that sells daily buries its stock-ins and
+                    corrections under hundreds of sold rows, in date order. The
+                    filter is how you find the one you came for without
+                    scrolling past every sale of the year. */}
+                <div className="flex items-center gap-1 ml-auto flex-wrap">
+                  {[{ v: '', label: 'All' }, ...MOVEMENT_TYPES.map(t => ({ v: t.value, label: t.label }))]
+                    .map(({ v, label }) => {
+                      const count = v ? allProductMoves.filter(m => m.movement_type === v).length
+                                      : allProductMoves.length
+                      if (v && count === 0) return null
+                      const on = moveTypeFilter === v
+                      return (
+                        <button key={v || 'all'} type="button" onClick={() => setMoveTypeFilter(v)}
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-all ${
+                            on ? 'bg-brand-500/15 text-brand-300 border-brand-500/40'
+                               : 'border-surface-border text-slate-500 hover:text-slate-200'}`}>
+                          {label} <span className="opacity-60">{count}</span>
+                        </button>
+                      )
+                    })}
+                </div>
+              </div>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-border sticky top-0 bg-surface-card">
@@ -423,6 +461,43 @@ export default function ProductInventoryPage() {
                 <p className="text-[11px] text-slate-500 mt-1.5">
                   {MOVEMENT_TYPES.find(t => t.value === draft.movement_type)?.hint}
                 </p>
+
+                {/* An adjustment is the only entry where the SIGN is the whole
+                    meaning, and the only one that can read as the opposite of
+                    what was meant. Rather than explain the convention, show
+                    the arithmetic: the count it starts from, the count it
+                    lands on, and the sentence in between. */}
+                {draft.movement_type === 'adjust' && (
+                  <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1.5">
+                    <p className="text-[11px] text-amber-200">
+                      An adjustment is the <span className="font-semibold">difference</span>, with a sign — not the
+                      new total.
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Counted <span className="text-emerald-300 font-semibold">more</span> than the system says? Enter
+                      it positive — <span className="font-mono text-slate-300">3</span>.
+                      Counted <span className="text-rose-300 font-semibold">fewer</span>? Enter it negative —
+                      <span className="font-mono text-slate-300"> -2</span>.
+                    </p>
+                    <p className="text-[11px] text-slate-300 tabular-nums">
+                      On hand {fmtQty(adjustFrom)}
+                      {num(draft.quantity) ? (
+                        <>
+                          {' → '}
+                          <span className={adjustTo < 0 ? 'text-rose-300 font-semibold' : 'text-brand-300 font-semibold'}>
+                            {fmtQty(adjustTo)}
+                          </span>
+                          <span className="text-slate-500"> ({num(draft.quantity) > 0 ? '+' : ''}{fmtQty(num(draft.quantity))})</span>
+                        </>
+                      ) : <span className="text-slate-500"> — enter a difference to see where it lands</span>}
+                    </p>
+                    {adjustTo < 0 && num(draft.quantity) ? (
+                      <p className="text-[11px] text-rose-300">
+                        That would leave the shelf below zero. Check the sign.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
