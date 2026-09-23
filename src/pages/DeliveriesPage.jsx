@@ -241,12 +241,21 @@ function orderWarnings(o, currencyLimits) {
 function closeGapsFor(o) {
   const out = []
   const story = isStoryOrder(o)
-  if (String(o?.status || '').toLowerCase() !== 'completed')
+  /* THROUGH normalizeStatus, not against the raw column. The database stores
+     'delivered' where the form says Completed — two vocabularies for one thing,
+     and every one of the 9,654 closed orders on record is stored as
+     'delivered'. Comparing the stored word to 'completed' therefore flagged
+     every properly finished order as unfinished, which is the opposite of what
+     this list is for. */
+  if (normalizeStatus(o?.status) !== 'completed')
     out.push(`The order status is “${o?.status || 'not set'}”, not Completed.`)
   if (!story && o?.delivery_status !== 'Delivered')
     out.push(`Nothing has been marked delivered — the delivery status is “${o?.delivery_status || 'not set'}”.`)
   if (!story && !o?.driver_id)
     out.push('No driver is assigned to this order.')
+  /* Unpaid is only a problem on a CASH account. A credit order closing with a
+     balance is the whole point of credit: it becomes a receivable, settled
+     later on the Credit Customers page. */
   if (!isCreditOrder(o) && !isFullyPaid(o))
     out.push('There is still a balance to collect.')
   return out
