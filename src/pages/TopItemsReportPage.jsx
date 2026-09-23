@@ -115,6 +115,7 @@ export default function TopItemsReportPage() {
   const [search,     setSearch]     = useState('')
 
   const [lines,   setLines]   = useState([])
+  const [stockIn, setStockIn] = useState([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
 
@@ -138,6 +139,20 @@ export default function TopItemsReportPage() {
       ? (data ?? []).filter(r => !r.order?.company_id || r.order.company_id === COMPANY_ID)
       : (data ?? [])
     setLines(rows)
+
+    /* What came IN, so the table can put bought beside sold. Stock-in
+       movements only — 'in' and nothing else. A return to the shelf, an
+       adjustment or an opening balance are not purchases, and folding them in
+       here would quietly inflate the figure. */
+    const { data: mv } = await fetchAllRows(() => {
+      let q = supabase.from('product_movements')
+        .select('product_id, quantity, moved_at, movement_type')
+        .eq('movement_type', 'in')
+        .order('id')
+      if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
+      return q
+    })
+    setStockIn(Array.isArray(mv) ? mv : [])
     setLoading(false)
   }, [COMPANY_ID])
 
@@ -151,12 +166,25 @@ export default function TopItemsReportPage() {
     () => buildTopItems(lines, { ...period, closedOnly }),
     [lines, period, closedOnly])
 
+  /* Quantity received per product, over the SAME window the sales use, dated
+     by when the stock moved. */
+  const purchasedBy = useMemo(() => {
+    const t = new Map()
+    for (const m of stockIn) {
+      const day = String(m.moved_at || '').slice(0, 10)
+      if (!day || day < period.from || day > period.to) continue
+      t.set(m.product_id, (t.get(m.product_id) || 0) + (Number(m.quantity) || 0))
+    }
+    return t
+  }, [stockIn, period.from, period.to])
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return model.items
-    return model.items.filter(i =>
+    const withIn = model.items.map(i => ({ ...i, purchased: purchasedBy.get(i.id) || 0 }))
+    if (!q) return withIn
+    return withIn.filter(i =>
       i.name.toLowerCase().includes(q) || String(i.code).toLowerCase().includes(q))
-  }, [model.items, search])
+  }, [model.items, search, purchasedBy])
 
   /* THE BAR IS THE SOLD QUANTITY, and the axis counts units — that is what
      the chart is for and what the heading promises.
@@ -236,7 +264,11 @@ export default function TopItemsReportPage() {
             <button
               onClick={() => exportCSV(
                 model.items.map((i, n) => ({
-                  rank: n + 1, code: i.code, item: i.name, quantity: i.qty, orders: i.orders,
+                  rank: n + 1, code: i.code, item: i.name,
+                  // Same two columns the table shows, in the same order.
+                  purchased: purchasedBy.get(i.id) || 0,
+                  sold: i.qty,
+                  orders: i.orders,
                   share: `${(i.share * 100).toFixed(1)}%`,
                   ...Object.fromEntries(Object.entries(i.revenue).map(([c, v]) => [`revenue ${c}`, v])),
                   ...Object.fromEntries(Object.entries(i.benefit).map(([c, v]) => [`benefit ${c}`, v])),
@@ -403,7 +435,8 @@ export default function TopItemsReportPage() {
                 <th className="text-left px-4 py-2 font-medium w-12">#</th>
                 <th className="text-left px-4 py-2 font-medium">Code</th>
                 <th className="text-left px-4 py-2 font-medium">Item</th>
-                <th className="text-right px-4 py-2 font-medium">Units</th>
+                <th className="text-right px-4 py-2 font-medium" title="Quantity received into stock in this window — stock-in movements only. Returns, adjustments and opening balances are not counted.">Purchased</th>
+                <th className="text-right px-4 py-2 font-medium" title="Quantity sold in this window, from the order lines.">Sold</th>
                 <th className="text-right px-4 py-2 font-medium">Share</th>
                 <th className="text-right px-4 py-2 font-medium">Orders</th>
                 <th className="text-right px-4 py-2 font-medium">Revenue</th>
@@ -413,7 +446,7 @@ export default function TopItemsReportPage() {
             </thead>
             <tbody>
               {shown.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500 text-xs">
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500 text-xs">
                   Nothing to show for this window.
                 </td></tr>
               ) : shown.map((i, n) => (
@@ -421,6 +454,11 @@ export default function TopItemsReportPage() {
                   <td className="px-4 py-2 text-slate-500 tabular-nums">{n + 1}</td>
                   <td className="px-4 py-2 font-mono text-xs text-slate-400">{i.code}</td>
                   <td className="px-4 py-2 text-slate-100">{i.name}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {i.purchased > 0
+                      ? <span className="text-sky-300">{fmtQty(i.purchased)}</span>
+                      : <span className="text-slate-600" title="Nothing was booked into stock for this item in this window.">—</span>}
+                  </td>
                   <td className="px-4 py-2 text-right text-brand-300 tabular-nums font-medium">{fmtQty(i.qty)}</td>
                   <td className="px-4 py-2 text-right text-slate-400 tabular-nums">{(i.share * 100).toFixed(1)}%</td>
                   <td className="px-4 py-2 text-right text-slate-400 tabular-nums">{i.orders}</td>
