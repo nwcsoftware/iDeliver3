@@ -333,7 +333,11 @@ export default function TopItemsReportPage() {
             <span className="text-xs text-slate-400">Closed orders only</span>
           </label>
 
-          <div className="ml-auto w-full sm:w-56">
+          {/* `relative`, because SearchField renders as a fragment and pins its
+              magnifier and its clear button against the parent. Without it they
+              were positioned against whatever ancestor happened to be relative
+              — so the clear button existed and simply was not where the box is. */}
+          <div className="relative ml-auto w-full sm:w-56">
             <SearchField value={search} onChange={e => setSearch(e.target.value)} placeholder="Find an item…" />
           </div>
         </div>
