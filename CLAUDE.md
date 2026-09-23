@@ -58,8 +58,15 @@ What that means when building:
   and its six pages; deleting an order; reopening (so editing) a closed one; and
   most of Administration — App Settings, Front Page, User Accounts, Software
   Subscriptions, Change Requests. Subscriptions stays readable but not writable.
-  Closing an order is *not* excluded — that is the call-centre job this rank is
-  an upgrade of.
+  Also every admin power on the shared pages: deactivating a contact, driver
+  admin, editing the company, reactivating a cancelled order, erasing
+  settlements, backdating, setting status by hand, bypassing the
+  payment/invoice locks — the pages stay open, the powers do not.
+- **Not** excluded: closing an order, and seeing the licence and expiry notices.
+  An ordinary call-centre user does both, and this rank is an upgrade of that
+  job, not a demotion from it. Check that before restricting anything else —
+  making the senior rank *more* limited than call centre is a sign the rule has
+  been read backwards.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against
