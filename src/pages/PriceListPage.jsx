@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { fetchProductMovements, summarise } from '../lib/productStock'
 import { productIsStocked } from '../lib/productCode'
 import SearchField from '../components/ui/SearchField'
 
@@ -31,9 +32,17 @@ export default function PriceListPage() {
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
+    /* On hand comes from the stock LEDGER. It used to be read from the
+       `inventory` table, which is empty and which nothing writes to — so every
+       stocked product showed 0 here however much was on the shelf, and an
+       adjustment posted on the Inventory page moved the ledger and left this
+       column untouched. Same summarise() the Inventory page uses, so the two
+       screens cannot drift apart again. */
+    const { rows: moves } = await fetchProductMovements(COMPANY_ID)
+    const onHand = summarise(moves)
     let q = supabase
       .from('products')
-      .select('id, code, name, description, unit_of_measure, unit_cost, unit_price, currency, is_active, is_retail, is_returnable, is_service, is_advertisement, inventory(quantity_available)')
+      .select('id, code, name, description, unit_of_measure, unit_cost, unit_price, currency, is_active, is_retail, is_returnable, is_service, is_advertisement')
       .eq('is_active', true)
       .order('code')
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
@@ -43,9 +52,7 @@ export default function PriceListPage() {
       // Only Retail and Returnable carry stock. A service isn't stored and an
       // advert isn't goods, so they have no stock figure at all — null reads as
       // "not applicable" rather than a misleading 0.
-      qty_available: productIsStocked(p)
-        ? (p.inventory ?? []).reduce((s, i) => s + (Number(i.quantity_available) || 0), 0)
-        : null,
+      qty_available: productIsStocked(p) ? (onHand.get(p.id)?.onHand ?? 0) : null,
     }))
     setRows(mapped)
     setLoading(false)

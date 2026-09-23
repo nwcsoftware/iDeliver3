@@ -11,6 +11,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Trash2,
+  Lock,
   Calendar,
   Coins,
   Filter,
@@ -22,7 +23,9 @@ import { useApp } from '../context/AppContext'
 import {
   MOVEMENT_TYPES, movementLabel, fetchProductMovements, summarise, stockValue,
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
+  movementDeleteRight,
 } from '../lib/productStock'
+import { isStrictAdmin } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 
 const num = n => Number(n) || 0
@@ -67,7 +70,12 @@ export default function ProductInventoryPage() {
   const { hasRole, currentUser } = useAuth()
   const { COMPANY_ID } = useApp()
   const canPost = hasRole('super_admin', 'admin', 'call_center')
-  const isSuperAdmin = hasRole('super_admin')
+  /* Deleting a movement: an administrator may remove a hand-typed one, a super
+     admin may remove any, and a Senior Call Center user may remove none. The
+     column itself only appears for somebody who could delete something. */
+  const isSuperAdmin  = hasRole('super_admin')
+  const strictAdmin   = isStrictAdmin(currentUser?.role)
+  const canDeleteAny  = isSuperAdmin || strictAdmin
 
   const [products,  setProducts]  = useState([])
   const [movements, setMovements] = useState([])
@@ -154,6 +162,11 @@ export default function ProductInventoryPage() {
   }
 
   async function removeMovement(m) {
+    /* The rule lives in productStock.js, and it is checked HERE as well as on
+       the button: a disabled button is a suggestion, and this function is what
+       reaches the database. */
+    const right = movementDeleteRight(m, { isSuperAdmin, isStrictAdmin: strictAdmin })
+    if (!right.allowed) { setError(right.reason); return }
     setBusyId(m.id)
     const err = await deleteProductMovement(m.id)
     setBusyId(null)
@@ -349,15 +362,26 @@ export default function ProductInventoryPage() {
                       <td className="px-4 py-2 text-slate-400 text-xs">{m.reference || '—'}</td>
                       <td className="px-4 py-2 text-slate-500 text-xs">{m.created_by_name || '—'}</td>
                       <td className="px-4 py-2 text-slate-400 text-xs max-w-[16rem] truncate">{m.notes || ''}</td>
-                      {isSuperAdmin && (
-                        <td className="px-4 py-2">
-                          <button onClick={() => removeMovement(m)} disabled={busyId === m.id}
-                            title="Delete this movement (correcting by posting the opposite is usually better)"
-                            className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 disabled:opacity-40">
-                            {busyId === m.id ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                          </button>
-                        </td>
-                      )}
+                      {canDeleteAny && (() => {
+                        const right = movementDeleteRight(m, { isSuperAdmin, isStrictAdmin: strictAdmin })
+                        return (
+                          <td className="px-4 py-2">
+                            {right.allowed ? (
+                              <button onClick={() => removeMovement(m)} disabled={busyId === m.id}
+                                title="Delete this movement (correcting by posting the opposite is usually better)"
+                                className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 disabled:opacity-40">
+                                {busyId === m.id ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                              </button>
+                            ) : (
+                              /* Not disabled and silent — says why, because "the
+                                 button is grey" is not an explanation. */
+                              <span title={right.reason} className="inline-flex p-1.5 text-slate-700 cursor-help">
+                                <Lock className="w-3.5 h-3.5" />
+                              </span>
+                            )}
+                          </td>
+                        )
+                      })()}
                     </tr>
                   ))}
                 </tbody>

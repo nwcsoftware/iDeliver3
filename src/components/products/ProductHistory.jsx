@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts'
-import { Loader2, TrendingUp, ShoppingCart, Truck, AlertCircle } from 'lucide-react'
+import { Loader2, TrendingUp, ShoppingCart, Truck, AlertCircle, Boxes } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { MOVEMENT_TYPES, movementLabel } from '../../lib/productStock'
 
 /* What this item has cost and what it has sold for.
  *
@@ -63,13 +64,19 @@ export default function ProductHistory({ product }) {
   const [error,     setError]     = useState('')
   const [purchases, setPurchases] = useState([])
   const [sales,     setSales]     = useState([])
+  /* The stock LEDGER for this item. Purchases and sales above are the money
+     side; this is what actually moved on the shelf — and it is the only place
+     an adjustment or a stock-out ever shows, since neither is a purchase or a
+     sale. Without it, correcting a count left no trace on the item's own
+     history and looked as though nothing had happened. */
+  const [moves,     setMoves]     = useState([])
   const [currency,  setCurrency]  = useState(product?.currency || 'USD')
 
   const load = useCallback(async () => {
     if (!product?.id) return
     setLoading(true); setError('')
     try {
-      const [pi, oi] = await Promise.all([
+      const [pi, oi, mv] = await Promise.all([
         supabase.from('purchase_invoice_items')
           .select('id, quantity, unit_cost, line_total, purchase_invoice:purchase_invoices'
             + '(invoice_number, invoice_date, currency, status, supplier:contacts!supplier_id(company_name, first_name, last_name))')
@@ -80,9 +87,16 @@ export default function ProductHistory({ product }) {
           .eq('product_id', product.id)
           .order('added_at', { ascending: false })
           .limit(500),
+        supabase.from('product_movements')
+          .select('id, movement_type, quantity, unit_cost, currency, reference, notes, moved_at, created_by_name, order_id')
+          .eq('product_id', product.id)
+          .order('moved_at', { ascending: false })
+          .limit(500),
       ])
       if (pi.error) throw new Error(pi.error.message)
       if (oi.error) throw new Error(oi.error.message)
+      // A missing ledger is not an error worth blocking the rest of the form.
+      setMoves(mv.error ? [] : (mv.data ?? []))
 
       setPurchases((pi.data ?? []).map(r => ({
         id: r.id,
@@ -127,6 +141,14 @@ export default function ProductHistory({ product }) {
   useEffect(() => {
     if (currencies.length && !currencies.includes(currency)) setCurrency(currencies[0])
   }, [currencies, currency])
+
+  /* On hand from the ledger — the same signs the Inventory page uses, so the
+     two can never show different numbers for the same shelf. Not filtered by
+     currency: a count is a count. */
+  const onHand = useMemo(() => Math.round(moves.reduce((n, m) => {
+    const sign = MOVEMENT_TYPES.find(t => t.value === m.movement_type)?.sign ?? 1
+    return n + (Number(m.quantity) || 0) * sign
+  }, 0) * 100) / 100, [moves])
 
   const buys  = purchases.filter(p => p.currency === currency)
   const sells = sales.filter(s => s.currency === currency)
@@ -223,6 +245,54 @@ export default function ProductHistory({ product }) {
           Dotted lines are the standing cost and selling price on this form. Several movements on one day are
           averaged, so a point is what the item was going for that day rather than one particular line.
         </p>
+      </div>
+
+      {/* ── the shelf ──────────────────────────────────────────── */}
+      {/* Above purchases on purpose: this is what actually moved, and it is the
+          only place an adjustment or a stock-out appears at all. */}
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Boxes className="w-3.5 h-3.5 text-brand-400" />
+          <h3 className="text-xs font-semibold text-slate-200">Stock movements</h3>
+          <span className="text-[11px] text-slate-500">{moves.length}</span>
+          <span className="text-[11px] text-slate-400 ml-auto tabular-nums">
+            On hand <span className={onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{onHand}</span>
+          </span>
+        </div>
+        <div className="card overflow-hidden">
+          <div className="max-h-40 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0">
+                <tr className="bg-surface-card border-b border-surface-border text-slate-500">
+                  <th className="text-left px-3 py-1.5 font-medium">Date</th>
+                  <th className="text-left px-3 py-1.5 font-medium">Movement</th>
+                  <th className="text-right px-3 py-1.5 font-medium">Effect</th>
+                  <th className="text-left px-3 py-1.5 font-medium">Reference</th>
+                  <th className="text-left px-3 py-1.5 font-medium">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moves.length === 0 ? (
+                  <tr><td colSpan={5} className="px-3 py-5 text-center text-slate-600">Nothing has moved on the shelf.</td></tr>
+                ) : moves.map(m => {
+                  const sign = MOVEMENT_TYPES.find(t => t.value === m.movement_type)?.sign ?? 1
+                  const eff  = (Number(m.quantity) || 0) * sign
+                  return (
+                    <tr key={m.id} className="border-b border-surface-border/50 last:border-0">
+                      <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{String(m.moved_at || '').slice(0, 10)}</td>
+                      <td className="px-3 py-1.5 text-slate-300">{movementLabel(m.movement_type)}</td>
+                      <td className={`px-3 py-1.5 text-right tabular-nums ${eff < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+                        {eff > 0 ? `+${eff}` : eff}
+                      </td>
+                      <td className="px-3 py-1.5 text-slate-500 font-mono text-[11px]">{m.reference || '—'}</td>
+                      <td className="px-3 py-1.5 text-slate-500">{m.created_by_name || '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       {/* ── purchases ─────────────────────────────────────────── */}

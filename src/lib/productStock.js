@@ -121,6 +121,39 @@ export async function saveProductMovement(row, { companyId = null, userId = null
 /* Remove a movement. Kept for the super admin only: correcting by posting the
    opposite movement is the honest route, but a row entered against the wrong
    product is noise nobody wants to keep. */
+/* WHO MAY DELETE A STOCK MOVEMENT, and which ones.
+
+   A movement typed on the Inventory page — a stock in, a stock out, a count
+   correction — is somebody's entry, and a wrong one is best removed. An
+   administrator may.
+
+   A movement that came from an ORDER is not an entry, it is a consequence: the
+   order was closed, so the goods left. Deleting it would make the shelf
+   disagree with the orders that emptied it, and the next time that order is
+   saved syncOrderStock would put it back anyway — so it is not even a lasting
+   change, just a confusing one. An administrator may not. The way to undo it
+   is to reopen or amend the order, which is where the fact actually lives.
+
+   A super admin may delete either, because somebody has to be able to fix the
+   ledger when it is wrong in a way the rules did not anticipate.
+
+   A Senior Call Center user may delete nothing at all. */
+export const movementIsFromOrder = (m) =>
+  !!m?.order_id || String(m?.movement_type || '') === 'sold'
+
+export function movementDeleteRight(movement, { isSuperAdmin, isStrictAdmin }) {
+  if (isSuperAdmin) return { allowed: true, reason: '' }
+  if (!isStrictAdmin) {
+    return { allowed: false, reason: 'Only an administrator can delete a stock movement.' }
+  }
+  if (movementIsFromOrder(movement)) {
+    return { allowed: false,
+      reason: 'This movement came from an order being closed, so it is not an entry to delete — '
+            + 'reopen or amend the order instead, and the shelf follows.' }
+  }
+  return { allowed: true, reason: '' }
+}
+
 export async function deleteProductMovement(id) {
   const { error } = await supabase.from('product_movements').delete().eq('id', id)
   return error ? error.message : null
