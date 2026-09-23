@@ -1,9 +1,19 @@
 /* What each role is allowed to be, in one place.
  *
  * ── SENIOR CALL CENTER ───────────────────────────────────────────────────────
- * A rank between admin and call centre (fix156). Today it can do everything an
- * administrator can; a list of exceptions is coming, and this file is where
- * they will be subtracted.
+ * AN UPGRADED CALL-CENTRE USER, NOT A MEMBER OF ADMINISTRATION. It sits above
+ * call centre and below admin: super admin → admin → senior call center →
+ * call centre. Nothing about the rank is administrative, and it should not be
+ * designed as "an admin with restrictions" — that is backwards, and designing
+ * from it would keep handing the rank things it was never meant to have.
+ *
+ * The code below says the opposite, for now. Inheritance was the way to
+ * introduce the rank without anybody losing work overnight, and it makes each
+ * exception a deliberate, visible removal instead of a guess about what was
+ * never granted. It is scaffolding while the list arrives, not the intent.
+ *
+ * SO: when a new feature is administrative, do not let the inheritance decide
+ * it. Ask. The answer is usually no.
  *
  * It is done as INHERITANCE rather than by editing every check in the app.
  * There are 57 role checks across these pages, 15 of them asking for
@@ -21,7 +31,11 @@
 
 /* Roles that inherit another role's permissions. Asking for the key grants the
    value as well — never the other way round: a senior call centre user counts
-   as an admin, an admin is not a senior call centre user. */
+   as an admin, an admin is not a senior call centre user.
+
+   This entry is the scaffolding described above. As exceptions are named it
+   shrinks in effect, and if the list ever covers everything administrative it
+   should be removed and the rank given its own permissions outright. */
 const INHERITS = {
   admin: ['senior_call_center'],
 }
