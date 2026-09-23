@@ -5,9 +5,9 @@
    About popup, …) reads it from here, so there is only one place to change. */
 
 export const APP_NAME    = 'iDeliver III'
-export const APP_VERSION = '3.00.019'
+export const APP_VERSION = '3.00.020'
 
-/* "iDeliver III · v3.00.019" */
+/* "iDeliver III · v3.00.020" */
 export const APP_VERSION_LABEL = `${APP_NAME} · v${APP_VERSION}`
 
 /* ── ownership & attribution ──────────────────────────────────────────────────
