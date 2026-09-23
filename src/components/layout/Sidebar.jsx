@@ -44,7 +44,7 @@ export const navGroups = [
   {
     key: 'cash', label: 'Cash & Collections', icon: Banknote,
     items: [
-      { to: '/daily-collection', icon: Banknote,   label: 'Daily Collection', superOnly: true },
+      { to: '/daily-collection', icon: Banknote,   label: 'Daily Collection' },
       { to: '/cashier-box',      icon: Wallet,     label: 'Cashier Box' },
       { to: '/credit-customers', icon: CreditCard, label: 'Credit Customers' },
       { to: '/retail-invoices',  icon: Receipt,    label: 'Retail Invoices' },

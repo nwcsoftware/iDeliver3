@@ -125,7 +125,15 @@ export default function DailyCollectionPage() {
   // further back, so it asks for the full history once.
   useEffect(() => { loadFullOrderHistory?.() }, [loadFullOrderHistory])
   const { hasRole } = useAuth()
-  const isSuperAdmin = hasRole('super_admin')
+  /* The office sees this page: super admin, admin and call centre alike. It is
+     the record of what was collected, and the people who collect it are the
+     ones who need to check it — keeping it from them meant every question
+     about a payment had to be passed upward.
+
+     Drivers, customers and 2nd parties are not "the office": suppliers and
+     partners never reach this shell at all, and a driver has their own
+     settlement screen showing their own money rather than everybody's. */
+  const canSee = hasRole('super_admin', 'admin', 'call_center')
 
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)
@@ -141,7 +149,7 @@ export default function DailyCollectionPage() {
 
 
   const fetchCollections = useCallback(async () => {
-    if (!isSuperAdmin) { setLoading(false); return }
+    if (!canSee) { setLoading(false); return }
     setLoading(true); setError('')
     const { data: pcs, error: err } = await fetchAllRows(() =>
       supabase.from('payment_collections')
@@ -188,7 +196,7 @@ export default function DailyCollectionPage() {
       }
     })
     setRows(joined); setLoading(false)
-  }, [isSuperAdmin])
+  }, [canSee])
 
   useEffect(() => { fetchCollections() }, [fetchCollections])
 
@@ -242,11 +250,11 @@ export default function DailyCollectionPage() {
   }
 
   /* ── access gate ─────────────────────────────────────────── */
-  if (!isSuperAdmin) {
+  if (!canSee) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 p-6">
         <Shield className="w-10 h-10 text-slate-600" />
-        <p className="text-slate-300 font-medium">Super administrators only</p>
+        <p className="text-slate-300 font-medium">Office users only</p>
         <p className="text-slate-500 text-sm">You don’t have permission to view the daily collection.</p>
       </div>
     )
