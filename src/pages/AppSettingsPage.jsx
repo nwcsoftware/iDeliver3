@@ -289,6 +289,52 @@ export default function AppSettingsPage() {
           </div>
         )}
 
+        {/* How far back an admin may reopen a closed order (super admin only) */}
+        {isSuperAdmin && (
+          <div className="card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <Lock className="w-4 h-4 text-amber-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Reopening a closed order — the administrators&rsquo; window</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  How many days after an order closes an <span className="text-slate-300 font-medium">administrator</span> may
+                  reopen it and correct it. A wrong fee is usually spotted within a day or two by whoever entered it, and
+                  having to fetch a super admin is how an order stays wrong. Set it to
+                  <span className="text-slate-300 font-medium"> 0</span> and reopening is the super admin&rsquo;s alone again.
+                </p>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Whatever the number, the order keeps its own record: who reopened it, and what the edit disturbed —
+                  money already counted, stock already moved, a partner already credited. That record sits in a note
+                  no administrator can write to.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input type="number" min="0" max="365" step="1"
+                className="input w-28 text-sm"
+                value={Number(appSettings.adminReopenDays) >= 0 ? Number(appSettings.adminReopenDays) : 0}
+                onChange={e => {
+                  const v = Math.max(0, Math.min(365, Math.floor(Number(e.target.value) || 0)))
+                  updateAppSettings({ adminReopenDays: v })
+                }} />
+              <span className="text-sm text-slate-400">
+                {Number(appSettings.adminReopenDays) > 0
+                  ? `day${Number(appSettings.adminReopenDays) === 1 ? '' : 's'} — an admin may reopen an order closed within this window`
+                  : 'days — super admin only'}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Only the super admin can change this. It is a company-wide policy — it applies to
+              <span className="text-slate-400"> every signed-in user on any device or location</span>,
+              and takes effect immediately.
+            </p>
+          </div>
+        )}
+
         {/* Restriction — protect other users' payments (super admin only) */}
         {isSuperAdmin && (
           <div className="card p-5 space-y-4">

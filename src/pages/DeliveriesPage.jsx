@@ -5,7 +5,7 @@ import {
   Edit2, Power, AlertCircle, Package, RotateCcw, RotateCw,
   Phone, Mail, MapPin, UserCheck, UserPlus, Wallet, Calendar, Truck, Lock, Unlock, ChevronRight, Globe, Banknote, CreditCard,
   ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle2, Circle, Receipt, Flag, BellRing, Tag,
-  Eye, Pin, PinOff, User, Building, Handshake, Megaphone, MegaphoneOff, Loader,
+  Eye, Pin, PinOff, User, Building, Handshake, Megaphone, MegaphoneOff, Loader, ShieldAlert,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase, fetchAllRows } from '../lib/supabase'
@@ -230,6 +230,96 @@ function orderWarnings(o, currencyLimits) {
   w.push(...currencyWarnings(o, currencyLimits))
 
   return w
+}
+
+/* How many days back an administrator may reopen a closed order. Company
+   policy set by the super admin; 0 (or unset) means nobody but the super admin
+   reopens anything, which is where this started. */
+function adminReopenWindowDays(appSettings) {
+  const n = Number(appSettings?.adminReopenDays)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/* Days since an order was closed, or null when it never was. */
+function daysSinceClosed(o) {
+  const t = o?.closed_at ? new Date(o.closed_at).getTime() : NaN
+  if (isNaN(t)) return null
+  return (Date.now() - t) / 86400000
+}
+
+/* Whether THIS user may reopen THIS order, and if not, why not — the reason is
+   worth saying out loud on the button rather than leaving it disabled and
+   mute. A super admin is never bound by the window: the window exists to limit
+   an administrator, not the person who sets it. */
+function reopenRight(o, { isSuperAdmin, isAdmin, appSettings }) {
+  if (!o?.isclosed) return { allowed: false, reason: 'This order is not closed.' }
+  if (isSuperAdmin) return { allowed: true, reason: '' }
+  if (!isAdmin) return { allowed: false, reason: 'Only an administrator can reopen a closed order.' }
+
+  const days = adminReopenWindowDays(appSettings)
+  if (days === 0) return { allowed: false, reason: 'Reopening is limited to the super admin.' }
+
+  const age = daysSinceClosed(o)
+  if (age == null) return { allowed: false, reason: 'This order has no close date, so its age cannot be judged.' }
+  if (age > days) {
+    return { allowed: false,
+      reason: `This order closed ${Math.floor(age)} days ago. Administrators may reopen orders closed within ${days} day${days === 1 ? '' : 's'}; ask a super admin.` }
+  }
+  return { allowed: true, reason: '' }
+}
+
+/* A stable fingerprint of a sub-list, so "has this changed" is one string
+   comparison rather than a hand-written diff per table. Only the fields that
+   reach another table are included: renaming nothing, moving no money and
+   touching no stock should not raise a warning. */
+const sigOf = (rows, pick) => JSON.stringify((rows || []).map(pick).sort())
+
+/* WHAT AN EDIT TO A REOPENED ORDER DISTURBS.
+
+   Closing an order counted its money into the day, moved its stock off the
+   shelf and credited its partner. Editing it afterwards does not just change
+   the order — it silently changes figures somebody has already read, and
+   reports that were already run.
+
+   This names what a particular edit reaches, by comparing the form against the
+   order as it was loaded. Each line says the table AND the consequence,
+   because "payments changed" is not something an administrator can weigh and
+   "the Cashier Box and Daily Collection for that day will change" is.
+
+   Only for an order that has been REOPENED. An ordinary open order has not
+   been counted anywhere yet, and warning about it would be noise. */
+function reopenEditImpact(original, was, now) {
+  const out = []
+  if (!original?.reopened_at || !was) return out
+  const money = (a, b) => (Math.round((Number(a) || 0) * 100) / 100) !== (Math.round((Number(b) || 0) * 100) / 100)
+
+  if (was.payments !== now.payments)
+    out.push('Payments change — the Cashier Box and the Daily Collection page for that day move with them.')
+  if (was.items !== now.items)
+    out.push('The 3asari3 items change — stock already taken off the shelf is recomputed, and Most Sold Items with it.')
+  if (was.packages !== now.packages)
+    out.push('Delivery packages change — what the partner is owed changes, on Partner Dues and in the Cashier Box.')
+  if (was.invoices !== now.invoices)
+    out.push('Local-market invoices change — petty cash and any commission on them are recalculated.')
+  if (was.services !== now.services)
+    out.push('Order services change — what is paid out to the provider changes.')
+  if (money(original.delivery_fee, now.fee) || money(original.discount_amount, now.discount)
+      || money(original.vat_amount, now.vat))
+    out.push('The order total changes — the day’s figures and this account’s balance move with it.')
+  if (String(original.sub_account_id || '') !== String(now.subAccountId || ''))
+    out.push('The account this order bills to changes — it moves between the cash and the credit reports.')
+  return out
+}
+
+/* A line for the order's own audit note. Dated, signed, and specific — "edited
+   after closing" tells a reader next quarter nothing they can act on. */
+function auditLine(who, what) {
+  return `[${new Date().toLocaleString()} · ${who || 'an unnamed user'}] ${what}`.trim()
+}
+
+/* Append to the protected note without ever replacing what is there. */
+function appendAudit(existing, line) {
+  return [String(existing || '').trim(), line].filter(Boolean).join(String.fromCharCode(10))
 }
 
 /* The line written onto an order that was closed before it was finished.
@@ -1038,6 +1128,14 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [customerError,        setCustomerError]        = useState('')
   const [payments,             setPayments]             = useState([])
   const [origPaymentIds,       setOrigPaymentIds]       = useState([])
+  /* The sub-lists as loaded, for measuring an edit to a reopened order against.
+     A ref, not state: nothing renders from it and it must not cause one. */
+  const editSnapshot = useRef(null)
+  /* The audit note as the super admin may retype it. Held apart from `form` so
+     it cannot ride along on an ordinary save by anybody else. */
+  const [auditNote, setAuditNote] = useState('')
+  // Set while asking "this was already counted — change it anyway?".
+  const [reopenEdit, setReopenEdit] = useState(null)
   // Driver / customer filters are multi-select: [] = no filter (all), otherwise
   // the order must match ANY of the picked ids.
   const [driverFilter,         setDriverFilter]         = useState([])
@@ -2213,6 +2311,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       payments:        mappedPayments.length > 0,
       notes:           !!(o.order_details_text || o.special_instructions),
     })
+    /* What the order looked like when it was opened. An edit to a REOPENED
+       order is measured against this, so the warning can name what actually
+       moved rather than firing on every save. */
+    editSnapshot.current = {
+      payments: sigOf(mappedPayments, p => [p.method, p.amount, p.currency, p.paid_at, p.reference, p.provider_name].join('|')),
+      items:    sigOf(data ?? [],     i => [i.product_id, i.quantity, i.unit_price, i.currency, i.is_deleted].join('|')),
+      packages: sigOf(mappedPackages, k => [k.provider_id, k.package_price, k.currency, k.paid].join('|')),
+      invoices: sigOf(riData ?? [],   r => [r.contact_id, r.invoice_value, r.currency, r.exclude_calculation].join('|')),
+      services: sigOf(mappedServices, v => [v.provider_id, v.service_fees, v.service_fees_currency].join('|')),
+    }
+    setAuditNote(o.audit_note || '')
     setError(''); setModal(o)
   }
 
@@ -2493,6 +2602,27 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       return
     }
 
+    /* EDITING AN ORDER THAT WAS REOPENED. Its money was already counted, its
+       stock already moved, its partner already credited. Anything touching
+       those is named before it happens, once, and the answer is written onto
+       the order — not because the edit is wrong, but because a figure that
+       moves after somebody read it needs to say why. */
+    const impact = (modal && modal !== 'add')
+      ? reopenEditImpact(modal, editSnapshot.current, {
+          payments: sigOf(payments, p => [p.method, p.amount, p.currency, p.paid_at, p.reference, p.provider_name].join('|')),
+          items:    sigOf(items,    i => [i.product_id, i.quantity, i.unit_price, i.currency, i.is_deleted].join('|')),
+          packages: sigOf(packages, k => [k.provider_id, k.package_price, k.currency, k.paid].join('|')),
+          invoices: sigOf(retailInvoices, r => [r.contact_id, r.invoice_value, r.currency, r.exclude_calculation].join('|')),
+          services: sigOf(services, v => [v.provider_id, v.service_fees, v.service_fees_currency].join('|')),
+          fee: form.delivery_fee, discount: form.discount_amount, vat: form.vat_amount,
+          subAccountId: form.sub_account_id,
+        })
+      : []
+    if (impact.length > 0 && !opts?.impactAccepted) {
+      setReopenEdit({ reasons: impact, close, forced })
+      return
+    }
+
     setSaving(true); setError('')
 
     const isFree = !!form.is_free_order
@@ -2578,6 +2708,17 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
          sits where the office already looks for context, says who decided and
          what they overrode, and is appended rather than replacing whatever
          instructions were already there. */
+      /* The order's own account of the edit. audit_note is never taken from
+         the form — there is no field for it — so this is the only way it
+         changes outside the super admin's editor. */
+      ...(impact.length > 0 ? {
+        audit_note: appendAudit(isSuperAdmin ? auditNote : modal?.audit_note,
+          auditLine(currentUserName, `Edited after being reopened. ${impact.join(' ')}`)),
+      } : isSuperAdmin && modal !== 'add' && auditNote !== (modal?.audit_note || '') ? {
+        // The super admin corrected the note itself — the only hand-editing of
+        // this column there is.
+        audit_note: auditNote.trim() || null,
+      } : {}),
       special_instructions:  (forced
         ? [form.special_instructions?.trim(), forcedCloseNote(forced, currentUserName)]
             .filter(Boolean).join(String.fromCharCode(10))
@@ -3109,18 +3250,37 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setToggling(null)
   }
 
-  // Super-admin only: reopen a closed order — clears the isclosed lock (and its
-  // closed_at/closed_by stamps) so the order can be edited/settled again. Admins
-  // and regular users can lock an order but can never unlock one.
+  /* Reopen a closed order — clears the isclosed lock so it can be edited and
+     settled again.
+
+     The super admin always may. An ADMINISTRATOR may too, for an order that
+     closed within the window the super admin sets in App Settings (fix158),
+     because a wrong fee is usually spotted within a day or two by the person
+     who entered it, and having to fetch the super admin is how an order stays
+     wrong. Zero days puts it back to the super admin alone.
+
+     Either way the order keeps a note of it. Closing counted the money, moved
+     the stock and credited the partner; unpicking that is not an ordinary
+     edit and should not read like one afterwards. The note goes in audit_note,
+     which no order form writes. */
   async function reopenClosed(o) {
     rememberOrder(o.id)
-    if (!isSuperAdmin || !o.isclosed) return
+    const right = reopenRight(o, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings })
+    if (!right.allowed) { if (right.reason) setError(right.reason); return }
     setToggling(o.id)
+    const age = daysSinceClosed(o)
+    const note = appendAudit(o.audit_note, auditLine(currentUserName,
+      `Reopened after being closed${age != null ? ` ${age < 1 ? 'today' : `${Math.floor(age)} day(s) ago`}` : ''}`
+      + `${isSuperAdmin ? ' (super admin).' : ' (administrator, within the permitted window).'}`))
     await supabase.from('delivery_orders').update({
       isclosed:  false,
       closed_at: null,
       closed_by: null,
       closed_by_name: null,
+      reopened_at:      new Date().toISOString(),
+      reopened_by:      currentUser?.user_id || null,
+      reopened_by_name: currentUserName,
+      audit_note:       note,
     }).eq('id', o.id)
     /* The goods leave when the order is closed. syncOrderStock recomputes what
        this order should have posted and makes the ledger match, so calling it
@@ -3137,7 +3297,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Unlock the order currently open in the modal (super admin only) and reflect it
   // in the open modal at once, so it becomes editable without reopening.
   async function unlockCurrentOrder() {
-    if (!isSuperAdmin || !modal || modal === 'add' || !modal.isclosed) return
+    if (!modal || modal === 'add' || !modal.isclosed) return
+    if (!reopenRight(modal, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings }).allowed) return
     await reopenClosed(modal)
     setModal(m => (m && m !== 'add')
       ? { ...m, isclosed: false, closed_at: null, closed_by: null, closed_by_name: null }
@@ -3352,6 +3513,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      they appear the moment a method changes, and are absent on an all-cash
      order rather than sitting there empty. */
   const showPayTrail = payments.some(p => paymentNeedsTrail(p.method))
+
+  /* Whether this user may reopen the order currently open, and the sentence to
+     show when they may not — a disabled control that says nothing just looks
+     broken. */
+  const reopenRights = (modal && modal !== 'add')
+    ? reopenRight(modal, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings })
+    : { allowed: false, reason: '' }
 
   const closeRequirements = []
   // Once a contact has account numbers, THEY decide whether an unpaid balance may
@@ -5505,6 +5673,37 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       onChange={e => fld('special_instructions', e.target.value)} placeholder="Fragile, leave at door…" />
                   </div>
                 </div>
+
+                {/* The order's own account of being reopened and re-edited. It
+                    is never part of the form's payload, so an administrator
+                    reads it and cannot rewrite the record of their own edit.
+                    Only the super admin is given somewhere to type. */}
+                {modal !== 'add' && (modal?.audit_note || modal?.reopened_at) && (
+                  <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-xs font-semibold text-amber-200">Audit note</span>
+                      <span className="text-[10px] text-slate-500 ml-auto">
+                        {isSuperAdmin ? 'Only a super admin can change this.' : 'Read-only — written by the system.'}
+                      </span>
+                    </div>
+                    {isSuperAdmin ? (
+                      <textarea className="input resize-none font-mono text-[11px]" rows={4}
+                        value={auditNote}
+                        onChange={e => setAuditNote(e.target.value)} />
+                    ) : (
+                      <pre className="text-[11px] text-slate-300 whitespace-pre-wrap break-words leading-relaxed">
+                        {modal.audit_note || '—'}
+                      </pre>
+                    )}
+                    {modal?.reopened_by_name && (
+                      <p className="text-[10px] text-slate-500">
+                        Last reopened by {modal.reopened_by_name}
+                        {modal.reopened_at ? ` on ${new Date(modal.reopened_at).toLocaleString()}` : ''}.
+                      </p>
+                    )}
+                  </div>
+                )}
               </CollapsibleSection>
               </fieldset>
             </div>
@@ -5523,16 +5722,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     {/* Close control (isclosed). Super admin can always close and can
                         reopen a closed order; others close only when eligible. */}
                     {alreadyClosed ? (
-                      isSuperAdmin ? (
+                      reopenRights.allowed ? (
                         <button type="button" onClick={unlockCurrentOrder} disabled={saving || toggling === modal.id}
-                          title="Reopen this closed order (super admin)"
+                          title={isSuperAdmin ? 'Reopen this closed order (super admin)'
+                            : `Reopen this closed order — administrators may, within ${adminReopenWindowDays(appSettings)} day(s) of closing`}
                           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
                                      bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15
                                      disabled:opacity-40 disabled:cursor-not-allowed">
                           <Unlock className="w-4 h-4" /> Reopen
                         </button>
                       ) : (
-                        <span className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-400">
+                        <span className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-400"
+                          title={reopenRights.reason || undefined}>
                           <Lock className="w-4 h-4" /> Closed{modal.closed_by_name ? ` by ${modal.closed_by_name}` : ''}
                         </span>
                       )
@@ -5893,6 +6094,57 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 disabled={savingCustomer || (newCustomer.entity_type === 'company' && !newCustomer.company_name.trim()) || !newCustomer.first_name.trim() || !newCustomer.last_name.trim() || !newCustomer.mobile.trim()}>
                 <Check className="w-4 h-4" />
                 {savingCustomer ? 'Saving…' : 'Save & Use'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Editing an order whose figures were already counted ─ */}
+      {reopenEdit && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !saving && setReopenEdit(null)}>
+          <div className="card w-full max-w-lg overflow-hidden border-amber-500/40" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 px-5 py-4 border-b border-surface-border">
+              <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">This order was already counted</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  It was closed and reopened{modal !== 'add' && modal?.reopened_by_name ? ` by ${modal.reopened_by_name}` : ''}.
+                  Saving these changes moves figures somebody may already have read.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <ul className="space-y-1.5">
+                {reopenEdit.reasons.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs text-amber-200">
+                    <span className="text-amber-500 mt-0.5">&bull;</span><span>{r}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="rounded-lg border border-surface-border bg-surface-hover/40 px-3 py-2">
+                <p className="text-[11px] text-slate-500 mb-1">
+                  Recorded on the order&rsquo;s audit note, which only a super admin can change:
+                </p>
+                <p className="text-[11px] text-slate-300 font-mono leading-relaxed break-words">
+                  {auditLine(currentUserName, `Edited after being reopened. ${reopenEdit.reasons.join(' ')}`)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-surface-border">
+              <button type="button" className="btn-ghost text-slate-400 hover:text-slate-100"
+                onClick={() => setReopenEdit(null)} disabled={saving}>
+                <X className="w-4 h-4" /> Go back
+              </button>
+              <button type="button" disabled={saving}
+                onClick={() => { const r = reopenEdit; setReopenEdit(null)
+                  handleSave({ close: r.close, forced: r.forced, impactAccepted: true }) }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                           bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40">
+                <Check className="w-4 h-4" /> Save the changes
               </button>
             </div>
           </div>

@@ -109,7 +109,11 @@ function readAppSettings() {
 // server-side (app_global_settings) and mirrored down to every client in
 // realtime, overriding the local copy. All other keys stay per-device.
 const GLOBAL_SETTINGS_ID  = 'global'
-const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments', 'currencyLimits', 'currencyCheckPeriod']
+const GLOBAL_SETTING_KEYS = ['lockSavedLocalInvoices', 'protectOthersPayments', 'currencyLimits', 'currencyCheckPeriod',
+  // How many days back an ADMIN may reopen a closed order (fix158). Company
+  // policy, not a device preference: it decides what somebody may do, so it
+  // cannot be something they set on their own machine. 0 = super admin only.
+  'adminReopenDays']
 
 // Normalize a contact row into a driver-shaped object for UI consumption
 function normalizeDriver(c) {
