@@ -86,7 +86,9 @@ export const navGroups = [
   {
     key: 'reports', label: 'Reports', icon: BarChart3,
     items: [
-      { to: '/top-items', icon: Trophy, label: 'Most Sold Items' },
+      // Cost and margin per item, so admin and super admin only — the rest of
+      // the Reports group shows revenue, which the whole office may see.
+      { to: '/top-items', icon: Trophy, label: 'Most Sold Items', adminOnly: true },
       { to: '/reports', icon: BarChart3, label: 'Reports' },
       // Finished work only, per currency: fees, stories, packages, invoices —
       // with the split by order type and by month.

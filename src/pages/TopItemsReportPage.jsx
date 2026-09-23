@@ -3,10 +3,11 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
-  Package, Trophy, Download, FilterX, Boxes, ShoppingCart, Receipt, AlertTriangle, TrendingUp,
+  Package, Trophy, Download, FilterX, Boxes, ShoppingCart, Receipt, AlertTriangle, TrendingUp, Shield,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import { PERIODS, DEFAULT_PERIOD, periodWindow, buildTopItems } from '../lib/topItemsReport'
 import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 import SearchField from '../components/ui/SearchField'
@@ -107,6 +108,13 @@ function ChartTip({ active, payload }) {
 
 export default function TopItemsReportPage() {
   const { COMPANY_ID } = useApp()
+  const { hasRole } = useAuth()
+  /* Admin and super admin only. This page used to show quantities and revenue,
+     which the whole office may see; since fix153 it shows what each item COSTS
+     us and what we make on it — Arguile at 70%, Gallon 20 L at 14% — and that
+     is not a figure for whoever happens to be taking orders. The CSV carries
+     the same, so the gate covers the data and not just the screen. */
+  const canSee = hasRole('super_admin', 'admin')
 
   const [periodKey,  setPeriodKey]  = useState(DEFAULT_PERIOD)
   const [customFrom, setCustomFrom] = useState('')
@@ -124,6 +132,7 @@ export default function TopItemsReportPage() {
      narrower than the data, so changing the period is instant rather than
      another trip to the server. */
   const load = useCallback(async () => {
+    if (!canSee) { setLoading(false); return }
     setLoading(true); setError('')
     const { data, error: e } = await fetchAllRows(() => {
       let q = supabase.from('order_items')
@@ -154,7 +163,7 @@ export default function TopItemsReportPage() {
     })
     setStockIn(Array.isArray(mv) ? mv : [])
     setLoading(false)
-  }, [COMPANY_ID])
+  }, [COMPANY_ID, canSee])
 
   useEffect(() => { load() }, [load])
 
@@ -230,6 +239,18 @@ export default function TopItemsReportPage() {
     }
   })
   const anyFilter = periodKey !== DEFAULT_PERIOD || !closedOnly || !!search.trim()
+
+  /* Refused before anything is drawn, and nothing was fetched either — the
+     costs and margins never reach a browser that may not see them. */
+  if (!canSee) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 p-6">
+        <Shield className="w-10 h-10 text-slate-600" />
+        <p className="text-slate-300 font-medium">Administrators only</p>
+        <p className="text-slate-500 text-sm">You don’t have permission to view the most sold items.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
