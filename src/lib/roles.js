@@ -77,6 +77,17 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
      closed order   counted, its stock moved and its partner credited; undoing
                     that is an administrator's decision.
 
+     Administration most of the menu: App Settings, Front Page, User Accounts,
+                    Software Subscriptions and Change Requests. Company policy,
+                    who may sign in, the public site and what work gets paid
+                    for are not this rank's to set.
+
+     Subscriptions  readable, not writable. Knowing whether a partner is paid
+                    up is part of dealing with them; issuing, pricing and
+                    activating one is not. (Every control there is already
+                    super-admin only, so the rule is enforced on the writing
+                    functions rather than on buttons that do not exist.)
+
    CLOSING an order is NOT on this list. A senior call centre user may close an
    eligible order, as an ordinary call centre user may — the rank is an upgrade
    of that job, not a restriction of it. */

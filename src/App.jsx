@@ -241,19 +241,19 @@ function AppShell() {
                 <Route path="/contacts/suppliers"  element={<ContactsPage type="supplier" />} />
                 <Route path="/contacts/customers"  element={<ContactsPage type="customer" />} />
                 <Route path="/contacts/partners"   element={<ContactsPage type="partner"  />} />
-                <Route path="/settings/app"        element={<AppSettingsPage />} />
+                <Route path="/settings/app" element={<StrictAdminRoute what="App Settings"><AppSettingsPage /></StrictAdminRoute>} />
                 <Route path="/settings/appearance" element={<AppearancePage />} />
                 <Route path="/settings/messages"   element={<MessagesPage />} />
-                <Route path="/settings/users"      element={<UserAccountsPage />} />
+                <Route path="/settings/users" element={<StrictAdminRoute what="User Accounts"><UserAccountsPage /></StrictAdminRoute>} />
                 <Route path="/settings/account"    element={<DeveloperAccountPage />} />
                 <Route path="/settings/shop-categories" element={<ShopCategoriesPage />} />
                 <Route path="/settings/header-background" element={<HeaderBackgroundPage />} />
-                <Route path="/settings/front-page" element={<LandingAdminPage />} />
+                <Route path="/settings/front-page" element={<StrictAdminRoute what="The Front Page editor"><LandingAdminPage /></StrictAdminRoute>} />
                 <Route path="/settings/front-page-background" element={<LandingBackgroundPage />} />
                 <Route path="/settings/customer-theme"    element={<CustomerThemePage />} />
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
-                <Route path="/settings/software-subscriptions" element={<SoftwareSubscriptionsPage />} />
-                <Route path="/settings/change-requests" element={<ChangeRequestsPage />} />
+                <Route path="/settings/software-subscriptions" element={<StrictAdminRoute what="Software Subscriptions"><SoftwareSubscriptionsPage /></StrictAdminRoute>} />
+                <Route path="/settings/change-requests" element={<StrictAdminRoute what="Change Requests"><ChangeRequestsPage /></StrictAdminRoute>} />
                 <Route path="/settings/delete-order" element={<StrictAdminRoute what="Delete Order"><DeleteOrderPage /></StrictAdminRoute>} />
                 <Route path="/settings/delete-orders-range" element={<DeleteOrdersRangePage />} />
                 <Route path="/settings/delete-driver" element={<DeleteDriverPage />} />

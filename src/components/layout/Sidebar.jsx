@@ -117,13 +117,13 @@ export const navGroups = [
   {
     key: 'admin', label: 'Administration', icon: Settings, adminOnly: true,
     items: [
-      { to: '/settings/app',                    icon: Settings,     label: 'App Settings' },
+      { to: '/settings/app',                    icon: Settings,     label: 'App Settings', strictAdminOnly: true },
       // The public page visitors meet before signing in (web only).
-      { to: '/settings/front-page',             icon: Globe,        label: 'Front Page' },
-      { to: '/settings/users',                  icon: UserCog,      label: 'User Accounts' },
+      { to: '/settings/front-page',             icon: Globe,        label: 'Front Page', strictAdminOnly: true },
+      { to: '/settings/users',                  icon: UserCog,      label: 'User Accounts', strictAdminOnly: true },
       { to: '/settings/subscriptions',          icon: CreditCard,   label: 'Subscriptions' },
-      { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions' },
-      { to: '/settings/change-requests',        icon: ClipboardPen, label: 'Change Requests' },
+      { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions', strictAdminOnly: true },
+      { to: '/settings/change-requests',        icon: ClipboardPen, label: 'Change Requests', strictAdminOnly: true },
       /* Moved here from Super Admin: an administrator may delete an order.
          A super admin still can — they satisfy adminOnly — and the bulk
          "Delete Orders by Date" stays under Super Admin, because deleting one

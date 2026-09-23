@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
@@ -118,6 +119,16 @@ export default function SubscriptionsPage() {
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim()
     || currentUser?.username || null
   const canView      = hasRole('super_admin', 'admin')
+  /* A Senior Call Center user may READ this page and change nothing on it.
+     Knowing whether a partner is paid up is part of dealing with them; issuing,
+     pricing and activating a subscription is not.
+
+     Every control here was already super-admin only, so today this changes
+     nothing on screen. It is on the writing FUNCTIONS rather than the buttons
+     on purpose: it states the rank's rule where the database is actually
+     reached, so a control added later cannot hand the power over by being
+     written without a check. */
+  const canEditSubs  = isStrictAdmin(currentUser?.role)
 
   const [rows,       setRows]       = useState([])
   const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
@@ -343,7 +354,7 @@ export default function SubscriptionsPage() {
     )
   }
 
-  function openAdd() { setForm(emptyForm()); setFormErr(''); setModal('add') }
+  function openAdd() { if (!canEditSubs) return; setForm(emptyForm()); setFormErr(''); setModal('add') }
   /* Renewing a partner is always the same arrangement — one year at USD 10,
      invoiced to 3asari3 — so the form offers exactly that rather than making
      the super admin retype the licence every time. A supplier renews onto its
@@ -365,6 +376,7 @@ export default function SubscriptionsPage() {
   }
 
   function openEdit(r) {
+    if (!canEditSubs) return
     setForm({
       contact_id: r.contact_id ?? '', description: r.description ?? '',
       start_date: r.start_date ?? todayStr(), end_date: r.end_date ?? '',
@@ -376,6 +388,7 @@ export default function SubscriptionsPage() {
   function closeModal() { setModal(null); setForm(emptyForm()); setFormErr('') }
 
   async function save() {
+    if (!canEditSubs) return
     if (!form.contact_id)  { setFormErr('Choose the supplier or partner.'); return }
     if (!form.start_date)  { setFormErr('Start date is required.'); return }
     if (!form.end_date)    { setFormErr('End date is required.'); return }
@@ -398,6 +411,7 @@ export default function SubscriptionsPage() {
 
   // Quick toggles from the list (super admin only).
   async function patch(row, changes) {
+    if (!canEditSubs) return
     setBusyId(row.id)
     const err = await saveSubscription({ ...row, ...changes }, { companyId: COMPANY_ID, userId: currentUser?.user_id ?? null })
     setBusyId(null)
@@ -406,6 +420,7 @@ export default function SubscriptionsPage() {
   }
 
   async function remove(row) {
+    if (!canEditSubs) return
     setBusyId(row.id)
     const err = await deleteSubscription(row.id)
     setBusyId(null); setConfirmDelete(null)
@@ -431,6 +446,8 @@ export default function SubscriptionsPage() {
             className="input pl-9"
           />
         </div>
+        {/* Already super-admin only — a senior call centre user could not have
+            reached it in any case. */}
         {isSuperAdmin && (
           <button className="btn-primary ml-auto" onClick={openAdd}>
             <Plus className="w-4 h-4" /> New subscription

@@ -55,7 +55,9 @@ What that means when building:
   through today.
 - Exceptions live in `src/lib/roles.js` (`isStrictAdmin`), so the whole
   difference between the two ranks reads in one place. So far: the Reports menu
-  and its six pages, deleting an order, and reopening (so editing) a closed one.
+  and its six pages; deleting an order; reopening (so editing) a closed one; and
+  most of Administration — App Settings, Front Page, User Accounts, Software
+  Subscriptions, Change Requests. Subscriptions stays readable but not writable.
   Closing an order is *not* excluded — that is the call-centre job this rank is
   an upgrade of.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a

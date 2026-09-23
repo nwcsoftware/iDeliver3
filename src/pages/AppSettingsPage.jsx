@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
 
@@ -9,9 +10,12 @@ import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/curren
    time; built as a list of cards so more settings can be added over time. */
 export default function AppSettingsPage() {
   const { appSettings, updateAppSettings } = useApp()
-  const { hasRole } = useAuth()
+  const { hasRole, currentUser } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
-  const canSetLimits = hasRole('super_admin', 'admin')
+  /* Strict: a Senior Call Center user inherits admin elsewhere and is kept out
+     of App Settings entirely. The route refuses too — this is the second lock
+     so the settings are never read either. */
+  const canSetLimits = isStrictAdmin(currentUser?.role)
   const limits = { ...DEFAULT_CURRENCY_LIMITS, ...(appSettings.currencyLimits || {}) }
 
   /* Currency limits are edited as drafts and committed when the field is left,

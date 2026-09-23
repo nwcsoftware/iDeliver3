@@ -6,6 +6,7 @@ import {
   CalendarDays, Star, ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import {
   fetchLandingSettings, fetchLandingPosts, saveLandingSettings, saveLandingPost,
   deleteLandingPost, uploadLandingMedia, removeLandingMedia,
@@ -43,7 +44,7 @@ const kb = n => `${(n / 1024).toFixed(0)} MB`
    belongs on this screen. */
 export default function LandingAdminPage() {
   const { hasRole, currentUser } = useAuth()
-  const isAdmin = hasRole('admin', 'super_admin')
+  const isAdmin = isStrictAdmin(currentUser?.role)
   const isSuperAdmin = hasRole('super_admin')
 
   const [settings,   setSettings]   = useState(EMPTY_SETTINGS)

@@ -35,6 +35,7 @@ import {
   scanUserReferences, summariseReferences, deleteUserAccount, tableLabel, columnLabel,
 } from '../lib/userDeletion'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { checkSeat, seatPosition, seatPrice, seatStatus } from '../lib/officeSeats'
 import { rankPartners } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
@@ -132,7 +133,7 @@ function friendlyError(message = '') {
 
 export default function UserAccountsPage() {
   const { currentUser, hasRole, onlineUserIds, onlineSessions } = useAuth()
-  const isAdmin = hasRole('super_admin', 'admin')
+  const isAdmin = isStrictAdmin(currentUser?.role)
   const onlineSet = new Set((onlineUserIds ?? []).map(String))
 
   /* Filters and sorting for the list. Sorting cycles A→Z, Z→A, then back to

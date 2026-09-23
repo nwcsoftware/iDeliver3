@@ -25,6 +25,7 @@ import {
   CalendarCheck,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { useApp } from '../context/AppContext'
 import {
   REQUEST_TYPES, MODULES, PRIORITIES, LINE_TYPES, CLASSIFICATIONS, STATUSES,
@@ -74,7 +75,7 @@ export default function ChangeRequestsPage() {
   const { currentUser, hasRole } = useAuth()
   const { COMPANY_ID, sendMessage } = useApp()
   const isSuperAdmin = hasRole('super_admin')
-  const canView      = hasRole('super_admin', 'admin')
+  const canView      = isStrictAdmin(currentUser?.role)
 
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)
