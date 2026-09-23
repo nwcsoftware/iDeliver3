@@ -572,6 +572,64 @@ function adStatus(start, end, confirmed = true) {
   return null
 }
 
+/* HOW FAR THROUGH ITS WINDOW THE CURRENT ADVERT IS.
+
+   An advert is sold as a stretch of time, and the list until now showed only
+   which side of that stretch it was on — scheduled, running, expired. "Running"
+   says nothing about whether it has an hour left or a fortnight, which is the
+   thing somebody scanning the day actually wants to know.
+
+   THE CURRENT ONE is the advert whose window contains `now`, and where an order
+   carries several, the one ENDING SOONEST — that is the one with a deadline
+   attached, and the only one a glance can usefully be about.
+
+   An advert nobody has started yet still counts. Its window is running down
+   regardless, and that is precisely the case worth seeing on a busy list: time
+   being spent on something not yet on air. It is drawn in the same amber the
+   "Not started" badge uses, so the two agree.
+
+   Returns null when there is nothing to draw: no ads, none currently inside
+   its window, or a window missing an end date, which has no proportion to
+   show. A bar with a made-up denominator is worse than no bar. */
+function currentAdProgress(order, now = Date.now()) {
+  let best = null
+  for (const a of order?.ads ?? []) {
+    const s = a?.start_at ? new Date(a.start_at).getTime() : NaN
+    const e = a?.end_at   ? new Date(a.end_at).getTime()   : NaN
+    if (isNaN(s) || isNaN(e) || e <= s) continue      // no window, no proportion
+    if (now < s || now > e) continue                  // not the current one
+    if (!best || e < best.e) best = { a, s, e }
+  }
+  if (!best) return null
+
+  const pct     = Math.min(100, Math.max(0, ((now - best.s) / (best.e - best.s)) * 100))
+  const started = best.a.confirmed_ads !== false
+  return {
+    pct,
+    started,
+    msLeft: Math.max(0, best.e - now),
+    endsAt: best.e,
+    /* Amber while it is waiting to be started, whatever the percentage — the
+       colour is saying "this needs a click", not "this is nearly over". Once
+       running, it warms as the end approaches. */
+    cls: !started ? 'bg-amber-400'
+       : pct >= 90 ? 'bg-rose-400'
+       : pct >= 75 ? 'bg-amber-400'
+       : 'bg-green-400',
+  }
+}
+
+/* "3d 4h", "5h 20m", "18m" — the largest two units that matter, because an
+   advert with nine days left does not need its minutes counted. */
+function fmtLeft(ms) {
+  const m = Math.floor(ms / 60000)
+  if (m < 1) return 'under a minute'
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${mi}m`
+  return `${mi}m`
+}
+
 /* Running or merely due — both are "on air time" for counting purposes, which
    is what the order list's rollup and the section headers mean by it. */
 const AD_LIVE_LABELS = ['Running', 'Not started']
@@ -4172,10 +4230,31 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       ) : (
                         <MegaphoneOff className="w-4 h-4 text-slate-600" title="No ads" />
                       )
+                      /* How far through its window the current advert is.
+                         Only for ads, only while one is actually inside its
+                         window, and only when that window has both ends — see
+                         currentAdProgress. `now` ticks every 30s, so the bar
+                         advances without the page being refreshed. */
+                      const prog = currentAdProgress(o, now)
                       return (
-                        <span className="inline-flex items-center gap-1.5 text-slate-300">
-                          {icon}{cnt} Ad{cnt === 1 ? '' : 's'}
-                        </span>
+                        <div className="space-y-1">
+                          <span className="inline-flex items-center gap-1.5 text-slate-300">
+                            {icon}{cnt} Ad{cnt === 1 ? '' : 's'}
+                          </span>
+                          {prog && (
+                            <div title={`${Math.round(prog.pct)}% of this ad's time has passed — ${fmtLeft(prog.msLeft)} left, ending ${new Date(prog.endsAt).toLocaleString()}`
+                              + (prog.started ? '' : '. It has not been started yet.')}
+                              className="w-24 cursor-help">
+                              <div className="h-1 rounded-full bg-surface-border overflow-hidden">
+                                <div className={`h-full rounded-full transition-all ${prog.cls}`}
+                                  style={{ width: `${prog.pct}%` }} />
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                {fmtLeft(prog.msLeft)} left
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       )
                     })()
                   ) : (
