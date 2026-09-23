@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import {
-  Package, Trophy, Download, FilterX, Boxes, ShoppingCart, Receipt, AlertTriangle,
+  Package, Trophy, Download, FilterX, Boxes, ShoppingCart, Receipt, AlertTriangle, TrendingUp,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -98,7 +98,7 @@ export default function TopItemsReportPage() {
     setLoading(true); setError('')
     const { data, error: e } = await fetchAllRows(() => {
       let q = supabase.from('order_items')
-        .select('id, product_id, quantity, unit_price, line_total, currency, added_at, is_deleted, '
+        .select('id, product_id, quantity, unit_price, unit_cost, line_total, currency, added_at, is_deleted, '
           + 'order:delivery_orders(id, order_number, status, isclosed, scheduled_date, closed_at, created_at, company_id), '
           + 'product:products(id, code, name, is_service, is_advertisement)')
         .not('product_id', 'is', null)
@@ -169,6 +169,8 @@ export default function TopItemsReportPage() {
                   rank: n + 1, code: i.code, item: i.name, quantity: i.qty, orders: i.orders,
                   share: `${(i.share * 100).toFixed(1)}%`,
                   ...Object.fromEntries(Object.entries(i.revenue).map(([c, v]) => [`revenue ${c}`, v])),
+                  ...Object.fromEntries(Object.entries(i.benefit).map(([c, v]) => [`benefit ${c}`, v])),
+                  'units not costed': i.uncostedQty,
                   first_sold: i.firstDay, last_sold: i.lastDay,
                 })),
                 `most-sold-${period.from}_${period.to}.csv`)}
@@ -222,7 +224,7 @@ export default function TopItemsReportPage() {
       )}
 
       {/* ── the summary, over the same window ─────────────────── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat Icon={Boxes} label="Units sold" value={fmtQty(model.summary.units)}
           sub={`across ${model.summary.distinctItems} item${model.summary.distinctItems === 1 ? '' : 's'}`} />
         <Stat Icon={ShoppingCart} label="Orders" value={model.summary.orders.toLocaleString()}
@@ -233,6 +235,24 @@ export default function TopItemsReportPage() {
             : '—'}
           sub={model.summary.currencies.slice(1)
             .map(c => fmtMoney(model.summary.revenue[c], c)).join(' · ') || 'never summed across currencies'} />
+        {/* Benefit says plainly how much of the window it covers. A margin
+            worked out over a third of the units is a different claim from one
+            worked out over all of them, and the tile should not hide which. */}
+        <Stat Icon={TrendingUp} label="Benefit"
+          tone={model.summary.benefitCurrencies.length && model.summary.benefit[model.summary.benefitCurrencies[0]] < 0
+            ? 'text-rose-300' : 'text-emerald-300'}
+          value={model.summary.benefitCurrencies.length
+            ? fmtMoney(model.summary.benefit[model.summary.benefitCurrencies[0]], model.summary.benefitCurrencies[0])
+            : '—'}
+          sub={model.summary.costedUnits === 0
+            ? 'no cost recorded on any item sold'
+            : [
+                model.summary.benefitCurrencies.slice(1)
+                  .map(c => fmtMoney(model.summary.benefit[c], c)).join(' · '),
+                model.summary.uncostedUnits > 0
+                  ? `on ${(model.summary.costedShare * 100).toFixed(0)}% of units — ${fmtQty(model.summary.uncostedUnits)} have no cost`
+                  : 'on every unit sold',
+              ].filter(Boolean).join(' · ')} />
         <Stat Icon={Trophy} label="Top item"
           value={model.summary.top ? fmtQty(model.summary.top.qty) : '—'}
           tone="text-brand-300"
@@ -299,12 +319,13 @@ export default function TopItemsReportPage() {
                 <th className="text-right px-4 py-2 font-medium">Share</th>
                 <th className="text-right px-4 py-2 font-medium">Orders</th>
                 <th className="text-right px-4 py-2 font-medium">Revenue</th>
+                <th className="text-right px-4 py-2 font-medium" title="What the sale earned: revenue less what the goods cost us, using the cost recorded on each line at the time it was sold.">Benefit</th>
                 <th className="text-left px-4 py-2 font-medium">Last sold</th>
               </tr>
             </thead>
             <tbody>
               {shown.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500 text-xs">
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500 text-xs">
                   Nothing to show for this window.
                 </td></tr>
               ) : shown.map((i, n) => (
@@ -319,6 +340,25 @@ export default function TopItemsReportPage() {
                     {Object.entries(i.revenue).map(([c, v]) => (
                       <div key={c}>{fmtMoney(v, c)}</div>
                     ))}
+                  </td>
+                  {/* Blank, not zero, when nothing was costed: a product with
+                      no cost entered would otherwise read as pure profit. */}
+                  <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
+                    {!i.anyCosted ? (
+                      <span className="text-slate-600 text-xs" title="No cost is recorded for this product, so its benefit cannot be worked out. Enter a cost on the product and future sales will carry it.">—</span>
+                    ) : (
+                      <>
+                        {Object.entries(i.benefit).map(([c, v]) => (
+                          <div key={c} className={v >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{fmtMoney(v, c)}</div>
+                        ))}
+                        {!i.fullyCosted && (
+                          <div className="text-[10px] text-amber-400/80"
+                            title={`${fmtQty(i.uncostedQty)} of ${fmtQty(i.qty)} units have no cost recorded and are left out of this figure.`}>
+                            part costed
+                          </div>
+                        )}
+                      </>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-slate-500 text-xs">{i.lastDay}</td>
                 </tr>

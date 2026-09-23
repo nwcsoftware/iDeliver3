@@ -11,6 +11,17 @@
  *
  * A line taken back off an order is not a sale and never counts.
  *
+ * BENEFIT is what the sale earned: the line's value less what the goods cost
+ * us. The cost is order_items.unit_cost, stamped on the line when it was
+ * written (fix153) and never moved since — so a margin does not change when
+ * somebody edits a supplier price next month.
+ *
+ * A line with NO cost recorded is counted SEPARATELY rather than treated as
+ * free. Four of the eight products have never had a cost entered, and calling
+ * their whole revenue profit would be the most flattering possible lie. Those
+ * lines are reported as "not costed" so the office can see what the benefit
+ * figure does and does not cover.
+ *
  * MONEY IS PER CURRENCY, ALWAYS. There is no exchange rate anywhere in this
  * application, so revenue is kept in its own currency and never summed across
  * them. QUANTITY is the one figure that can be added up safely, which is why
@@ -85,7 +96,11 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
   const byProduct = new Map()
   const orderIds = new Set()
   const revenue = {}            // currency -> amount
+  const cost_t = {}             // currency -> cost of the costed lines
+  const benefit_t = {}          // currency -> revenue less cost, costed lines
   let units = 0
+  let costedUnits = 0
+  let uncostedUnits = 0
   let skippedNoProduct = 0
 
   for (const l of lines) {
@@ -102,6 +117,11 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
     const qty = Number(l.quantity) || 0
     const cur = l.currency || 'USD'
     const value = round2(l.line_total != null ? l.line_total : (Number(l.unit_price) || 0) * qty)
+    /* NULL cost is not a cost of zero. `costed` says whether this line can
+       contribute to a benefit at all; everything downstream keeps the two
+       apart so a blank never reads as pure profit. */
+    const costed = l.unit_cost != null && l.unit_cost !== ''
+    const cost   = costed ? round2((Number(l.unit_cost) || 0) * qty) : 0
 
     const key = l.product_id
     if (!byProduct.has(key)) {
@@ -111,6 +131,10 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
         name: l.product.name || '—',
         qty: 0,
         revenue: {},
+        cost: {},          // per currency, costed lines only
+        benefit: {},       // per currency, costed lines only
+        costedQty: 0,      // units whose cost is known
+        uncostedQty: 0,    // units with no cost recorded against the product
         orders: new Set(),
         firstDay: day,
         lastDay: day,
@@ -119,6 +143,17 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
     const row = byProduct.get(key)
     row.qty += qty
     row.revenue[cur] = round2((row.revenue[cur] || 0) + value)
+    if (costed) {
+      row.costedQty     += qty
+      row.cost[cur]     = round2((row.cost[cur] || 0) + cost)
+      row.benefit[cur]  = round2((row.benefit[cur] || 0) + (value - cost))
+      cost_t[cur]       = round2((cost_t[cur] || 0) + cost)
+      benefit_t[cur]    = round2((benefit_t[cur] || 0) + (value - cost))
+      costedUnits       += qty
+    } else {
+      row.uncostedQty += qty
+      uncostedUnits   += qty
+    }
     row.orders.add(o.id)
     if (day < row.firstDay) row.firstDay = day
     if (day > row.lastDay)  row.lastDay = day
@@ -129,7 +164,15 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
   }
 
   const items = [...byProduct.values()]
-    .map(r => ({ ...r, orders: r.orders.size, share: units > 0 ? r.qty / units : 0 }))
+    .map(r => ({
+      ...r,
+      orders: r.orders.size,
+      share: units > 0 ? r.qty / units : 0,
+      // True only when EVERY unit of this item carries a cost. A part-costed
+      // item shows its benefit with a caveat rather than as a clean figure.
+      fullyCosted: r.uncostedQty === 0 && r.costedQty > 0,
+      anyCosted:   r.costedQty > 0,
+    }))
     .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name))
 
   return {
@@ -140,6 +183,15 @@ export function buildTopItems(lines = [], { from, to, closedOnly = true } = {}) 
       distinctItems: items.length,
       orders: orderIds.size,
       revenue,
+      cost: cost_t,
+      benefit: benefit_t,
+      benefitCurrencies: Object.keys(benefit_t).filter(c => round2(benefit_t[c]) !== 0),
+      /* How much of the window the benefit actually covers. Printed beside the
+         figure, because a profit computed over a third of the units is a
+         different claim from one computed over all of them. */
+      costedUnits:   round2(costedUnits),
+      uncostedUnits: round2(uncostedUnits),
+      costedShare:   units > 0 ? costedUnits / units : 0,
       currencies: Object.keys(revenue).filter(c => round2(revenue[c]) !== 0),
       top: items[0] || null,
       /* Lines with no product behind them — a free-text parcel, an external
