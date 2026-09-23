@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
+import { isStrictAdmin } from '../../lib/roles'
 import logo from '../../assets/Logo.png'
 import AboutPopup from '../about/AboutPopup'
 import MessagesIndicator from '../messages/MessagesIndicator'
@@ -84,7 +85,10 @@ export const navGroups = [
     ],
   },
   {
-    key: 'reports', label: 'Reports', icon: BarChart3,
+    /* Reports is super admin and admin only — the first of the Senior Call
+       Center exceptions. These pages carry costs, margins and company-wide
+       money, which is not what that rank is for. */
+    key: 'reports', label: 'Reports', icon: BarChart3, strictAdminOnly: true,
     items: [
       // Cost and margin per item, so admin and super admin only — the rest of
       // the Reports group shows revenue, which the whole office may see.
@@ -177,6 +181,9 @@ export default function Sidebar() {
 
   const isAdmin      = hasRole('super_admin', 'admin')
   const isSuperAdmin = hasRole('super_admin')
+  // Admin or super admin and nothing else — a Senior Call Center user is not
+  // one, even though they satisfy hasRole('admin') everywhere else.
+  const strictAdmin  = isStrictAdmin(currentUser?.role)
 
   const [collapsed,     setCollapsed]     = useState(true)
   const [secondaryOpen, setSecondaryOpen] = useState(false)   // the all-in-one fly-out
@@ -210,10 +217,17 @@ export default function Sidebar() {
     return next
   })
 
-  // Only the groups this user may see, with their permitted items.
+  /* Only the groups this user may see, with their permitted items.
+
+     `adminOnly` counts a Senior Call Center user as an admin, because that
+     rank inherits admin. `strictAdminOnly` does NOT — it is the flag for the
+     handful of things the senior rank is deliberately kept out of. */
   const visibleGroups = navGroups
-    .filter(g => (!g.adminOnly || isAdmin) && (!g.superOnly || isSuperAdmin))
-    .map(g => ({ ...g, items: g.items.filter(i => (!i.superOnly || isSuperAdmin) && (!i.adminOnly || isAdmin)) }))
+    .filter(g => (!g.adminOnly || isAdmin) && (!g.superOnly || isSuperAdmin)
+              && (!g.strictAdminOnly || strictAdmin))
+    .map(g => ({ ...g, items: g.items.filter(i =>
+         (!i.superOnly || isSuperAdmin) && (!i.adminOnly || isAdmin)
+      && (!i.strictAdminOnly || strictAdmin)) }))
     .filter(g => g.items.length > 0)
   const [aboutOpen,     setAboutOpen]     = useState(false)   // "About _NXCORE" popup
   const [tip,           setTip]           = useState({ label: '', y: 0, visible: false })

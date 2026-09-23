@@ -42,9 +42,21 @@ export function roleSatisfies(role, asked = []) {
   return rolesSatisfying(asked).has(role)
 }
 
-/** Exactly this role, ignoring inheritance — for a permission a senior user
- *  must NOT get by virtue of being admin-like. */
+/** Exactly this role, ignoring inheritance — for a permission a senior call
+ *  centre user must NOT get by virtue of being admin-like. */
 export const roleIsExactly = (role, ...asked) => asked.includes(role)
+
+/* ── THE EXCEPTIONS ──────────────────────────────────────────────────────────
+   Things a Senior Call Center user does NOT get, despite otherwise working as
+   an administrator. Each one is a deliberate, named removal; the default stays
+   inheritance, so this list is the whole of the difference between the two
+   ranks and can be read in one place.
+
+     Reports    the Reports menu and every page under it — Reports, Most Sold
+                Items, Closed Orders Report, Story Orders, Performance and
+                Customer Categories. They carry costs, margins and company-wide
+                money. */
+export const isStrictAdmin = (role) => roleIsExactly(role, 'super_admin', 'admin')
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a
    person that way. */

@@ -8,6 +8,7 @@ import {
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { PERIODS, DEFAULT_PERIOD, periodWindow, buildTopItems } from '../lib/topItemsReport'
 import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 import SearchField from '../components/ui/SearchField'
@@ -108,13 +109,16 @@ function ChartTip({ active, payload }) {
 
 export default function TopItemsReportPage() {
   const { COMPANY_ID } = useApp()
-  const { hasRole } = useAuth()
+  const { currentUser } = useAuth()
   /* Admin and super admin only. This page used to show quantities and revenue,
      which the whole office may see; since fix153 it shows what each item COSTS
      us and what we make on it — Arguile at 70%, Gallon 20 L at 14% — and that
      is not a figure for whoever happens to be taking orders. The CSV carries
      the same, so the gate covers the data and not just the screen. */
-  const canSee = hasRole('super_admin', 'admin')
+  // Strict: a Senior Call Center user inherits admin everywhere else, and is
+  // deliberately kept out of Reports. The route guards this too; the page
+  // keeps its own check so the data is never fetched either.
+  const canSee = isStrictAdmin(currentUser?.role)
 
   const [periodKey,  setPeriodKey]  = useState(DEFAULT_PERIOD)
   const [customFrom, setCustomFrom] = useState('')

@@ -5,6 +5,7 @@ import { AppProvider }  from './context/AppContext'
 import Sidebar          from './components/layout/Sidebar'
 import Header           from './components/layout/Header'
 import PartnerShell      from './components/layout/PartnerShell'
+import StrictAdminRoute  from './components/RoleGate'
 import LoginPage        from './pages/LoginPage'
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage'
 import DashboardPage    from './pages/DashboardPage'
@@ -205,12 +206,17 @@ function AppShell() {
                 <Route path="/deliveries"    element={<DeliveriesPage />} />
                 <Route path="/closed-orders" element={<DeliveriesPage closed />} />
                 <Route path="/tracking"   element={<TrackingPage   />} />
-                <Route path="/reports"    element={<ReportsPage    />} />
-                <Route path="/performance" element={<PerformanceReportPage />} />
-                <Route path="/customer-categories" element={<CustomerCategoryReportPage />} />
-                <Route path="/closed-orders-report" element={<ClosedOrdersReportPage />} />
-                <Route path="/story-orders-report" element={<StoryOrdersReportPage />} />
-                <Route path="/top-items" element={<TopItemsReportPage />} />
+                {/* The Reports group: administrators and super administrators
+                    only. Gated on the ROUTE rather than inside each page — a
+                    hidden menu entry is not a restriction while the address
+                    still opens, and a report added later is covered by being
+                    listed here instead of by somebody remembering a check. */}
+                <Route path="/reports"    element={<StrictAdminRoute what="Reports"><ReportsPage /></StrictAdminRoute>} />
+                <Route path="/performance" element={<StrictAdminRoute what="Performance"><PerformanceReportPage /></StrictAdminRoute>} />
+                <Route path="/customer-categories" element={<StrictAdminRoute what="Customer Categories"><CustomerCategoryReportPage /></StrictAdminRoute>} />
+                <Route path="/closed-orders-report" element={<StrictAdminRoute what="The Closed Orders Report"><ClosedOrdersReportPage /></StrictAdminRoute>} />
+                <Route path="/story-orders-report" element={<StrictAdminRoute what="The Story Orders Report"><StoryOrdersReportPage /></StrictAdminRoute>} />
+                <Route path="/top-items" element={<StrictAdminRoute what="Most Sold Items"><TopItemsReportPage /></StrictAdminRoute>} />
                 <Route path="/company"   element={<CompanyPage    />} />
                 <Route path="/products"       element={<ProductsPage          />} />
                 <Route path="/inventory"      element={<ProductInventoryPage  />} />
