@@ -37,6 +37,7 @@ const fmtMoney = (v, c) => `${c} ${Number(v || 0).toLocaleString(undefined, {
   minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })}`
 
 const fmtQty = n => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
+const round2q = n => Math.round((Number(n) || 0) * 100) / 100
 
 function compact(n) {
   const v = Number(n) || 0, a = Math.abs(v)
@@ -83,17 +84,18 @@ function ChartTip({ active, payload }) {
       {/* The split the bar is drawing, in the one currency it can draw. */}
       {d.chartCur && (
         <div className="mt-1.5 pt-1.5 border-t border-surface-border/60 space-y-0.5">
-          {d.uncosted > 0 ? (
-            <p className="text-[11px] text-slate-400 tabular-nums">
-              {fmtMoney(d.uncosted, d.chartCur)} — no cost recorded, so it cannot be split
-            </p>
+          {d.qtyUncosted > 0 ? (
+            <p className="text-[11px] text-slate-400">No cost recorded, so the bar cannot be split</p>
           ) : (
             <>
               <p className="text-[11px] text-indigo-300 tabular-nums">Cost {fmtMoney(d.cost, d.chartCur)}</p>
-              <p className="text-[11px] text-emerald-300 tabular-nums">
+              <p className={`text-[11px] tabular-nums ${d.benefit >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
                 Benefit {fmtMoney(d.benefit, d.chartCur)}
-                {d.cost + d.benefit > 0 && ` · ${((d.benefit / (d.cost + d.benefit)) * 100).toFixed(0)}%`}
+                {d.marginPct != null && ` · ${d.marginPct.toFixed(0)}% of the value`}
               </p>
+              {d.benefit < 0 && (
+                <p className="text-[10px] text-rose-300/80">Sold below cost — no green on the bar.</p>
+              )}
             </>
           )}
         </div>
@@ -155,13 +157,18 @@ export default function TopItemsReportPage() {
       i.name.toLowerCase().includes(q) || String(i.code).toLowerCase().includes(q))
   }, [model.items, search])
 
-  /* THE BAR IS MONEY, NOT UNITS. Units and currency cannot share one axis —
-     530 pieces plus LBP 100,000,000 is not a length — so the bar is the item's
-     REVENUE, split into what it cost and what it earned. The seven items are
-     still the seven that sold most, which is what the heading says.
+  /* THE BAR IS THE SOLD QUANTITY, and the axis counts units — that is what
+     the chart is for and what the heading promises.
 
-     One currency only, the one carrying the most revenue in this window, since
-     nothing in this application is ever summed across currencies. */
+     The green part is how much of that bar is profit, BY VALUE. Money cannot
+     be laid end to end with units on one axis, so the margin is applied to the
+     bar instead of added to it: an item selling 530 units at a 70% margin
+     shows 371 units' worth of green. The length is still 530 either way, so
+     the ranking the axis shows is never distorted; what changes is how much of
+     each bar is earnings rather than cost.
+
+     The split is worked out in one currency, the one carrying most of the
+     window's revenue, since nothing here is ever summed across currencies. */
   const chartCur = useMemo(() => {
     const t = {}
     for (const i of shown) for (const [c, v] of Object.entries(i.revenue || {})) t[c] = (t[c] || 0) + (Number(v) || 0)
@@ -172,17 +179,25 @@ export default function TopItemsReportPage() {
     const revenue = Number(i.revenue?.[chartCur] || 0)
     const benefit = Number(i.benefit?.[chartCur] || 0)
     const cost    = Number(i.cost?.[chartCur] || 0)
-    /* An item with no cost recorded keeps its full bar — the revenue really
-       happened — but as one neutral block rather than a green one. Showing it
-       as all profit would be a lie; hiding it would be a different one. */
-    const splittable = i.anyCosted && (cost > 0 || benefit !== 0)
+    const qty     = Number(i.qty) || 0
+    /* An item with no cost recorded keeps its full bar — it really sold — but
+       as one neutral block. Drawing it as all profit would be a lie; leaving
+       it out would be a different one.
+
+       A loss (benefit below zero) shows no green at all and says so in the
+       tooltip: a negative length stacked on a positive one draws a bar that
+       reads as neither. */
+    const splittable = i.anyCosted && revenue > 0 && benefit > 0
+    const gainShare  = splittable ? Math.min(1, benefit / revenue) : 0
     return {
       ...i,
       label: i.name.slice(0, 18),
-      chartCur,
-      cost:     splittable ? cost : 0,
-      benefit:  splittable ? benefit : 0,
-      uncosted: splittable ? 0 : revenue,
+      chartCur, cost, benefit, revenue,
+      // The three pieces add up to the sold quantity, always.
+      qtyCost:     i.anyCosted ? round2q(qty * (1 - gainShare)) : 0,
+      qtyBenefit:  round2q(qty * gainShare),
+      qtyUncosted: i.anyCosted ? 0 : qty,
+      marginPct:   revenue > 0 ? (benefit / revenue) * 100 : null,
     }
   })
   const anyFilter = periodKey !== DEFAULT_PERIOD || !closedOnly || !!search.trim()
@@ -328,7 +343,7 @@ export default function TopItemsReportPage() {
         <h2 className="text-sm font-semibold text-slate-200">Top {Math.min(TOP_N, chartData.length)} by quantity</h2>
         <p className="text-xs text-slate-500 mt-0.5 mb-2">
           Ranked by units, because units are the only figure that adds up honestly across different goods.
-          Each bar is that item’s revenue{chartCur ? ` in ${chartCur}` : ''} — what the goods cost, and what the sale earned on top.
+          Each bar is the quantity sold; the green part is how much of it is profit, by value{chartCur ? ` (${chartCur})` : ''}.
         </p>
         {chartCur && (
           <div className="flex items-center gap-4 mb-3 text-[11px] text-slate-400">
@@ -338,7 +353,7 @@ export default function TopItemsReportPage() {
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BAR_GAIN }} /> Benefit
             </span>
-            {chartData.some(d => d.uncosted > 0) && (
+            {chartData.some(d => d.qtyUncosted > 0) && (
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BAR_UNKNOWN }} /> No cost recorded
               </span>
@@ -356,9 +371,11 @@ export default function TopItemsReportPage() {
                 <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(99,102,241,0.08)' }} />
                 {/* Stacked: cost, then benefit on top of it, so the whole bar
                     is the revenue and the green part is what was made on it. */}
-                <Bar dataKey="cost"     stackId="money" fill={BAR_COST}    radius={[0, 0, 0, 0]} />
-                <Bar dataKey="benefit"  stackId="money" fill={BAR_GAIN}    radius={[0, 3, 3, 0]} />
-                <Bar dataKey="uncosted" stackId="money" fill={BAR_UNKNOWN} radius={[0, 3, 3, 0]} />
+                {/* The three add up to the sold quantity, so the bar's length
+                    is the figure the axis counts and the heading names. */}
+                <Bar dataKey="qtyCost"     stackId="qty" fill={BAR_COST}    radius={[0, 0, 0, 0]} />
+                <Bar dataKey="qtyBenefit"  stackId="qty" fill={BAR_GAIN}    radius={[0, 3, 3, 0]} />
+                <Bar dataKey="qtyUncosted" stackId="qty" fill={BAR_UNKNOWN} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
