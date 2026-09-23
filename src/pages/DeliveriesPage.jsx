@@ -574,7 +574,13 @@ const PAYMENT_METHODS = [
 // Payments are stored as a single amount + currency, so any order currency works.
 const PAYMENT_CURRENCIES = CURRENCIES
 
-const EMPTY_PAYMENT = { method: 'cash', amount: '', currency: 'USD', paid_at: '', notes: '' }
+/* `reference` and `provider_name` belong to a payment that was not cash: the
+   number the provider issued, and who it came through (fix154). Cash needs
+   neither — the drawer and the collector's name are the whole record. */
+const EMPTY_PAYMENT = { method: 'cash', amount: '', currency: 'USD', paid_at: '', notes: '', reference: '', provider_name: '' }
+
+/* Cash is handed over; anything else is sent, and what is sent has a trail. */
+const paymentNeedsTrail = (method) => !!method && method !== 'cash'
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
@@ -2070,13 +2076,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     setOrigAdIds((adData ?? []).map(a => a.id))
     const { data: payData } = await supabase
       .from('payment_collections')
-      .select('id,collection_type,amount,currency,collected_at,notes,collected_by,collected_by_name,collection_group')
+      .select('id,collection_type,amount,currency,collected_at,notes,reference,provider_name,collected_by,collected_by_name,collection_group')
       .eq('order_id', o.id)
       .order('collected_at')
     const mappedPayments = (payData ?? []).map(pc => {
       return {
         _id:      pc.id,
         method:   pc.collection_type || 'cash',
+        reference:     pc.reference     || '',
+        provider_name: pc.provider_name || '',
         currency: pc.currency || 'USD',
         amount:   round2(pc.amount) || '',
         paid_at:  pc.collected_at ? pc.collected_at.slice(0, 10) : '',
@@ -2274,6 +2282,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       currency:          cur,
       collected_at:      payForm.paid_at || new Date().toISOString(),
       notes:             payForm.notes?.trim() || null,
+      // Kept only for a method that has a trail — a cash row carrying an empty
+      // string would read as "a reference that is blank" rather than "none".
+      reference:         paymentNeedsTrail(payForm.method) ? (payForm.reference?.trim()     || null) : null,
+      provider_name:     paymentNeedsTrail(payForm.method) ? (payForm.provider_name?.trim() || null) : null,
       collected_by:      currentUser?.user_id || null,
       collected_by_name: currentUserName,
       collection_group:  'Call center',   // recorded by an office user
@@ -2730,6 +2742,10 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         currency:        p.currency || 'USD',
         collected_at:    p.paid_at || new Date().toISOString(),
         notes:           p.notes?.trim() || null,
+        // Cleared when a payment is switched back to cash, so a method change
+        // never leaves the trail of the method it used to be.
+        reference:       paymentNeedsTrail(p.method) ? (p.reference?.trim()     || null) : null,
+        provider_name:   paymentNeedsTrail(p.method) ? (p.provider_name?.trim() || null) : null,
         ...paymentAccount,
       }
       // New payments are stamped with the signed-in user as the collector (paid to
@@ -3286,6 +3302,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // fully paid — except a credit-allowed customer (or a zero-total order) may close
   // with an unpaid balance (it becomes a receivable settled later on the Credit
   // Customers page).
+  /* Any payment on this order that is not cash. Drives the two trail columns:
+     they appear the moment a method changes, and are absent on an all-cash
+     order rather than sitting there empty. */
+  const showPayTrail = payments.some(p => paymentNeedsTrail(p.method))
+
   const closeRequirements = []
   // Once a contact has account numbers, THEY decide whether an unpaid balance may
   // close: a cash account must be settled, a credit account must stay inside its
@@ -5279,18 +5300,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 <div className="border border-surface-border rounded-xl overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>
+                      {/* The trail columns appear only once a payment on this
+                          order is something other than cash — a row of empty
+                          boxes on an all-cash order is two columns of noise. */}
                       <tr className="bg-surface-hover border-b border-surface-border text-slate-500 font-medium uppercase tracking-wider">
-                        <th className="text-left px-3 py-2 w-[20%]">Method</th>
-                        <th className="text-left px-3 py-2 w-[18%]">Amount</th>
-                        <th className="text-left px-3 py-2 w-[14%]">Currency</th>
-                        <th className="text-left px-3 py-2 w-[18%]">Date</th>
-                        <th className="text-left px-3 py-2 w-[26%]">Notes</th>
+                        <th className={`text-left px-3 py-2 ${showPayTrail ? 'w-[14%]' : 'w-[20%]'}`}>Method</th>
+                        <th className={`text-left px-3 py-2 ${showPayTrail ? 'w-[12%]' : 'w-[18%]'}`}>Amount</th>
+                        <th className={`text-left px-3 py-2 ${showPayTrail ? 'w-[10%]' : 'w-[14%]'}`}>Currency</th>
+                        <th className={`text-left px-3 py-2 ${showPayTrail ? 'w-[13%]' : 'w-[18%]'}`}>Date</th>
+                        {showPayTrail && <th className="text-left px-3 py-2 w-[16%]" title="The bank, exchange house or wallet the money came through.">Paid through</th>}
+                        {showPayTrail && <th className="text-left px-3 py-2 w-[16%]" title="The transfer, cheque or receipt number the provider issued.">Reference</th>}
+                        <th className={`text-left px-3 py-2 ${showPayTrail ? 'w-[15%]' : 'w-[26%]'}`}>Notes</th>
                         <th className="w-[4%]"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {payments.length === 0 ? (
-                        <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-600">No payments yet — click "Add Payment"</td></tr>
+                        <tr><td colSpan={showPayTrail ? 8 : 6} className="px-3 py-6 text-center text-slate-600">No payments yet — click "Add Payment"</td></tr>
                       ) : payments.map((p, idx) => {
                         // When the "protect other users' payments" restriction is on, a
                         // saved payment is read-only unless it was recorded by the current
@@ -5330,6 +5356,29 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                               disabled={pLocked}
                               onChange={e => setPayment(idx, 'paid_at', e.target.value)} />
                           </td>
+                          {/* Only a payment that was SENT has a trail. A cash row
+                              keeps its place in the grid but is left blank rather
+                              than inviting a reference that means nothing. */}
+                          {showPayTrail && (
+                            <td className="px-3 py-2">
+                              {paymentNeedsTrail(p.method) ? (
+                                <input className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+                                  value={p.provider_name || ''} disabled={pLocked}
+                                  onChange={e => setPayment(idx, 'provider_name', e.target.value)}
+                                  placeholder="Bank, OMT, Western Union…" />
+                              ) : <span className="text-slate-700">—</span>}
+                            </td>
+                          )}
+                          {showPayTrail && (
+                            <td className="px-3 py-2">
+                              {paymentNeedsTrail(p.method) ? (
+                                <input className="input py-1.5 text-xs font-mono disabled:opacity-60 disabled:cursor-not-allowed"
+                                  value={p.reference || ''} disabled={pLocked}
+                                  onChange={e => setPayment(idx, 'reference', e.target.value)}
+                                  placeholder="Transfer / cheque no." />
+                              ) : <span className="text-slate-700">—</span>}
+                            </td>
+                          )}
                           <td className="px-3 py-2">
                             <input className="input py-1.5 text-xs disabled:opacity-60 disabled:cursor-not-allowed" value={p.notes}
                               disabled={pLocked}
@@ -5976,6 +6025,24 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                   onChange={e => setPayFld('paid_at', e.target.value)} />
               </div>
             </div>
+            {/* Only for a payment that was sent rather than handed over. */}
+            {paymentNeedsTrail(payForm.method) && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Paid through</label>
+                  <input className="input" value={payForm.provider_name || ''}
+                    onChange={e => setPayFld('provider_name', e.target.value)}
+                    placeholder="Bank, OMT, Western Union…" />
+                </div>
+                <div>
+                  <label className="label">Reference</label>
+                  <input className="input font-mono" value={payForm.reference || ''}
+                    onChange={e => setPayFld('reference', e.target.value)}
+                    placeholder="Transfer / cheque no." />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="label">Notes</label>
               <input className="input" value={payForm.notes} onChange={e => setPayFld('notes', e.target.value)} placeholder="Optional" />
@@ -6319,6 +6386,11 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                         <div key={p.id} className="flex justify-between gap-3">
                           <span className="text-slate-200 text-xs">
                             {p.collection_type || 'cash'}{p.collected_at ? ` · ${String(p.collected_at).slice(0, 10)}` : ''}
+                            {(p.provider_name || p.reference) && (
+                              <span className="block text-[10px] text-slate-500">
+                                {[p.provider_name, p.reference].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
                           </span>
                           <span className="text-emerald-300 text-xs text-right tabular-nums">{fmtAmount(p.amount, p.currency)}</span>
                         </div>
