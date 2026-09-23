@@ -97,7 +97,7 @@ export const SEAT_BY_ROLE = {
      it is the same office login on the same package, so it draws the same seat
      (fix156). Counting it as free would let the administrator allowance be
      walked around by renaming the rank. */
-  senior_user: 'admin',
+  senior_call_center: 'admin',
   call_center: 'call_center',
   partner:     'partner',
   // supplier is not a seat on the package at all — it subscribes on its own
