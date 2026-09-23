@@ -19,6 +19,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, formatAccountNumber, insertContactWithUniqueCode } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
@@ -70,7 +71,7 @@ function fmtDutyDate(dateStr, timeStr) {
 export default function DriversPage() {
   const { drivers, orders, fetchDrivers, loading, COMPANY_ID } = useApp()
   const { currentUser, hasRole } = useAuth()
-  const isAdmin = hasRole('super_admin', 'admin')
+  const isAdmin = isStrictAdmin(currentUser?.role)
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || 'You'
 
   // Derive how a driver's duty status should be displayed.

@@ -37,7 +37,7 @@ import { saveOrderPackages, buildTrackingNumber } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
 import { syncOrderStock } from '../lib/productStock'
-import { canReopenClosedOrder } from '../lib/roles'
+import { canReopenClosedOrder, isStrictAdmin } from '../lib/roles'
 import TagLocationField from '../components/orders/TagLocationField'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { getSavedLocations, addSavedLocation, renameSavedLocation, removeSavedLocation, getHiddenLocations, hideLocation } from '../lib/savedLocations'
@@ -989,17 +989,23 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }, [])
   const { currentUser, hasRole } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
-  // Only admins may set the order/delivery status by hand; a normal (call-center)
-  // user can't — both are driven by the driver app / order lifecycle instead.
-  const canEditDeliveryStatus = hasRole('super_admin', 'admin')
+  /* Only admins may set the order/delivery status by hand; a normal user can't
+     — both are driven by the driver app / order lifecycle instead. STRICT: a
+     Senior Call Center user is on the call-centre side of that line. */
+  const canEditDeliveryStatus = isStrictAdmin(currentUser?.role)
   const canEditOrderStatus    = canEditDeliveryStatus   // same roles govern the order status
   /* Reopening a closed order is an ADMINISTRATOR's, strictly — a Senior Call
      Center user satisfies hasRole('admin') everywhere else and not here. */
   const canReopenOrders       = canReopenClosedOrder(currentUser?.role)
-  // Super-admin restriction toggles (lock saved local-market invoices / protect
-  // other users' payments) apply only to normal users. Admins and super admins are
-  // exempt — they may always edit/delete saved invoices and any payment.
-  const canBypassRestrictions = hasRole('super_admin', 'admin')
+  /* Super-admin restriction toggles (lock saved local-market invoices / protect
+     other users' payments) apply only to normal users. Admins and super admins
+     are exempt — they may always edit/delete saved invoices and any payment.
+
+     STRICT, and this one matters: those restrictions exist to keep one user's
+     work safe from another's, and a senior call centre user is exactly the
+     population they were written for. Exempting them would have quietly undone
+     the protection for the busiest desk in the office. */
+  const canBypassRestrictions = isStrictAdmin(currentUser?.role)
   // Full name of the signed-in user, stamped on payments they record (collector).
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
 

@@ -8,6 +8,7 @@ import { useApp } from '../context/AppContext'
 import { isCancelledOrder } from '../lib/orderStatus'
 import { isCreditOrder } from '../lib/subAccounts'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -133,7 +134,7 @@ export default function DriverDuesPage() {
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || null
   // Who may back-/forward-date the "Collect & close as of" settlement date.
   // Admins get this alongside super admins; everyone else settles as of today.
-  const canBackdateSettlement = hasRole('super_admin', 'admin')
+  const canBackdateSettlement = isStrictAdmin(currentUser?.role)
 
   const [tab,     setTab]     = useState('collect')   // 'collect' (dues to collect) | 'history'
   const [filters, setFilters] = useState(EMPTY_FILTERS)

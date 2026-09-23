@@ -8,6 +8,7 @@ import { formatAccountNumber } from '../lib/accountNumber'
 import { isCreditOrder } from '../lib/subAccounts'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -74,7 +75,7 @@ export default function CreditCustomersPage() {
   // Credit balances span the whole history, so pull every order (beyond the window).
   useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
   const currentUserName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || null
-  const isAdmin = hasRole('super_admin', 'admin')   // settlement-erasing tools are admin-only
+  const isAdmin = isStrictAdmin(currentUser?.role)   // settlement-erasing tools are admin-only
 
   const [creditAccounts, setCreditAccounts] = useState([])  // sub_accounts rows of account_type 'credit'
   const [acctLoading,  setAcctLoading]  = useState(true)

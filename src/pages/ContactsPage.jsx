@@ -29,6 +29,7 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import {
   ensureTrialSubscription, TRIAL_DAYS, reviewSubscriptionAfterTypeChange, RATE_CURRENCY,
@@ -152,7 +153,7 @@ export default function ContactsPage({ type }) {
   const cfg = TYPE_CONFIG[type] ?? TYPE_CONFIG.customer
   const { COMPANY_ID, orders, loadFullOrderHistory, refreshInactiveContacts } = useApp()
   const { currentUser, hasRole } = useAuth()
-  const isAdmin = hasRole('super_admin', 'admin')
+  const isAdmin = isStrictAdmin(currentUser?.role)
   const isSuperAdmin = hasRole('super_admin')   // only the super admin may hard-delete a contact
   const navigate = useNavigate()
 

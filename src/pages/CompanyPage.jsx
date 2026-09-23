@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 
 const EMPTY_COMPANY = {
   code: '', name: '', name_ar: '', cr_number: '', vat_number: '',
@@ -39,8 +40,8 @@ function ReadRow({ label, value, icon: Icon }) {
 }
 
 export default function CompanyPage() {
-  const { hasRole } = useAuth()
-  const canEdit = hasRole('super_admin', 'admin')
+  const { hasRole, currentUser } = useAuth()
+  const canEdit = isStrictAdmin(currentUser?.role)
 
   const [company,        setCompany]        = useState(null)
   const [branches,       setBranches]       = useState([])

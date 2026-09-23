@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CalendarClock, X, AlertCircle } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { useApp } from '../context/AppContext'
 import {
   fetchDueSoftwareSubscriptions, daysUntil, todayStr, fmtMoney,
@@ -18,14 +19,18 @@ import {
    Dismissing hides it for this run of the app — it comes back next start-up,
    which is the point: it should keep asking until someone renews. */
 export default function SoftwareSubscriptionAlert() {
-  const { hasRole } = useAuth()
+  const { hasRole, currentUser } = useAuth()
   const { COMPANY_ID } = useApp()
   const navigate = useNavigate()
 
   // The people who act on it. The super admin manages subscriptions from the
   // page itself and is reminded there, so they are not interrupted here.
   const shouldSee = hasRole('admin', 'call_center')
-  const canOpenPage = hasRole('admin')
+  /* The link to the page behind the notice. STRICT, because that page is now
+     closed to a Senior Call Center user — offering a link that refuses is worse
+     than offering none. The NOTICE itself stays: a call centre user already
+     sees it, and this rank is an upgrade of that job, not a demotion. */
+  const canOpenPage = isStrictAdmin(currentUser?.role)
 
   const [rows, setRows]   = useState([])
   const [open, setOpen]   = useState(false)

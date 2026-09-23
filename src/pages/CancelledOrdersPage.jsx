@@ -3,6 +3,7 @@ import { Ban, FilterX, RotateCcw, AlertCircle, CalendarDays } from 'lucide-react
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { isStrictAdmin } from '../lib/roles'
 import { OrderNumber } from '../components/orders/OrderQuickView'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -57,14 +58,14 @@ const EMPTY_FILTERS = { from: '', to: '', source: 'all' }
 
 export default function CancelledOrdersPage() {
   const { cancelledOrders, loading, loadFullOrderHistory, refreshOrder } = useApp()
-  const { hasRole } = useAuth()
+  const { hasRole, currentUser } = useAuth()
   // Cancellations go back as far as the books do, so this page needs the whole
   // history rather than the recent window the app starts with.
   useEffect(() => { loadFullOrderHistory() }, [loadFullOrderHistory])
 
   // Bringing an order back is an admin's call — the same people who may cancel
   // one from the Deliveries list.
-  const canReactivate = hasRole('super_admin', 'admin')
+  const canReactivate = isStrictAdmin(currentUser?.role)
 
   const [search, setSearch]   = useState('')
   const [filters, setFilters] = useState(EMPTY_FILTERS)

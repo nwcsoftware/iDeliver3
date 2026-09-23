@@ -88,6 +88,20 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
                     super-admin only, so the rule is enforced on the writing
                     functions rather than on buttons that do not exist.)
 
+     Admin powers   on pages the rank still uses daily: deactivating a contact,
+     on shared      driver administration, editing the company, reactivating a
+     pages          cancelled order, erasing a credit settlement, backdating a
+                    driver settlement, setting order/delivery status by hand,
+                    and bypassing the payment / saved-invoice locks. The pages
+                    stay open — the powers do not.
+
+   WHAT IS LEFT OF THE INHERITANCE, now that the list is this long: seeing the
+   Administration menu (which holds one readable page for this rank) and
+   reading Subscriptions. Nothing else administrative comes through it. When
+   the next exception lands it is probably time to delete the INHERITS entry
+   and give the rank its own permissions outright, rather than keep subtracting
+   from a grant that no longer carries anything.
+
    CLOSING an order is NOT on this list. A senior call centre user may close an
    eligible order, as an ordinary call centre user may — the rank is an upgrade
    of that job, not a restriction of it. */
