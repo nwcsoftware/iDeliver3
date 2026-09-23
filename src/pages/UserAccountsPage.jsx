@@ -75,6 +75,9 @@ function suggestUsername(base, taken) {
 // Roles an admin may assign (super_admin is intentionally excluded).
 const ASSIGNABLE_ROLES = [
   { value: 'admin',       label: 'Admin' },
+  /* A senior user is an administrator minus a list of exceptions (fix156).
+     Listed under Admin because that is what it is a rank below. */
+  { value: 'senior_user', label: 'Senior User' },
   { value: 'call_center', label: 'Call Center' },
   { value: 'driver',      label: 'Driver' },
   { value: 'customer',    label: 'Customer' },
@@ -462,7 +465,7 @@ export default function UserAccountsPage() {
       return
     }
 
-    const OFFICE_ROLES = ['admin', 'call_center']
+    const OFFICE_ROLES = ['admin', 'senior_user', 'call_center']
     if (modal !== 'add' && modal.contact_id && OFFICE_ROLES.includes(form.role)) {
       setFormErr('This login belongs to a partner or supplier contact and cannot be changed into an office role. '
         + 'Create a separate account for office staff.')

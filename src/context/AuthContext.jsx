@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { supabase } from '../lib/supabase'
 import { getDeviceInfo } from '../lib/device'
 import { checkSubscriptionAccess, accessDeniedMessage } from '../lib/subscriptions'
+import { roleSatisfies } from '../lib/roles'
 
 const AuthContext = createContext(null)
 
@@ -285,8 +286,16 @@ export function AuthProvider({ children }) {
     setCurrentUser(null)
   }, [currentUser])
 
+  /* Asking for a role grants it to anything that INHERITS it — a senior user
+     satisfies a request for 'admin' (fix156, see lib/roles.js). Done here
+     rather than at each of the app's 57 role checks: adding a name to fifteen
+     "super_admin or admin" tests by hand would have missed one, and a missed
+     one is a screen that refuses somebody for no reason they can see.
+
+     Exceptions to that inheritance are written where they apply, as exact
+     checks — so each is a deliberate, visible removal. */
   const hasRole = useCallback((...roles) => {
-    return roles.includes(currentUser?.role)
+    return roleSatisfies(currentUser?.role, roles)
   }, [currentUser])
 
   return (
