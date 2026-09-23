@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   Package, Trophy, Download, FilterX, Boxes, ShoppingCart, Receipt, AlertTriangle, TrendingUp,
@@ -23,7 +23,14 @@ import SearchField from '../components/ui/SearchField'
  * same pass, so the headline and the list cannot drift apart.
  */
 
-const BAR = '#6366f1'
+/* The stacked bar's two halves. Brand indigo for what the goods cost, the
+   app's emerald for what the sale earned — the same green the Benefit column
+   and tile already use, so the colour means one thing everywhere. Slate is
+   revenue that cannot be split because no cost was ever recorded. */
+const BAR       = '#6366f1'
+const BAR_COST  = '#6366f1'
+const BAR_GAIN  = '#34d399'
+const BAR_UNKNOWN = '#475569'
 const TOP_N = 12
 
 const fmtMoney = (v, c) => `${c} ${Number(v || 0).toLocaleString(undefined, {
@@ -73,6 +80,24 @@ function ChartTip({ active, payload }) {
       {Object.entries(d.revenue || {}).map(([c, v]) => (
         <p key={c} className="text-[11px] text-slate-400 tabular-nums">{fmtMoney(v, c)}</p>
       ))}
+      {/* The split the bar is drawing, in the one currency it can draw. */}
+      {d.chartCur && (
+        <div className="mt-1.5 pt-1.5 border-t border-surface-border/60 space-y-0.5">
+          {d.uncosted > 0 ? (
+            <p className="text-[11px] text-slate-400 tabular-nums">
+              {fmtMoney(d.uncosted, d.chartCur)} — no cost recorded, so it cannot be split
+            </p>
+          ) : (
+            <>
+              <p className="text-[11px] text-indigo-300 tabular-nums">Cost {fmtMoney(d.cost, d.chartCur)}</p>
+              <p className="text-[11px] text-emerald-300 tabular-nums">
+                Benefit {fmtMoney(d.benefit, d.chartCur)}
+                {d.cost + d.benefit > 0 && ` · ${((d.benefit / (d.cost + d.benefit)) * 100).toFixed(0)}%`}
+              </p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -130,7 +155,36 @@ export default function TopItemsReportPage() {
       i.name.toLowerCase().includes(q) || String(i.code).toLowerCase().includes(q))
   }, [model.items, search])
 
-  const chartData = shown.slice(0, TOP_N).map(i => ({ ...i, label: i.name.slice(0, 18) }))
+  /* THE BAR IS MONEY, NOT UNITS. Units and currency cannot share one axis —
+     530 pieces plus LBP 100,000,000 is not a length — so the bar is the item's
+     REVENUE, split into what it cost and what it earned. The seven items are
+     still the seven that sold most, which is what the heading says.
+
+     One currency only, the one carrying the most revenue in this window, since
+     nothing in this application is ever summed across currencies. */
+  const chartCur = useMemo(() => {
+    const t = {}
+    for (const i of shown) for (const [c, v] of Object.entries(i.revenue || {})) t[c] = (t[c] || 0) + (Number(v) || 0)
+    return Object.entries(t).sort((a, b) => b[1] - a[1])[0]?.[0] || null
+  }, [shown])
+
+  const chartData = shown.slice(0, TOP_N).map(i => {
+    const revenue = Number(i.revenue?.[chartCur] || 0)
+    const benefit = Number(i.benefit?.[chartCur] || 0)
+    const cost    = Number(i.cost?.[chartCur] || 0)
+    /* An item with no cost recorded keeps its full bar — the revenue really
+       happened — but as one neutral block rather than a green one. Showing it
+       as all profit would be a lie; hiding it would be a different one. */
+    const splittable = i.anyCosted && (cost > 0 || benefit !== 0)
+    return {
+      ...i,
+      label: i.name.slice(0, 18),
+      chartCur,
+      cost:     splittable ? cost : 0,
+      benefit:  splittable ? benefit : 0,
+      uncosted: splittable ? 0 : revenue,
+    }
+  })
   const anyFilter = periodKey !== DEFAULT_PERIOD || !closedOnly || !!search.trim()
 
   return (
@@ -272,9 +326,25 @@ export default function TopItemsReportPage() {
       {/* ── the ranking ──────────────────────────────────────── */}
       <div className="card p-5">
         <h2 className="text-sm font-semibold text-slate-200">Top {Math.min(TOP_N, chartData.length)} by quantity</h2>
-        <p className="text-xs text-slate-500 mt-0.5 mb-3">
+        <p className="text-xs text-slate-500 mt-0.5 mb-2">
           Ranked by units, because units are the only figure that adds up honestly across different goods.
+          Each bar is that item’s revenue{chartCur ? ` in ${chartCur}` : ''} — what the goods cost, and what the sale earned on top.
         </p>
+        {chartCur && (
+          <div className="flex items-center gap-4 mb-3 text-[11px] text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BAR_COST }} /> Cost
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BAR_GAIN }} /> Benefit
+            </span>
+            {chartData.some(d => d.uncosted > 0) && (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BAR_UNKNOWN }} /> No cost recorded
+              </span>
+            )}
+          </div>
+        )}
         {chartData.length ? (
           <div style={{ height: Math.max(180, chartData.length * 28) }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -284,11 +354,11 @@ export default function TopItemsReportPage() {
                 <YAxis type="category" dataKey="label" width={130}
                   tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
                 <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(99,102,241,0.08)' }} />
-                <Bar dataKey="qty" radius={[0, 3, 3, 0]}>
-                  {chartData.map((d, i) => (
-                    <Cell key={d.id} fill={BAR} fillOpacity={1 - (i / (chartData.length + 4))} />
-                  ))}
-                </Bar>
+                {/* Stacked: cost, then benefit on top of it, so the whole bar
+                    is the revenue and the green part is what was made on it. */}
+                <Bar dataKey="cost"     stackId="money" fill={BAR_COST}    radius={[0, 0, 0, 0]} />
+                <Bar dataKey="benefit"  stackId="money" fill={BAR_GAIN}    radius={[0, 3, 3, 0]} />
+                <Bar dataKey="uncosted" stackId="money" fill={BAR_UNKNOWN} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
