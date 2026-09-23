@@ -61,16 +61,31 @@ export function roleSatisfies(role, asked = []) {
 export const roleIsExactly = (role, ...asked) => asked.includes(role)
 
 /* ── THE EXCEPTIONS ──────────────────────────────────────────────────────────
-   Things a Senior Call Center user does NOT get, despite otherwise working as
-   an administrator. Each one is a deliberate, named removal; the default stays
-   inheritance, so this list is the whole of the difference between the two
-   ranks and can be read in one place.
+   What a Senior Call Center user does NOT get, despite the inheritance above.
+   Each is a deliberate, named removal, and this list is the whole of the
+   difference between that rank and an administrator — readable in one place
+   rather than scattered across whichever screens implement it.
 
-     Reports    the Reports menu and every page under it — Reports, Most Sold
-                Items, Closed Orders Report, Story Orders, Performance and
-                Customer Categories. They carry costs, margins and company-wide
-                money. */
+     Reports        the Reports menu and all six pages under it. They carry
+                    costs, margins and company-wide money.
+
+     Deleting an    any order, open or closed. Removing an order takes its
+     order          items, payments, packages and ledger lines with it, and it
+                    cannot be undone.
+
+     Reopening a    and therefore editing one. A closed order's money has been
+     closed order   counted, its stock moved and its partner credited; undoing
+                    that is an administrator's decision.
+
+   CLOSING an order is NOT on this list. A senior call centre user may close an
+   eligible order, as an ordinary call centre user may — the rank is an upgrade
+   of that job, not a restriction of it. */
 export const isStrictAdmin = (role) => roleIsExactly(role, 'super_admin', 'admin')
+
+/* Named for the two order powers above, so a call site says what it is asking
+   about rather than repeating a role list that would drift. */
+export const canDeleteOrders      = (role) => isStrictAdmin(role)
+export const canReopenClosedOrder = (role) => isStrictAdmin(role)
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a
    person that way. */

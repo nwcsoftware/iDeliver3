@@ -128,7 +128,7 @@ export const navGroups = [
          A super admin still can — they satisfy adminOnly — and the bulk
          "Delete Orders by Date" stays under Super Admin, because deleting one
          order by number and clearing a date range are different acts. */
-      { to: '/settings/delete-order',           icon: PackageX,     label: 'Delete Order' },
+      { to: '/settings/delete-order',           icon: PackageX,     label: 'Delete Order', strictAdminOnly: true },
     ],
   },
   {

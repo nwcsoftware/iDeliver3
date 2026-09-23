@@ -254,7 +254,7 @@ function AppShell() {
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
                 <Route path="/settings/software-subscriptions" element={<SoftwareSubscriptionsPage />} />
                 <Route path="/settings/change-requests" element={<ChangeRequestsPage />} />
-                <Route path="/settings/delete-order" element={<DeleteOrderPage />} />
+                <Route path="/settings/delete-order" element={<StrictAdminRoute what="Delete Order"><DeleteOrderPage /></StrictAdminRoute>} />
                 <Route path="/settings/delete-orders-range" element={<DeleteOrdersRangePage />} />
                 <Route path="/settings/delete-driver" element={<DeleteDriverPage />} />
                 <Route path="/settings/retired-contacts" element={<RetiredContactsPage />} />

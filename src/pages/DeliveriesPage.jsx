@@ -37,6 +37,7 @@ import { saveOrderPackages, buildTrackingNumber } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
 import { syncOrderStock } from '../lib/productStock'
+import { canReopenClosedOrder } from '../lib/roles'
 import TagLocationField from '../components/orders/TagLocationField'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { getSavedLocations, addSavedLocation, renameSavedLocation, removeSavedLocation, getHiddenLocations, hideLocation } from '../lib/savedLocations'
@@ -254,6 +255,10 @@ function daysSinceClosed(o) {
 function reopenRight(o, { isSuperAdmin, isAdmin, appSettings }) {
   if (!o?.isclosed) return { allowed: false, reason: 'This order is not closed.' }
   if (isSuperAdmin) return { allowed: true, reason: '' }
+  /* `isAdmin` here is STRICT — a Senior Call Center user inherits admin
+     elsewhere and is deliberately kept out of this. A closed order's money has
+     been counted, its stock moved and its partner credited; undoing that is an
+     administrator's decision. */
   if (!isAdmin) return { allowed: false, reason: 'Only an administrator can reopen a closed order.' }
 
   const days = adminReopenWindowDays(appSettings)
@@ -988,6 +993,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // user can't — both are driven by the driver app / order lifecycle instead.
   const canEditDeliveryStatus = hasRole('super_admin', 'admin')
   const canEditOrderStatus    = canEditDeliveryStatus   // same roles govern the order status
+  /* Reopening a closed order is an ADMINISTRATOR's, strictly — a Senior Call
+     Center user satisfies hasRole('admin') everywhere else and not here. */
+  const canReopenOrders       = canReopenClosedOrder(currentUser?.role)
   // Super-admin restriction toggles (lock saved local-market invoices / protect
   // other users' payments) apply only to normal users. Admins and super admins are
   // exempt — they may always edit/delete saved invoices and any payment.
@@ -3265,7 +3273,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      which no order form writes. */
   async function reopenClosed(o) {
     rememberOrder(o.id)
-    const right = reopenRight(o, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings })
+    const right = reopenRight(o, { isSuperAdmin, isAdmin: canReopenOrders, appSettings })
     if (!right.allowed) { if (right.reason) setError(right.reason); return }
     setToggling(o.id)
     const age = daysSinceClosed(o)
@@ -3298,7 +3306,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // in the open modal at once, so it becomes editable without reopening.
   async function unlockCurrentOrder() {
     if (!modal || modal === 'add' || !modal.isclosed) return
-    if (!reopenRight(modal, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings }).allowed) return
+    if (!reopenRight(modal, { isSuperAdmin, isAdmin: canReopenOrders, appSettings }).allowed) return
     await reopenClosed(modal)
     setModal(m => (m && m !== 'add')
       ? { ...m, isclosed: false, closed_at: null, closed_by: null, closed_by_name: null }
@@ -3518,7 +3526,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
      show when they may not — a disabled control that says nothing just looks
      broken. */
   const reopenRights = (modal && modal !== 'add')
-    ? reopenRight(modal, { isSuperAdmin, isAdmin: canEditOrderStatus, appSettings })
+    ? reopenRight(modal, { isSuperAdmin, isAdmin: canReopenOrders, appSettings })
     : { allowed: false, reason: '' }
 
   const closeRequirements = []

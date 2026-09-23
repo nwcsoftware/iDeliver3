@@ -3,6 +3,7 @@ import { Trash2, AlertTriangle, CheckCircle2, Loader, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { canDeleteOrders } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 
 /* The exact word the user must type to arm the deletion. */
@@ -35,8 +36,12 @@ export default function DeleteOrderPage() {
      Worth knowing where the line is: delete_order_completely (fix60) takes the
      caller's id for its audit line and does NOT check their role, so this
      check is the whole of the restriction. It stops the wrong person reaching
-     the page; it is not a defence against someone with the anon key. */
-  const isAdmin = hasRole('super_admin', 'admin')
+     the page; it is not a defence against someone with the anon key.
+
+     STRICT: a Senior Call Center user inherits admin elsewhere and is kept out
+     of this. Removing an order takes its items, payments, packages and ledger
+     lines with it and cannot be undone. */
+  const isAdmin = canDeleteOrders(currentUser?.role)
 
   const [orderNumber, setOrderNumber] = useState('')
   const [order,       setOrder]       = useState(null)   // looked-up order + counts

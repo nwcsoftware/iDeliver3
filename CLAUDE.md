@@ -54,7 +54,10 @@ What that means when building:
   "this is administration, so probably not", even though the code would let them
   through today.
 - Exceptions live in `src/lib/roles.js` (`isStrictAdmin`), so the whole
-  difference between the two ranks reads in one place.
+  difference between the two ranks reads in one place. So far: the Reports menu
+  and its six pages, deleting an order, and reopening (so editing) a closed one.
+  Closing an order is *not* excluded — that is the call-centre job this rank is
+  an upgrade of.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against
