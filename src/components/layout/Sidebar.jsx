@@ -124,6 +124,11 @@ export const navGroups = [
       { to: '/settings/subscriptions',          icon: CreditCard,   label: 'Subscriptions' },
       { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions' },
       { to: '/settings/change-requests',        icon: ClipboardPen, label: 'Change Requests' },
+      /* Moved here from Super Admin: an administrator may delete an order.
+         A super admin still can — they satisfy adminOnly — and the bulk
+         "Delete Orders by Date" stays under Super Admin, because deleting one
+         order by number and clearing a date range are different acts. */
+      { to: '/settings/delete-order',           icon: PackageX,     label: 'Delete Order' },
     ],
   },
   {
@@ -140,7 +145,6 @@ export const navGroups = [
       // The customer app's seasonal look: colours + a background movie, by date.
       { to: '/settings/customer-theme',      icon: Palette,       label: 'Customer App Theme' },
       { to: '/settings/messages',            icon: Megaphone,     label: 'Broadcast Messages' },
-      { to: '/settings/delete-order',        icon: PackageX,      label: 'Delete Order' },
       { to: '/settings/delete-orders-range', icon: CalendarRange, label: 'Delete Orders by Date' },
       { to: '/settings/delete-driver',       icon: UserX,         label: 'Delete Driver' },
       // The shelf deactivation puts contacts on, and the only door out of it.

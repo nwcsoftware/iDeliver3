@@ -26,8 +26,17 @@ function contactLabel(c) {
 export default function DeleteOrderPage() {
   const { fetchOrders } = useApp()
   const { currentUser, hasRole } = useAuth()
-  // Permanently removing data is restricted to the super_admin (the developer).
-  const isAdmin = hasRole('super_admin')
+  /* Administrators and super administrators. It moved out of the Super Admin
+     menu deliberately — a wrong order is usually found by the office, not by
+     the developer — but it is still a permanent removal of the order and
+     everything on it, which is why the page asks for the order number back
+     before it arms.
+
+     Worth knowing where the line is: delete_order_completely (fix60) takes the
+     caller's id for its audit line and does NOT check their role, so this
+     check is the whole of the restriction. It stops the wrong person reaching
+     the page; it is not a defence against someone with the anon key. */
+  const isAdmin = hasRole('super_admin', 'admin')
 
   const [orderNumber, setOrderNumber] = useState('')
   const [order,       setOrder]       = useState(null)   // looked-up order + counts
