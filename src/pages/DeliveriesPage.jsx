@@ -456,15 +456,30 @@ const joinPlatforms  = arr => arr.join(', ')
 
 // Live run status of an ad from its start/end (accepts ISO or datetime-local
 // strings). Scheduled = not started yet; Active = running now; Expired = past end.
-function adStatus(start, end) {
+/* An advert's state, from its dates AND whether anybody has started it.
+
+   The dates alone used to decide this, so an advert whose window had opened
+   read "Active" while confirmed_ads was still false — the order said it was
+   running and the reminder went on asking for it to be started, and both were
+   telling the truth about different things. "Active" was doing two jobs.
+
+   The window opening only means it is DUE. Somebody still has to start it, and
+   until they do it says so, in the amber the reminder uses. */
+function adStatus(start, end, confirmed = true) {
   const now = Date.now()
   const s = start ? new Date(start).getTime() : NaN
   const e = end   ? new Date(end).getTime()   : NaN
   if (!isNaN(s) && now < s) return { label: 'Scheduled', cls: 'bg-sky-500/10 text-sky-300 border-sky-500/30' }
   if (!isNaN(e) && now > e) return { label: 'Expired',   cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' }
-  if (!isNaN(s) || !isNaN(e)) return { label: 'Active',  cls: 'bg-green-500/10 text-green-300 border-green-500/30' }
+  if (!isNaN(s) || !isNaN(e)) return confirmed
+    ? { label: 'Running',     cls: 'bg-green-500/10 text-green-300 border-green-500/30' }
+    : { label: 'Not started', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' }
   return null
 }
+
+/* Running or merely due — both are "on air time" for counting purposes, which
+   is what the order list's rollup and the section headers mean by it. */
+const AD_LIVE_LABELS = ['Running', 'Not started']
 
 // Roll an order's ads up to a single state for the list icon: 'active' (any ad
 // running now), 'scheduled' (none active but at least one not started), 'ended'
@@ -474,8 +489,11 @@ function orderAdState(o) {
   if (!list.length) return 'none'
   let hasActive = false, hasScheduled = false
   for (const a of list) {
-    const st = adStatus(a.start_at, a.end_at)?.label
-    if (st === 'Active') hasActive = true
+    const st = adStatus(a.start_at, a.end_at, a.confirmed_ads !== false)?.label
+    // The list icon asks "is this order's advertising on air", which a due but
+    // unstarted advert still answers yes to — the row icon is not the place to
+    // chase somebody for a click.
+    if (AD_LIVE_LABELS.includes(st)) hasActive = true
     else if (st === 'Scheduled') hasScheduled = true
   }
   return hasActive ? 'active' : hasScheduled ? 'scheduled' : 'ended'
@@ -2371,7 +2389,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       const a = p[i]
       // An expired ad can no longer be deleted. A confirmed (activated) ad can only
       // be deleted by an admin / super admin.
-      if (adStatus(a?.start_at, a?.end_at)?.label === 'Expired') return p
+      if (adStatus(a?.start_at, a?.end_at, true)?.label === 'Expired') return p
       if (a?.confirmed && !canBypassRestrictions) return p
       return p.filter((_, idx) => idx !== i)
     })
@@ -3733,7 +3751,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                       {(() => {
                         const ads = (g.orders ?? []).flatMap(o => (Array.isArray(o?.ads) ? o.ads : []))
                         if (ads.length === 0) return null
-                        const active = ads.filter(a => adStatus(a.start_at, a.end_at)?.label === 'Active').length
+                        const active = ads.filter(a => AD_LIVE_LABELS.includes(adStatus(a.start_at, a.end_at, a.confirmed)?.label)).length
                         return (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
                             active > 0
@@ -4051,7 +4069,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                        a box with how many of the order's ads are currently active. */
                     (() => {
                       const list = o.ads ?? []
-                      const active = list.filter(a => adStatus(a.start_at, a.end_at)?.label === 'Active').length
+                      const active = list.filter(a => AD_LIVE_LABELS.includes(adStatus(a.start_at, a.end_at, a.confirmed_ads !== false)?.label)).length
                       const on = active > 0
                       return (
                         <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-lg px-2.5 py-1 ${
@@ -5019,7 +5037,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                           // A confirmed (activated) ad is locked to normal users —
                           // only admins / super admins can edit or delete it.
                           const adLocked = !!a.confirmed && !canBypassRestrictions
-                          const expired  = adStatus(a.start_at, a.end_at)?.label === 'Expired'
+                          const expired  = adStatus(a.start_at, a.end_at, true)?.label === 'Expired'
                           const noDelete = adLocked || expired
                           return (
                           <tr key={a._id ?? a._key ?? idx} className="border-t border-surface-border/50">
@@ -5059,7 +5077,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                             <td className="px-1.5 py-2 align-top whitespace-nowrap">
                               <div className="flex items-center h-[38px]">
                                 {(() => {
-                                  const st = adStatus(a.start_at, a.end_at)
+                                  const st = adStatus(a.start_at, a.end_at, a.confirmed)
                                   return st
                                     ? <span className={`text-[11px] border rounded px-2 py-0.5 ${st.cls}`}>{st.label}</span>
                                     : <span className="text-slate-600 text-xs">—</span>
