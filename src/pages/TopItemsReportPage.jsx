@@ -10,6 +10,7 @@ import { useApp } from '../context/AppContext'
 import { PERIODS, DEFAULT_PERIOD, periodWindow, buildTopItems } from '../lib/topItemsReport'
 import DataLoadingOverlay from '../components/ui/DataLoadingOverlay'
 import SearchField from '../components/ui/SearchField'
+import AdsValueChart from '../components/reports/AdsValueChart'
 
 /* Most Sold Items — what the company's own goods did over a window.
  *
@@ -454,6 +455,17 @@ export default function TopItemsReportPage() {
           </table>
         </div>
       </div>
+
+      {/* ── advertising, over the same window ─────────────────── */}
+      {/* Dated by the day each advert STARTS, which is why it sits apart from
+          the goods above rather than as another row in them: an advert is sold
+          time, and the day it counts under is the day it runs. */}
+      <AdsValueChart
+        from={period.from}
+        to={period.to}
+        closedOnly={closedOnly}
+        companyId={COMPANY_ID}
+      />
 
     </div>
   )
