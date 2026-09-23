@@ -232,6 +232,32 @@ function orderWarnings(o, currencyLimits) {
   return w
 }
 
+/* The line written onto an order that was closed before it was finished.
+   Dated, signed, and it names what was overridden — a note saying only "forced"
+   tells a reader next quarter nothing they can act on. */
+/* The same list closeWarnings builds from the form, read off an order row —
+   the one-click close from the list must ask the same question the modal does,
+   or the warning is just a step to go around. */
+function closeGapsFor(o) {
+  const out = []
+  const story = isStoryOrder(o)
+  if (String(o?.status || '').toLowerCase() !== 'completed')
+    out.push(`The order status is “${o?.status || 'not set'}”, not Completed.`)
+  if (!story && o?.delivery_status !== 'Delivered')
+    out.push(`Nothing has been marked delivered — the delivery status is “${o?.delivery_status || 'not set'}”.`)
+  if (!story && !o?.driver_id)
+    out.push('No driver is assigned to this order.')
+  if (!isCreditOrder(o) && !isFullyPaid(o))
+    out.push('There is still a balance to collect.')
+  return out
+}
+
+function forcedCloseNote(forced, who) {
+  const when = new Date().toLocaleString()
+  const why  = (forced.reasons || []).join(' ')
+  return `[Closed early by ${who || 'an unnamed user'} on ${when}] ${why}`.trim()
+}
+
 // Quick "Mark Closed" from the list is allowed once the materials are Delivered.
 // Normally the money must also be fully collected, but a credit customer may close
 // with an unpaid balance — they settle their dues later from the Credit Customers
@@ -948,6 +974,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [copied,    setCopied]    = useState(null)
   const [freeConfirm, setFreeConfirm] = useState(false)  // "make this order free?" warning modal
   const [toggling,  setToggling]  = useState(null)
+  /* Set while asking "this order is not finished — close it anyway?". Holds the
+     reasons so the dialog and the note it writes can never disagree. */
+  const [forceClose, setForceClose] = useState(null)
   // Deactivate-order confirmation: { order, reason, counts, loading, busy }
   const [cancelModal, setCancelModal] = useState(null)
   const [customers,          setCustomers]          = useState([])
@@ -2335,7 +2364,9 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   /* ── save ────────────────────────────────────────────────── */
 
   async function handleSave(opts = {}) {
-    const close = opts?.close === true
+    const close  = opts?.close === true
+    // The reasons the user chose to override, or null on an ordinary close.
+    const forced = opts?.forced || null
     // 2nd-party users can't save changes to a confirmed order (defensive guard —
     // the UI already blocks opening a confirmed order for editing).
     if (partyContactId && modal && isConfirmed(modal)) {
@@ -2395,6 +2426,13 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       return setError(alreadyClosed
         ? 'This order is already closed.'
         : 'Cannot close — order must be: ' + closeRequirements.join(', ') + '.')
+    }
+
+    /* An unfinished order is a question, not a refusal. Ask once, with the
+       reasons named, and let the answer be recorded rather than assumed. */
+    if (close && !forced && closeWarnings.length > 0) {
+      setForceClose({ reasons: [...closeWarnings] })
+      return
     }
 
     setSaving(true); setError('')
@@ -2477,7 +2515,15 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // Never set for shop-sent (2nd-party) orders.
       is_procurement:        !partyContactId && retailEff.some(r => r.shop_name?.trim() && r.is_procurement),
       order_details_text:    form.order_details_text?.trim()   || null,
-      special_instructions:  form.special_instructions?.trim() || null,
+      /* A forced close leaves a mark on the order itself. The audit log is the
+         proper record, but nobody reads it while looking at an order — this
+         sits where the office already looks for context, says who decided and
+         what they overrode, and is appended rather than replacing whatever
+         instructions were already there. */
+      special_instructions:  (forced
+        ? [form.special_instructions?.trim(), forcedCloseNote(forced, currentUserName)]
+            .filter(Boolean).join(String.fromCharCode(10))
+        : form.special_instructions?.trim()) || null,
       scheduled_date:        form.scheduled_date               || null,
       scheduled_time_from:   form.scheduled_time_from          || null,
       scheduled_time_to:     form.scheduled_time_to            || null,
@@ -2965,17 +3011,29 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // One-click close from the list. Guarded by canQuickClose (fully collected +
   // Delivered), then locks the order via the isclosed flag — same columns the
   // edit modal's "Mark Closed" sets.
-  async function markClosed(o) {
+  async function markClosed(o, forced = null) {
     rememberOrder(o.id)
     // A super admin can always lock an order; everyone else only when it's fully
     // collected and delivered (canQuickClose).
     if (!canQuickClose(o) && !isSuperAdmin) return
+
+    // Unfinished, and nobody has answered for it yet — ask, exactly as the
+    // modal does, and carry the order along so the answer lands on it.
+    if (!forced) {
+      const gaps = closeGapsFor(o)
+      if (gaps.length) { setForceClose({ reasons: gaps, order: o }); return }
+    }
+
     setToggling(o.id)
     await supabase.from('delivery_orders').update({
       isclosed:  true,
       closed_at: new Date().toISOString(),
       closed_by: currentUser?.user_id || null,
       closed_by_name: currentUserName,
+      ...(forced ? {
+        special_instructions: [o.special_instructions, forcedCloseNote(forced, currentUserName)]
+          .filter(Boolean).join(String.fromCharCode(10)),
+      } : {}),
     }).eq('id', o.id)
     /* The goods leave when the order is closed. syncOrderStock recomputes what
        this order should have posted and makes the ledger match, so calling it
@@ -3249,6 +3307,31 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   // Story (ads/services) orders have no delivery status, so it isn't required.
   if (!isStory && form.delivery_status !== 'Delivered') closeRequirements.push('delivery status Delivered')
   const canClose = closeRequirements.length === 0
+
+  /* WHAT IS UNFINISHED ABOUT THIS ORDER, in plain sentences.
+
+     Not the same list as closeRequirements. That list decides who MAY close;
+     this one decides whether anybody should be asked first. A prepaid order
+     with no driver and nothing delivered passes the payment test and so reads
+     as ready, which is how an order gets locked before the goods have left —
+     the money arriving is not the work being done.
+
+     A driver is on this list and not on the other one deliberately: an order
+     can legitimately close with no driver (a counter sale, a customer
+     collection), so it is worth a question rather than a refusal. */
+  const closeWarnings = []
+  if (form.status !== 'completed')
+    closeWarnings.push(`The order status is “${ORDER_STATUS_OPTIONS.find(x => x.value === form.status)?.label || form.status || 'not set'}”, not Completed.`)
+  if (!isStory && form.delivery_status !== 'Delivered')
+    closeWarnings.push(`Nothing has been marked delivered — the delivery status is “${form.delivery_status || 'not set'}”.`)
+  if (!isStory && !form.driver_id)
+    closeWarnings.push('No driver is assigned to this order.')
+  if (selectedAccount && !accountCheck.ok)
+    closeWarnings.push(accountNature(selectedAccount) === CREDIT
+      ? 'The account is outside its credit terms.'
+      : 'The cash account has not been settled in full.')
+  else if (!selectedAccount && paymentStatus !== 'paid_to_office' && !customerAllowsCredit && !zeroTotal)
+    closeWarnings.push('There is still a balance to collect.')
   const paySummary    = CURRENCIES
     .map(c => ({ cur: c, total: round2(totals[c] || 0), paid: round2(paidByCur[c] || 0) }))
     .filter(r => r.total > 0 || r.paid > 0)
@@ -5715,6 +5798,58 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                 disabled={savingCustomer || (newCustomer.entity_type === 'company' && !newCustomer.company_name.trim()) || !newCustomer.first_name.trim() || !newCustomer.last_name.trim() || !newCustomer.mobile.trim()}>
                 <Check className="w-4 h-4" />
                 {savingCustomer ? 'Saving…' : 'Save & Use'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Closing an order that is not finished ─────────────── */}
+      {forceClose && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !saving && setForceClose(null)}>
+          <div className="card w-full max-w-lg overflow-hidden border-amber-500/40" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 px-5 py-4 border-b border-surface-border">
+              <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">This order is not finished</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Closing locks it and puts its money into the day&rsquo;s figures. Money arriving early is not the
+                  work being done, so read the list before going on.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <ul className="space-y-1.5">
+                {forceClose.reasons.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs text-amber-200">
+                    <span className="text-amber-500 mt-0.5">&bull;</span><span>{r}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="rounded-lg border border-surface-border bg-surface-hover/40 px-3 py-2">
+                <p className="text-[11px] text-slate-500 mb-1">This will be written onto the order&rsquo;s notes:</p>
+                <p className="text-[11px] text-slate-300 font-mono leading-relaxed break-words">
+                  {forcedCloseNote(forceClose, currentUserName)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-surface-border">
+              <button type="button" className="btn-ghost text-slate-400 hover:text-slate-100"
+                onClick={() => setForceClose(null)} disabled={saving}>
+                <X className="w-4 h-4" /> Go back
+              </button>
+              <button type="button" disabled={saving}
+                onClick={() => {
+                  const f = forceClose; setForceClose(null)
+                  // From the list it closes that row; from the modal it saves the form.
+                  if (f.order) markClosed(f.order, f); else handleSave({ close: true, forced: f })
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                           bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40">
+                <Lock className="w-4 h-4" /> Close it anyway
               </button>
             </div>
           </div>
