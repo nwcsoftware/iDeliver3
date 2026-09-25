@@ -28,12 +28,28 @@ export function todayStr(d = new Date()) {
    access, so counting it would push a real partner out of the ten included in
    the annual package and start billing for it.
 
-   Ten slots, held by the ten longest-standing partners with a login: retire
-   one — a duplicate, or a shop that has left — or remove its login, and the
-   slot passes to the next in line rather than being spent forever on a contact
-   nobody deals with any more.
+   Ten slots, held by the ten longest-standing partners with an ACTIVE login:
+   retire one — a duplicate, or a shop that has left — or remove or DEACTIVATE
+   its login, and the slot passes to the next in line rather than being spent
+   forever on a contact nobody deals with any more.
 
-   A contact tagged as both supplier and partner is a supplier: it sells to us,
+   Active, not merely existing. A deactivated login cannot sign in at all —
+   verify_login refuses status 'inactive' before the password is looked at —
+   so it gives nobody anything. It used to keep its free seat regardless: Cesar
+   The Shopper's login was deactivated seven minutes after it was made, never
+   used once, and still held seat #10 while Bellagio, next in line, was billed.
+   User Accounts already said deactivating hands the seat back; this makes the
+   ranking, the sign-in check and the billing check say the same. */
+
+/* Which logins hold a seat. ONE definition, used by every place that ranks
+   partners — the Subscriptions and User Accounts pages, the sign-in check and
+   the type-change billing check — so they cannot disagree about who is #10. */
+export const SEAT_LOGIN_STATUS = 'active'
+export const holdsSeatLogin = (u) => !!u?.contact_id && u.status === SEAT_LOGIN_STATUS
+export const seatHolderIds  = (users = []) =>
+  new Set((users ?? []).filter(holdsSeatLogin).map(u => u.contact_id))
+
+/* A contact tagged as both supplier and partner is a supplier: it sells to us,
    which is the side that pays. */
 
 export const PARTNER_FREE_LIMIT = SEATS.partner.included
@@ -74,10 +90,11 @@ export async function partnerRank(contact) {
        is one small query, not a scan of the address book. */
     const { data: logins, error: le } = await supabase
       .from('user_accounts')
-      .select('contact_id')
+      .select('contact_id, status')
       .not('contact_id', 'is', null)
+      .eq('status', SEAT_LOGIN_STATUS)             // a deactivated login holds no seat
     if (le) return null
-    const ids = [...new Set((logins ?? []).map(l => l.contact_id))]
+    const ids = [...seatHolderIds(logins)]
     if (ids.length === 0) return 1
     const { count, error } = await supabase
       .from('contacts')
@@ -114,7 +131,11 @@ export async function subscriptionScope(contactId) {
 
 /* Ranks for a whole list of partner contacts at once — the office list would
    otherwise ask the same question eighty times. Ordered by creation, so the
-   first ten partners ever created are ranks 1…10. */
+   first ten partners ever created are ranks 1…10.
+
+   `loginContactIds` must be the contacts with an ACTIVE login — build it with
+   seatHolderIds(), never from every user row, or a deactivated login keeps a
+   seat it cannot use. */
 export function rankPartners(contacts = [], loginContactIds = null) {
   const holdsSeat = (c) => (loginContactIds ? loginContactIds.has(c.id) : true)
   const partners = contacts
@@ -870,9 +891,10 @@ export async function checkPartyTypeChange({ contactId, nextTypes = [], currentT
 
   try {
     const { data: logins, error: le } = await supabase
-      .from('user_accounts').select('id').eq('contact_id', contactId).limit(1)
+      .from('user_accounts').select('id').eq('contact_id', contactId)
+      .eq('status', SEAT_LOGIN_STATUS).limit(1)
     if (le) return ok                                   // never block on a lookup failure
-    if (!logins?.length) return ok                      // no login, no seat, no portal
+    if (!logins?.length) return ok                      // no ACTIVE login, no seat, no portal
 
     /* Is the seat chargeable? A supplier always is. A partner is only once the
        ten included seats are taken — and this contact has to be counted among
@@ -880,8 +902,9 @@ export async function checkPartyTypeChange({ contactId, nextTypes = [], currentT
     let chargeable = wantsSupplier
     if (!chargeable && wantsPartner) {
       const { data: seatLogins } = await supabase
-        .from('user_accounts').select('contact_id').not('contact_id', 'is', null)
-      const ids = [...new Set((seatLogins ?? []).map(l => l.contact_id))]
+        .from('user_accounts').select('contact_id, status').not('contact_id', 'is', null)
+        .eq('status', SEAT_LOGIN_STATUS)
+      const ids = [...seatHolderIds(seatLogins)]
       const { data: seated } = await supabase
         .from('contacts')
         .select('id, created_at, contact_type, contact_types, is_active')

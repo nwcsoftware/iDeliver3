@@ -47,6 +47,7 @@ import {
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
   isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
   rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
+  seatHolderIds,
 } from '../lib/subscriptions'
 import { SEATS, UNPAID_GRACE_DAYS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
@@ -134,8 +135,12 @@ export default function SubscriptionsPage() {
   const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
   const [agreementsOff, setAgreementsOff] = useState(false) // fix128 not run yet
   const [parties,    setParties]    = useState([])          // supplier/partner contacts
-  // Contacts that have a login — the only ones that occupy a seat (fix136).
+  // Contacts with an ACTIVE login — the only ones that occupy a seat (fix136).
+  // A deactivated login cannot sign in, so it holds nothing.
   const [loginIds,   setLoginIds]   = useState(() => new Set())
+  // Contacts with ANY login, active or not — only to tell “no login at all”
+  // apart from “login deactivated” when saying why a partner holds no seat.
+  const [anyLoginIds, setAnyLoginIds] = useState(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
 
@@ -231,9 +236,10 @@ export default function SubscriptionsPage() {
 
       const { data: logins } = await supabase
         .from('user_accounts')
-        .select('contact_id')
+        .select('contact_id, status')
         .not('contact_id', 'is', null)
-      setLoginIds(new Set((logins ?? []).map(l => l.contact_id)))
+      setLoginIds(seatHolderIds(logins))
+      setAnyLoginIds(new Set((logins ?? []).map(l => l.contact_id)))
     })()
   }, [canView])
 
@@ -338,25 +344,43 @@ export default function SubscriptionsPage() {
      it without anybody remembering to. A zero-amount row is never awaiting
      anything, so it is left alone. The tooltip says what the missing payment
      is holding back, which is the part that differs from row to row. */
-  const unpaidBadge = useCallback((r) => {
+  const unpaidBadge = useCallback((r, sc) => {
     if (!r || r.is_paid || !(Number(r.amount) > 0)) return null
     const st = subscriptionStatus(r)
     const money = `${Number(r.amount).toFixed(2)} ${r.currency || ''}`.trim()
+    const owed = (title) => ({
+      label: 'awaiting payment',
+      cls:   'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300',
+      title,
+    })
+    /* A charge raised while the partner was past the tenth seat, which it no
+       longer is — somebody older left the ten and it moved up. The row still
+       says 10 USD unpaid, but nothing is owed: it signs in as a free partner.
+       Calling that “awaiting payment” would chase money that is not due. */
+    if (sc?.scope === SCOPE.partnerFree) {
+      return {
+        label: 'not due — free seat',
+        cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
+        title: `This ${money} charge is no longer owed: the partner is now #${sc.rank}, inside the free `
+             + `${PARTNER_FREE_LIMIT}, and signs in without a subscription. Delete this row, or set its amount `
+             + 'to 0 and mark it paid, so it stops reading as unpaid.',
+      }
+    }
     if (st === 'grace') {
       const left = graceDaysLeft(r)
-      return { title: `${money} not yet paid. Let in on trust while it is outstanding — `
-        + `${left} day${left === 1 ? '' : 's'} left, then sign-in closes again.` }
+      return owed(`${money} not yet paid. Let in on trust while it is outstanding — `
+        + `${left} day${left === 1 ? '' : 's'} left, then sign-in closes again.`)
     }
     if (st === 'grace_over') {
-      return { title: `${money} not yet paid, and the trust period has ended. `
-        + 'Sign-in is closed until the payment is confirmed.' }
+      return owed(`${money} not yet paid, and the trust period has ended. `
+        + 'Sign-in is closed until the payment is confirmed.')
     }
     if (r.contact && !loginIds.has(r.contact.id)) {
-      return { title: `${money} not yet paid. Nobody can sign in as this contact yet, so nothing is `
-        + 'blocked today — once a login exists, sign-in waits on this payment.' }
+      return owed(`${money} not yet paid. Nobody can sign in as this contact right now, so nothing is `
+        + 'blocked today — once it has an active login, sign-in waits on this payment.')
     }
-    return { title: `${money} not yet paid. Sign-in stays closed until the payment is confirmed `
-      + 'and the subscription is activated.' }
+    return owed(`${money} not yet paid. Sign-in stays closed until the payment is confirmed `
+      + 'and the subscription is activated.')
   }, [loginIds])
 
   const exemptBadge = useCallback((sc, contact) => {
@@ -392,6 +416,15 @@ export default function SubscriptionsPage() {
         title: 'This contact is deactivated, so it holds no seat and no subscription applies to it.',
       }
     }
+    if (contact && !loginIds.has(contact.id) && anyLoginIds.has(contact.id)) {
+      return {
+        label: 'login deactivated — no seat',
+        cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
+        title: 'This partner’s login is deactivated, so it cannot sign in and holds none of the ten seats — '
+             + 'its place passed to the next partner in line. Reactivate the login and it takes its place back '
+             + 'by date of creation, which can push the partner at #10 out of the free ten.',
+      }
+    }
     if (contact && !loginIds.has(contact.id)) {
       return {
         label: 'no login — no seat',
@@ -407,7 +440,7 @@ export default function SubscriptionsPage() {
       title: 'This partner could not be placed in the running order, so whether it owes a subscription is '
            + 'unknown. It is treated as exempt until it can be.',
     }
-  }, [loginIds])
+  }, [loginIds, anyLoginIds])
 
   const scopeOf = useCallback((contact) => {
     if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
@@ -848,15 +881,15 @@ export default function SubscriptionsPage() {
                            charged — why not. The first is the same sentence on
                            every unpaid row, so the list reads one way. */
                         const sc = scopeOf(r.contact)
-                        const owed = unpaidBadge(r)
+                        const owed = unpaidBadge(r, sc)
                         const b = sc.subject ? null : exemptBadge(sc, r.contact)
                         if (!owed && !b) return null
                         return (
                           <>
                             {owed && (
                               <span title={owed.title}
-                                className="text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300">
-                                awaiting payment
+                                className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${owed.cls}`}>
+                                {owed.label}
                               </span>
                             )}
                             {b && (

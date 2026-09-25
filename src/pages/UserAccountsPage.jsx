@@ -37,7 +37,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { checkSeat, seatPosition, seatPrice, seatStatus } from '../lib/officeSeats'
-import { rankPartners } from '../lib/subscriptions'
+import { rankPartners, seatHolderIds } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 import SearchField from '../components/ui/SearchField'
@@ -382,7 +382,9 @@ export default function UserAccountsPage() {
 
   /* Everything the seat column needs, worked out once for the whole list. */
   const seatLookups = useMemo(() => {
-    const loginIds = new Set(users.map(u => u.contact_id).filter(Boolean))
+    // Only ACTIVE logins hold a seat — the same rule the seat counter above
+    // already used, now shared with the ranking via seatHolderIds().
+    const loginIds = seatHolderIds(users)
     const subsByContact = new Map()
     const subsByUser    = new Map()
     for (const r of subs) {
