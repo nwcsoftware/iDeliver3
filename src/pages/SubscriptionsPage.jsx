@@ -327,6 +327,38 @@ export default function SubscriptionsPage() {
      what was true, and the only thing that said otherwise was a tooltip.
 
      Three states, three labels. Each says what it is and what to do. */
+  /* ONE SENTENCE FOR EVERY SUBSCRIPTION THAT IS PLACED BUT NOT PAID.
+
+     Until now only a contact that was NOT charged carried a badge, so the rows
+     that actually owe money — partners past the free ten, suppliers — sat
+     there with nothing beside the name, and the one unpaid row that did have a
+     badge looked like the odd one out. It is the owed rows that need saying.
+
+     Read from the row, so a subscription added tomorrow and left unpaid shows
+     it without anybody remembering to. A zero-amount row is never awaiting
+     anything, so it is left alone. The tooltip says what the missing payment
+     is holding back, which is the part that differs from row to row. */
+  const unpaidBadge = useCallback((r) => {
+    if (!r || r.is_paid || !(Number(r.amount) > 0)) return null
+    const st = subscriptionStatus(r)
+    const money = `${Number(r.amount).toFixed(2)} ${r.currency || ''}`.trim()
+    if (st === 'grace') {
+      const left = graceDaysLeft(r)
+      return { title: `${money} not yet paid. Let in on trust while it is outstanding — `
+        + `${left} day${left === 1 ? '' : 's'} left, then sign-in closes again.` }
+    }
+    if (st === 'grace_over') {
+      return { title: `${money} not yet paid, and the trust period has ended. `
+        + 'Sign-in is closed until the payment is confirmed.' }
+    }
+    if (r.contact && !loginIds.has(r.contact.id)) {
+      return { title: `${money} not yet paid. Nobody can sign in as this contact yet, so nothing is `
+        + 'blocked today — once a login exists, sign-in waits on this payment.' }
+    }
+    return { title: `${money} not yet paid. Sign-in stays closed until the payment is confirmed `
+      + 'and the subscription is activated.' }
+  }, [loginIds])
+
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
       return {
@@ -365,8 +397,8 @@ export default function SubscriptionsPage() {
         label: 'no login — no seat',
         cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
         title: 'This partner has no login, so it occupies none of the ten seats and is not ranked among them. '
-             + 'Nothing is owed until somebody can sign in as it — and once a login is created its place is '
-             + 'taken by date of creation, which may put it inside the free ten.',
+             + 'Once a login is created it takes its place by date of creation, which may put it inside the '
+             + 'free ten — and make this subscription unnecessary.',
       }
     }
     return {
@@ -811,14 +843,29 @@ export default function SubscriptionsPage() {
                       <Icon className="w-4 h-4 text-slate-500 flex-shrink-0" />
                       <span className={`font-medium ${lapsed ? strike : 'text-slate-100'}`}>{contactLabel(r.contact)}</span>
                       {(() => {
+                        /* Up to two badges beside the name: whether the row is
+                           awaiting payment, and — for a contact that is not
+                           charged — why not. The first is the same sentence on
+                           every unpaid row, so the list reads one way. */
                         const sc = scopeOf(r.contact)
-                        if (sc.subject) return null
-                        const b = exemptBadge(sc, r.contact)
+                        const owed = unpaidBadge(r)
+                        const b = sc.subject ? null : exemptBadge(sc, r.contact)
+                        if (!owed && !b) return null
                         return (
-                          <span title={b.title}
-                            className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${b.cls}`}>
-                            {b.label}
-                          </span>
+                          <>
+                            {owed && (
+                              <span title={owed.title}
+                                className="text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300">
+                                awaiting payment
+                              </span>
+                            )}
+                            {b && (
+                              <span title={b.title}
+                                className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${b.cls}`}>
+                                {b.label}
+                              </span>
+                            )}
+                          </>
                         )
                       })()}
                     </div>
