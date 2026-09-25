@@ -327,7 +327,7 @@ export default function SubscriptionsPage() {
      what was true, and the only thing that said otherwise was a tooltip.
 
      Three states, three labels. Each says what it is and what to do. */
-  const exemptBadge = useCallback((sc) => {
+  const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
       return {
         label: `free partner #${sc.rank}`,
@@ -344,13 +344,38 @@ export default function SubscriptionsPage() {
              + 'or remove the login and this subscription row.',
       }
     }
-    return {
-      label: 'type unknown',
-      cls:   'border-slate-500/30 bg-slate-500/10 text-slate-400',
-      title: 'The contact could not be read, so whether it owes a subscription is unknown. '
-           + 'It is treated as exempt until the lookup succeeds.',
+    /* SCOPE.unknown means “this is a partner, but it has no rank” — and on this
+       page there is only one way that happens: the contact holds no seat, so it
+       was never placed in the running order at all. A seat is held by an ACTIVE
+       partner WITH A LOGIN (fix136); a partner nobody can sign in as is not
+       occupying one of the ten and is not competing for them.
+
+       That is worth saying out loud rather than calling it unknown, because it
+       also explains the thing that looks wrong: a subscription sold to a contact
+       that is not yet using a seat. */
+    if (contact && contact.is_active === false) {
+      return {
+        label: 'inactive contact',
+        cls:   'border-slate-500/30 bg-slate-500/10 text-slate-400',
+        title: 'This contact is deactivated, so it holds no seat and no subscription applies to it.',
+      }
     }
-  }, [])
+    if (contact && !loginIds.has(contact.id)) {
+      return {
+        label: 'no login — no seat',
+        cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
+        title: 'This partner has no login, so it occupies none of the ten seats and is not ranked among them. '
+             + 'Nothing is owed until somebody can sign in as it — and once a login is created its place is '
+             + 'taken by date of creation, which may put it inside the free ten.',
+      }
+    }
+    return {
+      label: 'not ranked',
+      cls:   'border-slate-500/30 bg-slate-500/10 text-slate-400',
+      title: 'This partner could not be placed in the running order, so whether it owes a subscription is '
+           + 'unknown. It is treated as exempt until it can be.',
+    }
+  }, [loginIds])
 
   const scopeOf = useCallback((contact) => {
     if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
@@ -788,7 +813,7 @@ export default function SubscriptionsPage() {
                       {(() => {
                         const sc = scopeOf(r.contact)
                         if (sc.subject) return null
-                        const b = exemptBadge(sc)
+                        const b = exemptBadge(sc, r.contact)
                         return (
                           <span title={b.title}
                             className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${b.cls}`}>
