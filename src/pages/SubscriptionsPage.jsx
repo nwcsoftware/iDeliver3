@@ -316,6 +316,42 @@ export default function SubscriptionsPage() {
      eleventh onward. Computed from the party list already loaded, so it costs
      nothing extra. */
   const partnerRanks = useMemo(() => rankPartners(parties, loginIds), [parties, loginIds])
+  /* WHY A ROW IS NOT BEING CHARGED, said accurately.
+
+     This badge used to read “free partner” for every contact that was not
+     subject to a subscription — which lumped together two opposite things.
+     One of the first ten partners is genuinely free. A contact that is no
+     longer typed as a partner at all is not free: it is not a partner, its
+     subscription row is stranded, and its login is refused at sign-in for a
+     role mismatch. Calling that “free partner” told the admin the opposite of
+     what was true, and the only thing that said otherwise was a tooltip.
+
+     Three states, three labels. Each says what it is and what to do. */
+  const exemptBadge = useCallback((sc) => {
+    if (sc.scope === SCOPE.partnerFree) {
+      return {
+        label: `free partner #${sc.rank}`,
+        cls:   'border-fresh-500/30 bg-fresh-500/10 text-fresh-300',
+        title: `Partner #${sc.rank} — inside the first ${PARTNER_FREE_LIMIT}, so no subscription is required.`,
+      }
+    }
+    if (sc.scope === SCOPE.notParty) {
+      return {
+        label: 'not a partner',
+        cls:   'border-red-500/40 bg-red-500/10 text-red-300',
+        title: 'This contact is no longer typed as a partner or supplier, so no subscription applies to it — '
+             + 'and any partner login it still has is refused at sign-in. Either set its contact type back, '
+             + 'or remove the login and this subscription row.',
+      }
+    }
+    return {
+      label: 'type unknown',
+      cls:   'border-slate-500/30 bg-slate-500/10 text-slate-400',
+      title: 'The contact could not be read, so whether it owes a subscription is unknown. '
+           + 'It is treated as exempt until the lookup succeeds.',
+    }
+  }, [])
+
   const scopeOf = useCallback((contact) => {
     if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
     return scopeFor(contact, partnerRanks.get(contact.id) ?? null)
@@ -752,12 +788,11 @@ export default function SubscriptionsPage() {
                       {(() => {
                         const sc = scopeOf(r.contact)
                         if (sc.subject) return null
+                        const b = exemptBadge(sc)
                         return (
-                          <span title={sc.scope === SCOPE.partnerFree
-                            ? `Partner #${sc.rank} — inside the first ${PARTNER_FREE_LIMIT}, so no subscription is required`
-                            : 'Not subject to a subscription'}
-                            className="text-[10px] px-1.5 py-0.5 rounded border border-fresh-500/30 bg-fresh-500/10 text-fresh-300 whitespace-nowrap flex-shrink-0">
-                            free partner{sc.rank ? ` #${sc.rank}` : ''}
+                          <span title={b.title}
+                            className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${b.cls}`}>
+                            {b.label}
                           </span>
                         )
                       })()}
