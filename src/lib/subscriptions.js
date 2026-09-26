@@ -249,6 +249,16 @@ export function subscriptionStatus(row, today = todayStr()) {
      Access is unchanged either way — isSubscriptionActive() admits only
      'active', and neither of these is. */
   if (!row.is_paid) {
+    /* ACTIVATED ON CREDIT (fix159). The super admin switched it on for its
+       whole period with the money still due. Unlike trust there is no clock:
+       it runs to its end date like a paid one — but it keeps saying the
+       payment is due, and sits on the Due Payments report, until the payment
+       is recorded with its reference. Past its end date it is simply expired. */
+    if (row.is_active && row.credit_granted_at) {
+      if (row.start_date && today < row.start_date) return 'scheduled'
+      if (row.end_date   && today > row.end_date)   return 'expired'
+      return 'credit'
+    }
     /* ACTIVATED ON TRUST. A super admin may switch an unpaid subscription on so
        the party can work while a payment is in flight (fix149) — but on a clock.
        While it runs the row is treated as live; when it lapses the door closes
@@ -278,7 +288,7 @@ export function graceDaysLeft(row, today = todayStr()) {
 /* A subscription admits its party while it is genuinely active OR inside an
    indulgence. Those are the only two ways in. */
 export const isSubscriptionActive = (row, today = todayStr()) =>
-  ['active', 'grace'].includes(subscriptionStatus(row, today))
+  ['active', 'grace', 'credit'].includes(subscriptionStatus(row, today))
 
 export const STATUS_STYLES = {
   active:      { label: 'Active',       cls: 'bg-green-500/10 text-green-300 border-green-500/30' },
@@ -287,8 +297,15 @@ export const STATUS_STYLES = {
   unpaid:      { label: 'Unpaid',       cls: 'bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30' },
   grace:       { label: 'Unpaid — on trust', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
   grace_over:  { label: 'Trust expired', cls: 'bg-red-500/10 text-red-300 border-red-500/30' },
+  credit:      { label: 'Active — payment due', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
   deactivated: { label: 'Deactivated',  cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' },
 }
+
+/* How a subscription can be paid, offered when the super admin records it. */
+export const PAYMENT_METHODS = ['Cash', 'OMT', 'Whish', 'Bank transfer', 'Cheque', 'Other']
+
+/* Money still owed on a subscription row — not paid, and not zero. */
+export const isAmountDue = (row) => !!row && !row.is_paid && Number(row.amount) > 0
 
 /* All subscriptions with their contact, newest first. */
 export async function fetchSubscriptions(companyId = null) {
@@ -367,7 +384,8 @@ export async function checkSubscriptionAccess(contactId, role = null) {
     }
     const { data, error } = await supabase
       .from('subscriptions')
-      .select('id,description,start_date,end_date,amount,currency,is_paid,is_active')
+      .select('*')   // every column: status needs grace_started_on and credit_granted_at,
+                     // and naming columns here once left trust unreadable at sign-in
       .eq('contact_id', contactId)
     if (error) {
       if (/subscriptions/i.test(error.message) && /not exist|schema cache/i.test(error.message)) {
@@ -478,6 +496,18 @@ export async function saveSubscription(row, { companyId = null, userId = null } 
     paid_by_note: row.paid_by_note?.trim() || null,
     is_active:    !!row.is_active,
     updated_at:   new Date().toISOString(),
+  }
+  /* The trust, credit and payment-detail columns are written whenever the row
+     CARRIES them — and left alone when it does not, so saving the edit form
+     (which knows nothing of them) never wipes a recorded reference, and a
+     database without fix159 is not sent columns it lacks.
+
+     Before this, none of them were written at all: “activate on trust” sent
+     grace_started_on and it was silently dropped here, so the 15-day clock
+     never started and the row read as plain Unpaid — at sign-in too. */
+  for (const k of ['grace_started_on', 'grace_granted_by', 'credit_granted_at', 'credit_granted_by',
+                   'payment_method', 'payment_reference', 'paid_recorded_by']) {
+    if (row[k] !== undefined) payload[k] = row[k] === '' ? null : row[k]
   }
   if (row.id) {
     const { error } = await supabase.from('subscriptions').update(payload).eq('id', row.id)
@@ -665,6 +695,7 @@ export function subscriptionsSummary(rows = [], today = todayStr()) {
   const out = {
     total: rows.length,
     active: 0, unpaid: 0, scheduled: 0, expired: 0, deactivated: 0,
+    credit: 0,                               // activated with the money still due (fix159)
     renewed: 0,                              // ran out, but a newer period covers them
     due: 0, urgent: 0,                       // renewals coming up (still in date)
     value: {}, activeValue: {}, expiredValue: {},   // { USD: n, LBP: n, … }
@@ -921,7 +952,7 @@ export async function checkPartyTypeChange({ contactId, nextTypes = [], currentT
 
     const { data: subs } = await supabase
       .from('subscriptions')
-      .select('id,start_date,end_date,is_paid,is_active')
+      .select('*')
       .eq('contact_id', contactId)
     const valid = (subs ?? []).some(r => isSubscriptionActive(r))
     if (valid) return ok

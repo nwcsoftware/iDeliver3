@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CreditCard,
+  Receipt,
   Plus,
   X,
   Loader,
@@ -47,8 +48,9 @@ import {
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
   isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
   rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
-  seatHolderIds,
+  seatHolderIds, PAYMENT_METHODS, isAmountDue,
 } from '../lib/subscriptions'
+import { downloadDuePaymentsPdf, accessOf, daysOutstanding, totalsByCurrency } from '../lib/duePaymentsPdf'
 import { SEATS, UNPAID_GRACE_DAYS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
@@ -59,6 +61,7 @@ const STATUS_FILTERS = [
   { value: 'all',         label: 'All' },
   { value: 'active',      label: 'Active' },
   { value: 'unpaid',      label: 'Unpaid' },
+  { value: 'credit',      label: 'Active — payment due' },
   { value: 'scheduled',   label: 'Scheduled' },
   { value: 'expired',     label: 'Expired' },
   { value: 'deactivated', label: 'Deactivated' },
@@ -141,6 +144,13 @@ export default function SubscriptionsPage() {
   // Contacts with ANY login, active or not — only to tell “no login at all”
   // apart from “login deactivated” when saying why a partner holds no seat.
   const [anyLoginIds, setAnyLoginIds] = useState(() => new Set())
+  /* Super-admin dialogs (fix159): how to switch on an unpaid subscription, the
+     payment record with its reference, and the Due Payments report. */
+  const [activateFor, setActivateFor] = useState(null)
+  const [payFor,      setPayFor]      = useState(null)
+  const [payForm,     setPayForm]     = useState({ paid_on: '', method: 'Cash', reference: '', note: '' })
+  const [payErr,      setPayErr]      = useState('')
+  const [dueOpen,     setDueOpen]     = useState(false)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
 
@@ -366,6 +376,12 @@ export default function SubscriptionsPage() {
              + 'to 0 and mark it paid, so it stops reading as unpaid.',
       }
     }
+    if (st === 'credit') {
+      return owed(`${money} not yet paid. Activated for the full term`
+        + `${r.credit_granted_at ? ` on ${String(r.credit_granted_at).slice(0, 10)}` : ''}`
+        + `${r.credit_granted_by ? ` by ${r.credit_granted_by}` : ''} — they can sign in, and the payment `
+        + 'stays due until it is recorded with its reference.')
+    }
     if (st === 'grace') {
       const left = graceDaysLeft(r)
       return owed(`${money} not yet paid. Let in on trust while it is outstanding — `
@@ -382,6 +398,19 @@ export default function SubscriptionsPage() {
     return owed(`${money} not yet paid. Sign-in stays closed until the payment is confirmed `
       + 'and the subscription is activated.')
   }, [loginIds])
+
+  /* The Due Payments report: money owed and actually due. A charge that is
+     “not due — free seat” is left off and counted apart, because chasing it
+     would be chasing money nobody owes. Longest-owed first. */
+  const dueRows = useMemo(() => rows
+    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope !== SCOPE.partnerFree)
+    .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [rows, partnerRanks])
+  const staleFreeCount = useMemo(() => rows
+    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope === SCOPE.partnerFree).length,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [rows, partnerRanks])
 
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
@@ -545,6 +574,50 @@ export default function SubscriptionsPage() {
     load()
   }
 
+  /* Switch an UNPAID subscription on. Two ways, chosen in the dialog:
+
+       for the full term   — open until its end date; stays owed and sits on
+                             the Due Payments report until paid (fix159)
+       on trust            — open for UNPAID_GRACE_DAYS, then closes again
+
+     Either is signed with the super admin's name and the date. */
+  function activateUnpaid(row, mode) {
+    setActivateFor(null)
+    if (mode === 'credit') {
+      patch(row, { is_active: true, credit_granted_at: new Date().toISOString(), credit_granted_by: currentUserName,
+                   grace_started_on: null, grace_granted_by: null })
+    } else {
+      patch(row, { is_active: true, grace_started_on: todayStr(), grace_granted_by: currentUserName,
+                   credit_granted_at: null, credit_granted_by: null })
+    }
+  }
+
+  function openPay(row) {
+    setPayForm({ paid_on: todayStr(), method: 'Cash', reference: '', note: row.paid_by_note || '' })
+    setPayErr('')
+    setPayFor(row)
+  }
+
+  /* Record the money. A reference is required: a payment nobody can trace
+     later is how "it was paid, I think" turns into an argument. */
+  async function recordPayment() {
+    const row = payFor
+    if (!row) return
+    if (!payForm.reference.trim()) { setPayErr('Enter the payment reference — receipt, transfer or cheque number.'); return }
+    if (!payForm.paid_on) { setPayErr('Enter the date the money was received.'); return }
+    setPayFor(null)
+    await patch(row, {
+      is_paid:           true,
+      paid_at:           new Date(`${payForm.paid_on}T12:00:00`).toISOString(),
+      payment_method:    payForm.method,
+      payment_reference: payForm.reference.trim(),
+      paid_recorded_by:  currentUserName,
+      paid_by_note:      payForm.note,
+      grace_started_on:  null,
+      grace_granted_by:  null,
+    })
+  }
+
   async function remove(row) {
     if (!canEditSubs) return
     setBusyId(row.id)
@@ -575,7 +648,16 @@ export default function SubscriptionsPage() {
         {/* Already super-admin only — a senior call centre user could not have
             reached it in any case. */}
         {isSuperAdmin && (
-          <button className="btn-primary ml-auto" onClick={openAdd}>
+          <button type="button" onClick={() => setDueOpen(true)}
+            title="Every subscription with money still owed — printable"
+            className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                       border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200 hover:bg-fuchsia-500/20">
+            <Receipt className="w-4 h-4" /> Due payments
+            <span className="text-[11px] tabular-nums px-1.5 rounded bg-fuchsia-500/20">{dueRows.length}</span>
+          </button>
+        )}
+        {isSuperAdmin && (
+          <button className="btn-primary" onClick={openAdd}>
             <Plus className="w-4 h-4" /> New subscription
           </button>
         )}
@@ -663,7 +745,7 @@ export default function SubscriptionsPage() {
             </div>
             <p className="mt-1.5 text-xl font-bold text-green-300 tabular-nums">{summary.active}</p>
             <p className="text-[11px] text-slate-500">
-              {summary.unpaid} unpaid · {summary.scheduled} scheduled · {summary.deactivated} off
+              {summary.unpaid} unpaid · {summary.scheduled} scheduled · {summary.deactivated} off{summary.credit ? ` · ${summary.credit} open, payment due` : ''}
             </p>
           </button>
 
@@ -934,11 +1016,23 @@ export default function SubscriptionsPage() {
                   <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
                   <td className="px-4 py-3">
                     {isSuperAdmin ? (
-                      <button onClick={() => patch(r, r.is_paid
-                        ? { is_paid: false, is_active: false, grace_started_on: null, grace_granted_by: null }
-                        : { is_paid: true,  grace_started_on: null, grace_granted_by: null })}
+                      <button onClick={() => {
+                          if (!r.is_paid) { openPay(r); return }
+                          if (!window.confirm('Mark this subscription UNPAID again? The recorded payment details are '
+                            + 'cleared and access closes until it is paid.')) return
+                          patch(r, { is_paid: false, is_active: false, grace_started_on: null, grace_granted_by: null,
+                                     credit_granted_at: null, credit_granted_by: null,
+                                     payment_method: null, payment_reference: null, paid_recorded_by: null })
+                        }}
                         disabled={busyId === r.id}
-                        title={r.is_paid ? 'Money received — click to mark unpaid' : 'Confirm money received'}
+                        title={r.is_paid
+                          ? [ 'Money received',
+                              r.payment_method ? `by ${r.payment_method}` : '',
+                              r.payment_reference ? `ref ${r.payment_reference}` : '',
+                              r.paid_at ? `on ${String(r.paid_at).slice(0, 10)}` : '',
+                              r.paid_recorded_by ? `— recorded by ${r.paid_recorded_by}` : '',
+                              '— click to mark unpaid' ].filter(Boolean).join(' ')
+                          : 'Record the payment — date, method and reference'}
                         className={`inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-lg px-2.5 py-1 transition-colors ${
                           r.is_paid
                             ? 'bg-green-500/10 border-green-500/30 text-green-300 hover:bg-green-500/15'
@@ -961,6 +1055,19 @@ export default function SubscriptionsPage() {
                         counted down in the open: a party let in without paying is
                         the one thing on this page that quietly becomes permanent
                         if nobody is looking at it (fix149). */}
+                    {subscriptionStatus(r, today) === 'credit' && (
+                      <span className="mt-1 flex items-center gap-1 text-[11px] text-amber-400"
+                        title={`Activated for the full term while unpaid${r.credit_granted_at ? ` on ${String(r.credit_granted_at).slice(0, 10)}` : ''}${r.credit_granted_by ? ` by ${r.credit_granted_by}` : ''}. It stays on the Due Payments report until the payment is recorded.`}>
+                        <Receipt className="w-3.5 h-3.5 flex-shrink-0" />
+                        payment due{r.credit_granted_by ? ` · ${r.credit_granted_by}` : ''}
+                      </span>
+                    )}
+                    {r.is_paid && r.payment_reference && (
+                      <span className="mt-1 block text-[10px] text-slate-500 font-mono truncate max-w-[10rem]"
+                        title={`${r.payment_method || ''} ${r.payment_reference}`.trim()}>
+                        {r.payment_method ? `${r.payment_method} · ` : ''}{r.payment_reference}
+                      </span>
+                    )}
                     {r.grace_started_on && !r.is_paid && (() => {
                       const left = graceDaysLeft(r, today)
                       const over = left <= 0
@@ -1014,25 +1121,18 @@ export default function SubscriptionsPage() {
                             clock is what keeps it from becoming permanent.
                             Switching a row off, or paying it, clears the clock. */}
                         <button onClick={() => {
-                          if (r.is_active) { patch(r, { is_active: false, grace_started_on: null, grace_granted_by: null }); return }
+                          if (r.is_active) { patch(r, { is_active: false, grace_started_on: null, grace_granted_by: null,
+                                                        credit_granted_at: null, credit_granted_by: null }); return }
                           if (r.is_paid)   { patch(r, { is_active: true }); return }
-                          const ok = window.confirm(
-                            `${contactLabel(r.contact)} has NOT paid this subscription.
-
-`
-                            + `Switching it on now lets them sign in for ${UNPAID_GRACE_DAYS} days. If the money has not `
-                            + `arrived by then, access closes again on its own.
-
-`
-                            + 'The subscription stays marked Unpaid throughout. Continue?')
-                          if (ok) patch(r, { is_active: true, grace_started_on: todayStr(), grace_granted_by: currentUserName })
+                          // Unpaid: the super admin chooses full term or trust.
+                          setActivateFor(r)
                         }}
                           disabled={busyId === r.id}
                           title={r.is_active
                             ? 'Deactivate — blocks their sign-in'
                             : (r.is_paid
                                 ? 'Activate — lets them sign in'
-                                : `Activate on trust — ${UNPAID_GRACE_DAYS} days, then it closes again`)}
+                                : 'Activate while unpaid — for the full term, or on trust')}
                           className={`btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed ${
                             r.is_active ? 'text-green-400 hover:text-red-400' : 'text-slate-400 hover:text-green-400'}`}>
                           {r.is_active ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
@@ -1172,6 +1272,181 @@ export default function SubscriptionsPage() {
       )}
 
       {/* ── Delete confirmation ────────────────────────────────── */}
+      {/* ── Switch on an UNPAID subscription (super admin, fix159) ────────── */}
+      {activateFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[80] p-4"
+          onClick={() => setActivateFor(null)}>
+          <div className="card w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100">Activate while unpaid</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {contactLabel(activateFor.contact)} has not paid {fmtMoney(activateFor.amount, activateFor.currency)}.
+                How long should they be able to sign in?
+              </p>
+            </div>
+            <div className="p-5 space-y-2.5">
+              <button type="button" onClick={() => activateUnpaid(activateFor, 'credit')}
+                className="w-full text-left rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15 p-3 transition-colors">
+                <span className="block text-sm font-medium text-amber-200">For the full term — payment due</span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">
+                  Open until {activateFor.end_date || 'the end date'}. It stays marked unpaid and is listed on
+                  Due Payments until you record the payment with its reference.
+                </span>
+              </button>
+              <button type="button" onClick={() => activateUnpaid(activateFor, 'trust')}
+                className="w-full text-left rounded-lg border border-surface-border hover:bg-surface-hover p-3 transition-colors">
+                <span className="block text-sm font-medium text-slate-200">On trust — {UNPAID_GRACE_DAYS} days</span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">
+                  Closes again on its own if the money has not arrived by then.
+                </span>
+              </button>
+            </div>
+            <div className="flex justify-end px-5 py-3 border-t border-surface-border">
+              <button type="button" className="btn-ghost" onClick={() => setActivateFor(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Record a payment, with its reference ─────────────────────────── */}
+      {payFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[80] p-4"
+          onClick={() => setPayFor(null)}>
+          <div className="card w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-slate-100">Record payment</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {contactLabel(payFor.contact)} · {fmtMoney(payFor.amount, payFor.currency)} · {payFor.description || 'Subscription'}
+              </p>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="pay-date">Received on *</label>
+                  <input id="pay-date" type="date" className="input" value={payForm.paid_on}
+                    onChange={e => setPayForm(f => ({ ...f, paid_on: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label" htmlFor="pay-method">Method *</label>
+                  <select id="pay-method" className="input" value={payForm.method}
+                    onChange={e => setPayForm(f => ({ ...f, method: e.target.value }))}>
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="label" htmlFor="pay-ref">Reference *</label>
+                <input id="pay-ref" className="input font-mono" autoFocus value={payForm.reference}
+                  placeholder="Receipt, transfer or cheque number"
+                  onChange={e => setPayForm(f => ({ ...f, reference: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label" htmlFor="pay-note">Note</label>
+                <input id="pay-note" className="input" value={payForm.note}
+                  placeholder="Optional — who handed it over, anything unusual"
+                  onChange={e => setPayForm(f => ({ ...f, note: e.target.value }))} />
+              </div>
+              {payErr && <p className="text-xs text-red-400">{payErr}</p>}
+              <p className="text-[11px] text-slate-500">
+                Saving marks the subscription paid{payFor.is_active ? '' : ' — switch it on afterwards if it should open now'}.
+                It leaves the Due Payments list.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-surface-border">
+              <button type="button" className="btn-ghost" onClick={() => setPayFor(null)}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={recordPayment}>
+                <CheckCircle2 className="w-4 h-4" /> Record payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Due Payments report ─────────────────────────────────────────── */}
+      {dueOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[75] p-4"
+          onClick={() => setDueOpen(false)}>
+          <div className="card w-full max-w-5xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-surface-border">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-fuchsia-300" /> Due payments
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {dueRows.length} subscription{dueRows.length === 1 ? '' : 's'} owing ·{' '}
+                  {dueRows.filter(r => ['credit', 'grace'].includes(accessOf(r, today).key)).length} already
+                  activated and in use without payment
+                  {Object.entries(totalsByCurrency(dueRows)).map(([c, a]) => ` · ${fmtMoney(a, c)}`).join('')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={!dueRows.length}
+                  onClick={() => downloadDuePaymentsPdf(dueRows, { generatedBy: currentUserName, today })}
+                  className="btn-primary disabled:opacity-40">
+                  <FileDown className="w-4 h-4" /> Download PDF
+                </button>
+                <button type="button" className="btn-ghost p-2" onClick={() => setDueOpen(false)} aria-label="Close">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface-card">
+                  <tr className="border-b border-surface-border text-slate-500 text-left">
+                    <th className="px-4 py-2 font-medium">Party</th>
+                    <th className="px-4 py-2 font-medium">Period</th>
+                    <th className="px-4 py-2 font-medium text-right">Amount</th>
+                    <th className="px-4 py-2 font-medium">Access</th>
+                    <th className="px-4 py-2 font-medium text-right">Owed for</th>
+                    <th className="px-4 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {dueRows.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">Nothing is owed.</td></tr>
+                  ) : dueRows.map(r => {
+                    const a = accessOf(r, today)
+                    const d = daysOutstanding(r, today)
+                    const tone = a.key === 'credit' || a.key === 'grace' ? 'text-amber-300'
+                      : a.key === 'grace_over' || a.key === 'expired' ? 'text-red-300' : 'text-slate-400'
+                    return (
+                      <tr key={r.id} className="border-b border-surface-border/50">
+                        <td className="px-4 py-2.5">
+                          <span className="text-slate-200 font-medium">{contactLabel(r.contact)}</span>
+                          <span className="block text-[11px] text-slate-500">{r.description || '—'}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.start_date} → {r.end_date}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-200 whitespace-nowrap">{fmtMoney(r.amount, r.currency)}</td>
+                        <td className={`px-4 py-2.5 ${tone}`}>
+                          {a.label}
+                          {a.detail && <span className="block text-[11px] text-slate-500">{a.detail}</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-400 whitespace-nowrap">
+                          {d == null ? '—' : `${d} day${d === 1 ? '' : 's'}`}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button type="button" onClick={() => openPay(r)}
+                            className="text-[11px] px-2 py-1 rounded border border-green-500/30 bg-green-500/10 text-green-300 hover:bg-green-500/20 whitespace-nowrap">
+                            Record payment
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {staleFreeCount > 0 && (
+              <p className="px-5 py-2.5 border-t border-surface-border text-[11px] text-slate-500">
+                {staleFreeCount} unpaid charge{staleFreeCount === 1 ? ' is' : 's are'} left off: the partner is now inside
+                the free {PARTNER_FREE_LIMIT}, so nothing is owed. Those rows read “not due — free seat”.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="card w-full max-w-sm p-5 space-y-4">

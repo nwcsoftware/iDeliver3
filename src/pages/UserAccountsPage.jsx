@@ -206,7 +206,7 @@ export default function UserAccountsPage() {
     if (!isAdmin) return
     ;(async () => {
       const { data, error } = await supabase.from('subscriptions')
-        .select('id,contact_id,user_account_id,description,start_date,end_date,amount,currency,is_paid,is_active')
+        .select('*')
       // Not installed yet (fix110/fix146 unrun) → the column simply stays quiet.
       if (!error && data) setSubs(data)
     })()
