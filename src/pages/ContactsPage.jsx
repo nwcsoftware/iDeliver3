@@ -31,7 +31,7 @@ import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import PartyLogins from '../components/contacts/PartyLogins'
-import { canManagePartyLogins } from '../lib/roles'
+import { canManagePartyLogins, canManageCustomerLogin, canRenameCustomerLogin } from '../lib/roles'
 import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import {
@@ -161,6 +161,11 @@ export default function ContactsPage({ type }) {
   /* Adding a partner's PORTAL login and resetting its password: admin and
      Senior Call Center (and the super admin). Nothing else about a login. */
   const canPartyLogins = canManagePartyLogins(currentUser?.role)
+  /* The contact's own customer-app login: admin, Senior Call Center and the
+     super admin set it and reset its password. Only an administrator may change
+     a username once it is saved (fix162). */
+  const canCustomerLogin   = canManageCustomerLogin(currentUser?.role)
+  const canRenameCustomer  = canRenameCustomerLogin(currentUser?.role)
   const navigate = useNavigate()
 
   const [contacts,  setContacts]  = useState([])
@@ -170,6 +175,12 @@ export default function ContactsPage({ type }) {
   const [nature,    setNature]    = useState('all')      // all | credit | cash — by account nature
   const [modal,     setModal]     = useState(null)
   const [form,      setForm]      = useState(BASE_FORM)
+  /* Declared after `form` and `modal`: reading them earlier throws during
+     render and blanks the page. */
+  // The username as saved on the contact (not what is being typed), and whether
+  // this user may still change it.
+  const savedCustomerUsername = (form?.username || (modal && modal !== 'add' ? modal.username : '') || '').trim()
+  const usernameFixed = !!savedCustomerUsername && !canRenameCustomer
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
   const [toggling,  setToggling]  = useState(null)
@@ -434,15 +445,21 @@ export default function ContactsPage({ type }) {
      The username is view-only here (set during customer setup); the RPC requires
      the customer to already have one. */
   async function resetCustomerPassword() {
-    if (!isAdmin || !modal || modal === 'add') return
+    if (!canCustomerLogin || !modal || modal === 'add') return
     const uname = usernameInput.trim()
+    // Once saved, the username is fixed for anyone who is not an administrator.
+    if (savedCustomerUsername && !canRenameCustomer
+        && uname.toLowerCase() !== savedCustomerUsername.toLowerCase()) {
+      setCredError('The username is fixed once it is saved — ask an administrator to change it.'); return
+    }
     const pwd = pwInput
     if (uname.length < 3) { setCredError('Username must be at least 3 characters.'); return }
     if (pwd.length < PW_MIN) { setCredError(`Password must be at least ${PW_MIN} characters.`); return }
     setResetting(true); setCredError(''); setNewPassword('')
     try {
       // Sets BOTH username and password (create or change) for any contact type.
-      const { data, error: e } = await supabase.rpc('admin_set_contact_credentials', {
+      const { data, error: e } = await supabase.rpc('contact_login_set', {
+        p_actor_id:     currentUser?.user_id,
         p_contact_id:   modal.id,
         p_username:     uname,
         p_new_password: pwd,
@@ -463,7 +480,10 @@ export default function ContactsPage({ type }) {
         /USERNAME_TAKEN/i.test(msg)      ? 'That username is already used by another contact.'
         : /USERNAME_TOO_SHORT/i.test(msg) ? 'Username must be at least 3 characters.'
         : /PASSWORD_TOO_SHORT/i.test(msg) ? `Password must be at least ${PW_MIN} characters.`
-        : /admin_set_contact_credentials/i.test(msg) ? 'Contact credential setup isn’t installed yet — run supabase-fix97.sql.'
+        : /USERNAME_LOCKED/i.test(msg)    ? 'The username is fixed once it is saved — ask an administrator to change it.'
+        : /NOT_AUTHORIZED/i.test(msg)     ? 'You are not allowed to set this login.'
+        : /contact_login_set/i.test(msg) && /not exist|schema cache/i.test(msg)
+          ? 'The customer-app login setup needs supabase-fix162.sql.'
         : msg)
     } finally {
       setResetting(false)
@@ -479,13 +499,14 @@ export default function ContactsPage({ type }) {
     )) return
     setResetting(true); setCredError(''); setNewPassword('')
     try {
-      const { error: e } = await supabase.rpc('admin_clear_contact_credentials', { p_contact_id: modal.id })
+      const { error: e } = await supabase.rpc('contact_login_clear', { p_actor_id: currentUser?.user_id, p_contact_id: modal.id })
       if (e) throw e
       setUsernameInput(''); setPwInput(''); setShowPw(false); setEditingPw(false)
       setForm(f => ({ ...f, username: '' }))
     } catch (e) {
       const msg = e?.message || String(e)
-      setCredError(/admin_clear_contact_credentials/i.test(msg) ? 'Contact credential setup isn’t installed yet — run supabase-fix97.sql.' : msg)
+      setCredError(/contact_login_clear/i.test(msg) && /not exist|schema cache/i.test(msg)
+        ? 'The customer-app login setup needs supabase-fix162.sql.' : msg)
     } finally {
       setResetting(false)
     }
@@ -1126,7 +1147,7 @@ export default function ContactsPage({ type }) {
             )}
 
             {/* Contact user account & security — collapsible, admin only (any type) */}
-            {activeTab === 'details' && modal !== 'add' && isAdmin && (
+            {activeTab === 'details' && modal !== 'add' && canCustomerLogin && (
               <div className="border border-surface-border rounded-lg overflow-hidden">
                 <button type="button" onClick={() => setCredOpen(o => !o)}
                   className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
@@ -1149,11 +1170,14 @@ export default function ContactsPage({ type }) {
                     </p>
                     <div>
                       <label className="label">Username</label>
-                      <input className="input font-mono" value={usernameInput}
-                        onChange={e => { setUsernameInput(e.target.value); setCredError('') }}
+                      <input className="input font-mono read-only:opacity-70 read-only:cursor-not-allowed" value={usernameInput}
+                        readOnly={usernameFixed}
+                        onChange={e => { if (usernameFixed) return; setUsernameInput(e.target.value); setCredError('') }}
                         placeholder="Set a username (min 3 characters)" autoComplete="off" />
                       <p className="text-[10px] text-slate-600 mt-0.5">
-                        Set or change this contact’s username here (must be unique across all contacts).
+                        {usernameFixed
+                          ? 'Fixed once saved — an administrator can change it. You can still reset the password.'
+                          : 'Set this contact’s username (must be unique across all contacts).'}
                       </p>
                     </div>
 

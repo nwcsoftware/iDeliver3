@@ -76,6 +76,11 @@ What that means when building:
   on User Accounts, is the super admin's alone — enforced in the SQL functions,
   not just hidden. Call Center has no login controls at all. These PORTAL logins
   are not the contact's own customer-app username/password on the same profile.
+- **Customer-app login (fix162)** — the contact's own username/password for the
+  customer mobile app. Admin, Senior Call Center and super admin set it and reset
+  its password (`contact_login_set`); once saved, only admin/super admin may
+  change the username; only the super admin removes it (`contact_login_clear`).
+  The old unchecked `admin_set/clear_contact_credentials` are revoked.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against
