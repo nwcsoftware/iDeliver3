@@ -24,12 +24,14 @@ import {
   ClipboardList,
   Trash2,
   CalendarCheck,
+  Smartphone,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import PartyLogins from '../components/contacts/PartyLogins'
+import { canManagePartyLogins } from '../lib/roles'
 import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import {
@@ -156,6 +158,9 @@ export default function ContactsPage({ type }) {
   const { currentUser, hasRole } = useAuth()
   const isAdmin = isStrictAdmin(currentUser?.role)
   const isSuperAdmin = hasRole('super_admin')   // only the super admin may hard-delete a contact
+  /* Adding a partner's PORTAL login and resetting its password: admin and
+     Senior Call Center (and the super admin). Nothing else about a login. */
+  const canPartyLogins = canManagePartyLogins(currentUser?.role)
   const navigate = useNavigate()
 
   const [contacts,  setContacts]  = useState([])
@@ -1074,7 +1079,7 @@ export default function ContactsPage({ type }) {
                 This is the only place an administrator makes one: it is linked
                 to this contact by the database and cannot be moved afterwards.
                 Not offered to the call-centre ranks — isAdmin is strict. */}
-            {activeTab === 'details' && isAdmin && loginRole && (
+            {activeTab === 'details' && canPartyLogins && loginRole && (
               isSavedContact ? (
                 <PartyLogins
                   contact={modal}
@@ -1103,16 +1108,16 @@ export default function ContactsPage({ type }) {
                   {loginRole === 'partner' ? (
                     <>
                       <span className="text-green-300 font-medium">The first 10 partners are included</span>{' '}
-                      in the annual package and pay nothing. Beyond the tenth there is no free period: saving
-                      this partner places a payable seat of {RATE_CURRENCY} {SEATS.partner.extraRate} a year,
-                      and they cannot sign in until it is paid and activated under
-                      <span className="text-slate-300"> Settings → Subscriptions</span>.
+                      in the annual package, and all their portal logins are free. Beyond the tenth, each portal
+                      login you add opens its own payable seat of {RATE_CURRENCY} {SEATS.partner.extraRate} a year,
+                      and that login cannot sign in until the super admin activates it or records the payment
+                      under <span className="text-slate-300">Settings → Subscriptions</span>.
                     </>
                   ) : (
                     <>
                       <span className="text-green-300 font-medium">Free {TRIAL_DAYS}-day subscription.</span>{' '}
-                      Saving this {loginRole} issues one automatically, starting today, so they can sign in
-                      right away. Renewals after that are entered by the super admin under
+                      Each portal login you add for this {loginRole} starts with one, so it can sign in right away.
+                      Renewals after that are entered by the super admin under
                       <span className="text-slate-300"> Settings → Subscriptions</span>.
                     </>
                   )}
@@ -1126,11 +1131,22 @@ export default function ContactsPage({ type }) {
                 <button type="button" onClick={() => setCredOpen(o => !o)}
                   className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-hover/40 hover:bg-surface-hover text-left transition-colors">
                   <ChevronRight className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform duration-200 ${credOpen ? 'rotate-90' : ''}`} />
-                  <KeyRound className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span className="text-[11px] text-slate-300 uppercase tracking-wider font-semibold">User Account &amp; Security</span>
+                  <Smartphone className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span className="text-[11px] text-slate-300 uppercase tracking-wider font-semibold">Customer app login</span>
+                  <span className="text-[10px] text-slate-500 normal-case ml-1 truncate">
+                    — to place orders in the 3asari3 customer mobile app
+                  </span>
                 </button>
                 {credOpen && (
                   <div className="p-3 space-y-3">
+                    {/* Two different accounts live on a partner's profile, and
+                        mixing them up gives the wrong person the wrong door. */}
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      One username and password for this contact to sign in to the <span className="text-slate-300">customer
+                      mobile app</span> and order as a customer. It does <span className="text-slate-300">not</span> open the
+                      partner portal{loginRole ? <> — staff logins for the {loginRole} portal are under
+                      <span className="text-slate-300"> Portal logins</span> above</> : null}.
+                    </p>
                     <div>
                       <label className="label">Username</label>
                       <input className="input font-mono" value={usernameInput}

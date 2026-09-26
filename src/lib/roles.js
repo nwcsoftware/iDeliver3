@@ -110,6 +110,15 @@ export const isStrictAdmin = (role) => roleIsExactly(role, 'super_admin', 'admin
 /* Named for the two order powers above, so a call site says what it is asking
    about rather than repeating a role list that would drift. */
 export const canDeleteOrders      = (role) => isStrictAdmin(role)
+
+/* Adding a partner's or supplier's PORTAL login from its profile, and resetting
+   one's password when the user forgets it (fix160/fix161). An explicit grant to
+   the senior rank — exact roles, not inheritance — and the ONLY things any of
+   these three may do to a login other than the super admin: once created, a
+   login cannot be edited, moved, switched off or deleted by them. The database
+   (_assert_login_creator) refuses the same. Call Center: none of it. */
+export const canManagePartyLogins = (role) =>
+  roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 export const canReopenClosedOrder = (role) => isStrictAdmin(role)
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a

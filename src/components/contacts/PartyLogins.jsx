@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { KeyRound, UserPlus, Loader, Copy, Check, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react'
+import { KeyRound, UserPlus, Loader, Copy, Check, AlertCircle, RefreshCw, ExternalLink, MonitorSmartphone } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import {
   fetchLoginsForContact, ensureLoginSubscription, subscriptionScope, rowsForLogin,
@@ -155,7 +155,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, currentUser, 
     <div className="border border-surface-border rounded-lg p-3 bg-surface-hover/30 space-y-3">
       <div className="flex items-center gap-2">
         <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-300 flex items-center gap-1.5">
-          <KeyRound className="w-3.5 h-3.5 text-brand-400" /> Logins
+          <MonitorSmartphone className="w-3.5 h-3.5 text-brand-400" /> Portal logins
         </p>
         <span className="text-[11px] text-slate-500">{logins.length}</span>
         {!adding && (
@@ -166,8 +166,15 @@ export default function PartyLogins({ contact, role, isSuperAdmin, currentUser, 
       </div>
 
       <p className="text-[11px] text-slate-500 leading-relaxed">
-        Each login signs in as this {role} and holds its own subscription. Once created it is fixed to this
-        contact{isSuperAdmin ? '' : ': an administrator can reset its password but cannot edit, move or switch it off'}.
+        For this {role}’s staff to sign in to the <span className="text-slate-300">{role} portal</span> and see their
+        own orders, packages and statements — one login per person, each with its own subscription. These are
+        not the customer app login below.
+      </p>
+      <p className="text-[11px] text-slate-500 leading-relaxed">
+        {isSuperAdmin
+          ? 'You can edit, move, switch off or delete a login on User Accounts.'
+          : 'Once created, a login is fixed: you cannot edit, move, switch off or delete it — that is the super admin’s. '
+            + 'If the user forgets the password, reset it here; they choose a new one at their next sign-in.'}
       </p>
 
       {issued && (
