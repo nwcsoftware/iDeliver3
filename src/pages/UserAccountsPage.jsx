@@ -31,7 +31,7 @@ import {
   FileDown,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
+import { ensureLoginSubscription, TRIAL_DAYS } from '../lib/subscriptions'
 import {
   scanUserReferences, summariseReferences, deleteUserAccount, tableLabel, columnLabel,
 } from '../lib/userDeletion'
@@ -287,12 +287,18 @@ export default function UserAccountsPage() {
   const roleContacts = partyContacts.filter(c =>
     Array.isArray(c.contact_types) && c.contact_types.includes(form.role))
 
+  // Arrived from a partner's Logins panel: show that login.
+  useEffect(() => {
+    const q = location.state?.search
+    if (q) setSearch(String(q))
+  }, [location.state?.search])
+
   // Arrived from a contact (supplier/partner) via "Create User Profile":
   // open the New User form pre-filled with the contact's details, then clear
   // the navigation state so a refresh/back doesn't re-open it.
   useEffect(() => {
     const prefill = location.state?.prefillUser
-    if (prefill && isAdmin) {
+    if (prefill && isSuperAdmin) {
       setForm({ ...EMPTY_USER, ...prefill })
       setFormErr(''); setShowPw(false); setModal('add')
       navigate(location.pathname, { replace: true, state: {} })
@@ -471,12 +477,14 @@ export default function UserAccountsPage() {
 
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
+    if (!isSuperAdmin) return
     // Start with a ready-to-use strong password so the admin can just create &
     // share, or replace it. Shown in clear since it's a brand-new temporary one.
     setForm({ ...EMPTY_USER, password: generatePassword() })
     setFormErr(''); setShowPw(true); setModal('add')
   }
   function openEdit(u) {
+    if (!isSuperAdmin) return
     setForm({ username: u.username, email: u.email ?? '', mobile: u.mobile ?? '', role: u.role, status: u.status, password: '', contact_id: u.contact_id ?? '' })
     setFormErr(''); setModal(u)
     setCredsOpen(false); setCredsPw(''); setCopied('')
@@ -485,6 +493,7 @@ export default function UserAccountsPage() {
   function closeModal() { setModal(null); setForm(EMPTY_USER); setFormErr('') }
 
   async function saveUser() {
+    if (!isSuperAdmin) { setFormErr('Only the super admin can create or change a login here.'); return }
     if (!form.username.trim()) { setFormErr('Username is required.'); return }
     if (!form.mobile.trim())   { setFormErr('Mobile is required.'); return }
     if (isPartyRole && !form.contact_id) {
@@ -540,7 +549,7 @@ export default function UserAccountsPage() {
 
     let rpcError
     if (modal === 'add') {
-      const { error: e } = await supabase.rpc('admin_create_user', {
+      const { data: newLoginId, error: e } = await supabase.rpc('admin_create_user', {
         p_actor_id:   currentUser.user_id,
         p_username:   form.username.trim(),
         p_email:      form.email.trim(),
@@ -563,7 +572,7 @@ export default function UserAccountsPage() {
         const { data: c } = await supabase.from('contacts')
           .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
         const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
-        const trial = await ensureTrialSubscription(form.contact_id, types, {
+        const trial = await ensureLoginSubscription(form.contact_id, newLoginId, types, {
           companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
         })
         if (trial.error) console.warn('Could not open the subscription:', trial.error)
@@ -627,7 +636,7 @@ export default function UserAccountsPage() {
         const { data: c } = await supabase.from('contacts')
           .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
         const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
-        const opened = await ensureTrialSubscription(form.contact_id, types, {
+        const opened = await ensureLoginSubscription(form.contact_id, modal.id, types, {
           companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
         })
         if (opened.error) console.warn('Could not open the subscription:', opened.error)
@@ -706,6 +715,7 @@ export default function UserAccountsPage() {
 
   /* ── activate / deactivate ───────────────────────────────── */
   async function toggleStatus(u) {
+    if (!isSuperAdmin) return
     const next = u.status === 'active' ? 'inactive' : 'active'
     setBusyId(u.id)
     const { error: e } = await supabase.rpc('admin_set_user_status', {
@@ -747,9 +757,14 @@ export default function UserAccountsPage() {
             <span className="text-[11px] tabular-nums px-1.5 rounded bg-surface-border">{filtered.length}</span>
           </button>
         )}
-        <button className={`btn-primary ${isSuperAdmin ? '' : 'ml-auto'}`} onClick={openAdd}>
+        {/* Only the super admin creates a login here. An administrator adds a
+            partner or supplier login from that contact's own profile, where it
+            is linked to them and can never be pointed anywhere else. */}
+        {isSuperAdmin && (
+        <button className="btn-primary" onClick={openAdd}>
           <UserPlus className="w-4 h-4" /> New User
         </button>
+        )}
       </div>
 
       {/* Filters. Only the roles and statuses actually present are offered —
@@ -951,14 +966,24 @@ export default function UserAccountsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
+                      {/* Changing a login is the super admin's alone (fix160). An
+                          administrator may reset the password of a partner or
+                          supplier login — which forces a change at the next
+                          sign-in — and nothing else. The database refuses the
+                          same things, so hiding them here is courtesy, not the rule. */}
+                      {isSuperAdmin && (
                       <button onClick={() => openEdit(u)} title="Edit"
                         className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100">
                         <Pencil className="w-4 h-4" />
                       </button>
-                      <button onClick={() => openReset(u)} title="Reset password"
+                      )}
+                      {(isSuperAdmin || ['partner', 'supplier'].includes(u.role)) && (
+                      <button onClick={() => openReset(u)} title="Reset password — they must change it at the next sign-in"
                         className="btn-ghost p-1.5 text-slate-400 hover:text-amber-300">
                         <KeyRound className="w-4 h-4" />
                       </button>
+                      )}
+                      {isSuperAdmin && (
                       <button onClick={() => toggleStatus(u)} disabled={isSelf || busyId === u.id}
                         title={isSelf ? 'You cannot change your own status' : (u.status === 'active' ? 'Deactivate' : 'Activate')}
                         className={`btn-ghost p-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${u.status === 'active' ? 'text-slate-400 hover:text-red-400' : 'text-slate-400 hover:text-green-400'}`}>
@@ -966,6 +991,7 @@ export default function UserAccountsPage() {
                           ? <Loader className="w-4 h-4 animate-spin" />
                           : (u.status === 'active' ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />)}
                       </button>
+                      )}
                       {/* Permanent removal — the super admin's alone, and never
                           on themselves or another super admin. */}
                       {isSuperAdmin && (

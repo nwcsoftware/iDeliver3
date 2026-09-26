@@ -301,6 +301,20 @@ export const STATUS_STYLES = {
   deactivated: { label: 'Deactivated',  cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30' },
 }
 
+/* WHO A SUBSCRIPTION ROW BELONGS TO (fix160).
+
+   A partner may hold several logins, and each login carries its own
+   subscription. A row names the contact (whose business it is) and the login
+   (who it lets in). A row with no login yet is the contact's unassigned one —
+   placed before anybody could sign in — and it is handed to the first login
+   created for that contact rather than a second charge being raised. */
+export const ownerKey = (r) => r?.user_account_id || r?.contact_id || null
+
+/* The rows that decide what ONE login may do: its own, plus any of the
+   contact's rows not yet given to a login. */
+export const rowsForLogin = (rows = [], userId = null) =>
+  (rows || []).filter(r => !r?.user_account_id || (userId && r.user_account_id === userId))
+
 /* How a subscription can be paid, offered when the super admin records it. */
 export const PAYMENT_METHODS = ['Cash', 'OMT', 'Whish', 'Bank transfer', 'Cheque', 'Other']
 
@@ -352,7 +366,7 @@ export function daysLeft(endDate, today = todayStr()) {
    Returns { allowed, reason }. When the table doesn't exist yet (migration not
    run) access is ALLOWED, so installing the app doesn't lock out every partner
    before the super admin has entered any subscription. */
-export async function checkSubscriptionAccess(contactId, role = null) {
+export async function checkSubscriptionAccess(contactId, role = null, userId = null) {
   if (!contactId) return { allowed: false, reason: 'no-contact', row: null }
   try {
     const scope = await subscriptionScope(contactId)
@@ -393,7 +407,9 @@ export async function checkSubscriptionAccess(contactId, role = null) {
       }
       return { allowed: true, reason: 'lookup-failed', row: null }   // never lock someone out on a network blip
     }
-    const rows = data ?? []
+    /* This LOGIN's rows: a partner with three logins holds three
+       subscriptions, and one of them being paid must not open the other two. */
+    const rows = rowsForLogin(data ?? [], userId)
     if (rows.length === 0) return { allowed: false, reason: 'none', row: null }
 
     const active = rows.find(r => isSubscriptionActive(r))
@@ -505,7 +521,7 @@ export async function saveSubscription(row, { companyId = null, userId = null } 
      Before this, none of them were written at all: “activate on trust” sent
      grace_started_on and it was silently dropped here, so the 15-day clock
      never started and the row read as plain Unpaid — at sign-in too. */
-  for (const k of ['grace_started_on', 'grace_granted_by', 'credit_granted_at', 'credit_granted_by',
+  for (const k of ['user_account_id', 'grace_started_on', 'grace_granted_by', 'credit_granted_at', 'credit_granted_by',
                    'payment_method', 'payment_reference', 'paid_recorded_by']) {
     if (row[k] !== undefined) payload[k] = row[k] === '' ? null : row[k]
   }
@@ -546,13 +562,18 @@ export async function reviewSubscriptionAfterTypeChange(contactId, { userId = nu
     if (error) return { ...none, error: error.message }
 
     const rows = data ?? []
-    const active = rows.find(r => isSubscriptionActive(r))
+    /* Every live row, one per login (fix160). Topping up only the first would
+       leave the partner's other logins on a subscription that no longer
+       covers what they are. */
+    const live = rows.filter(r => isSubscriptionActive(r))
     // Subject to a subscription and holding none: there is nothing to top up —
     // they need one, and the gate will say so at their next sign-in.
-    if (!active) return { ...none, none: true, to: scope.scope }
+    if (!live.length) return { ...none, none: true, to: scope.scope }
 
+    let changed = null
+    for (const active of live) {
     const short = subscriptionShortfall(active, scope)
-    if (short.ok) return none
+    if (short.ok) continue
 
     const note = [
       active.paid_by_note,
@@ -569,11 +590,12 @@ export async function reviewSubscriptionAfterTypeChange(contactId, { userId = nu
       updated_at:   new Date().toISOString(),
     }).eq('id', active.id)
     if (upErr) return { ...none, error: upErr.message }
-
-    return {
-      changed: true, due: short.due, days: short.days,
-      from: short.paying, to: short.required, error: null, none: false,
+    changed = changed
+      ? { ...changed, due: Math.round((changed.due + short.due) * 100) / 100 }
+      : { changed: true, due: short.due, days: short.days,
+          from: short.paying, to: short.required, error: null, none: false }
     }
+    return changed || none
   } catch (e) {
     return { ...none, error: e?.message || 'Could not review the subscription.' }
   }
@@ -663,7 +685,7 @@ export const RENEWAL_STAGES = {
 export function coveredContactIds(rows = [], today = todayStr()) {
   const ids = new Set()
   for (const r of rows) {
-    if (r?.is_paid && r?.is_active && r?.end_date && r.end_date >= today) ids.add(r.contact_id)
+    if (r?.is_paid && r?.is_active && r?.end_date && r.end_date >= today) ids.add(ownerKey(r))
   }
   return ids
 }
@@ -707,7 +729,7 @@ export function subscriptionsSummary(rows = [], today = todayStr()) {
   }
   for (const r of rows) {
     const st = subscriptionStatus(r, today)
-    const { stage } = renewalStage(r, today, covered.has(r.contact_id))
+    const { stage } = renewalStage(r, today, covered.has(ownerKey(r)))
     if (r.contact_id) out.parties.add(r.contact_id)
 
     // 'expired' counts what actually lapsed. A period that ended and was then
@@ -775,21 +797,39 @@ export const isTrialSubscription = (row) =>
    already saved and must not be rolled back over this. */
 /* The login attached to a contact, if any. Kept here rather than imported from
    contactLogin.js so this module has no dependency on the office pages. */
-export async function fetchLoginForContact(contactId) {
-  if (!contactId) return null
+/* Every login of a contact, oldest first (fix160 — a partner may have several). */
+export async function fetchLoginsForContact(contactId) {
+  if (!contactId) return []
   try {
     const { data, error } = await supabase
       .from('user_accounts')
-      .select('id, username, role, status')
+      .select('id, username, role, status, mobile, email, last_login_at, created_at, must_change_password')
       .eq('contact_id', contactId)
-      .maybeSingle()
-    return error ? null : (data ?? null)
+      .order('created_at')
+    return error ? [] : (data ?? [])
   } catch {
-    return null
+    return []
   }
 }
 
-export async function ensureTrialSubscription(contactId, contactTypes = [], { companyId = null, userId = null } = {}) {
+/* The first login of a contact. Kept for callers that only ask "does it have
+   one"; it no longer breaks when there are several — maybeSingle() did, and
+   answered "none" for a partner with two logins. */
+export async function fetchLoginForContact(contactId) {
+  const all = await fetchLoginsForContact(contactId)
+  return all[0] ?? null
+}
+
+/* Open the subscription for ONE login (fix160). A partner inside the free ten
+   gets nothing; beyond it, each login gets its own payable seat, unpaid and
+   switched off until the super admin activates it or records the payment; a
+   supplier login gets its free trial. A contact row not yet given to a login
+   is handed to this one instead of raising a second charge. */
+export async function ensureLoginSubscription(contactId, loginId, contactTypes = [], { companyId = null, userId = null } = {}) {
+  return ensureTrialSubscription(contactId, contactTypes, { companyId, userId, loginId })
+}
+
+export async function ensureTrialSubscription(contactId, contactTypes = [], { companyId = null, userId = null, loginId = null } = {}) {
   const types = Array.isArray(contactTypes) ? contactTypes : [contactTypes]
   const isSecondParty = types.some(t => t === 'supplier' || t === 'partner')
   if (!contactId || !isSecondParty) return { created: false, row: null, error: null }
@@ -798,7 +838,7 @@ export async function ensureTrialSubscription(contactId, contactTypes = [], { co
      nobody to let in, so there is nothing to subscribe: no trial is issued for
      a contact that has no user account, and the office is not left counting
      down an expiry on an account that does not exist (fix136). */
-  const login = await fetchLoginForContact(contactId)
+  const login = loginId ? { id: loginId } : await fetchLoginForContact(contactId)
   if (!login) return { created: false, row: null, error: null, noLogin: true }
 
   /* Only a party that has to subscribe gets a trial of one. A supplier always
@@ -811,13 +851,22 @@ export async function ensureTrialSubscription(contactId, contactTypes = [], { co
   try {
     // Anything already on file — paid, expired or awaiting payment — means this
     // contact has been dealt with; the trial is for genuinely new parties only.
-    const { data: existing, error: readErr } = await supabase
-      .from('subscriptions').select('id').eq('contact_id', contactId).limit(1)
+    const { data: existingAll, error: readErr } = await supabase
+      .from('subscriptions').select('id, user_account_id').eq('contact_id', contactId)
     if (readErr) {
       const missing = /subscriptions/i.test(readErr.message) && /not exist|schema cache/i.test(readErr.message)
       return { created: false, row: null, error: missing ? null : readErr.message }
     }
-    if (existing?.length) return { created: false, row: null, error: null }
+    // This login already has one: nothing to do.
+    if ((existingAll ?? []).some(r => r.user_account_id === login.id)) return { created: false, row: null, error: null }
+    /* The contact has a row nobody has been given yet (placed before any login
+       existed): it becomes this login's, rather than a second charge. */
+    const unassigned = (existingAll ?? []).find(r => !r.user_account_id)
+    if (unassigned) {
+      const { error: attErr } = await supabase.from('subscriptions')
+        .update({ user_account_id: login.id, updated_at: new Date().toISOString() }).eq('id', unassigned.id)
+      return { created: false, attached: !attErr, row: null, error: attErr ? attErr.message : null }
+    }
 
     const start = todayStr()
 
@@ -860,6 +909,7 @@ export async function ensureTrialSubscription(contactId, contactTypes = [], { co
 
     const { data, error } = await supabase.from('subscriptions').insert([{
       contact_id:   contactId,
+      user_account_id: login.id,
       start_date:   start,
       currency:     'USD',
       ...seed,
@@ -873,6 +923,7 @@ export async function ensureTrialSubscription(contactId, contactTypes = [], { co
       if (/billed_to/i.test(error.message)) {
         const { data: retry, error: e2 } = await supabase.from('subscriptions').insert([{
           contact_id: contactId,
+          user_account_id: login.id,
           start_date: start,
           currency: 'USD',
           ...seed,

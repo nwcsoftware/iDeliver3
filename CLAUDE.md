@@ -67,6 +67,13 @@ What that means when building:
   job, not a demotion from it. Check that before restricting anything else —
   making the senior rank *more* limited than call centre is a sign the rule has
   been read backwards.
+- **Logins (fix160).** A partner or supplier may hold several logins, each with
+  its own subscription. An admin creates them **only from the partner's profile**
+  (`admin_create_party_login` — the link is set by the database, never chosen),
+  and afterwards may only reset the password (always forces a change). Editing,
+  moving, activating/deactivating and deleting any login, and creating any login
+  on User Accounts, is the super admin's alone — enforced in the SQL functions,
+  not just hidden. Call-centre ranks have no login controls at all.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against

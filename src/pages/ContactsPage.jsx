@@ -29,10 +29,11 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
+import PartyLogins from '../components/contacts/PartyLogins'
 import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import {
-  ensureTrialSubscription, TRIAL_DAYS, reviewSubscriptionAfterTypeChange, RATE_CURRENCY,
+  TRIAL_DAYS, reviewSubscriptionAfterTypeChange, RATE_CURRENCY,
 } from '../lib/subscriptions'
 import { syncLoginRole } from '../lib/contactLogin'
 import { formatMobile } from '../lib/phone'
@@ -447,30 +448,10 @@ export default function ContactsPage({ type }) {
       setPwInput(''); setShowPw(false); setEditingPw(false)
       if (username) { setUsernameInput(username); setForm(f => ({ ...f, username })) }
 
-      /* The login exists now, so the free period starts now. Issued once: a
-         later password reset finds a subscription already on file and leaves
-         it alone, rather than handing out another ninety days. */
-      const types = Array.isArray(modal.contact_types) && modal.contact_types.length
-        ? modal.contact_types
-        : (modal.contact_type ? [modal.contact_type] : [])
-      const trial = await ensureTrialSubscription(modal.id, types, {
-        companyId: COMPANY_ID, userId: currentUser?.user_id || null,
-      })
-      if (trial.created) {
-        /* What was issued depends on who they are: a supplier gets the free
-           period their agreement promises, a partner past the tenth gets a
-           payable seat and no free days at all. Saying "free subscription" for
-           both would promise something that is not true of one of them. */
-        const payable = Number(trial.row?.amount) > 0
-        setNotice(payable
-          ? `Login created — the ten included partner seats are taken, so a payable seat of `
-            + `${RATE_CURRENCY} ${trial.row.amount} a year has been placed against them. It is unpaid, so they `
-            + 'cannot sign in yet: confirm the payment and activate it under Settings → Subscriptions.'
-          : `Login created — a free ${TRIAL_DAYS}-day subscription starts today. `
-            + 'Renewals are entered by the super admin under Settings → Subscriptions.')
-      } else if (trial.error) {
-        console.warn('Could not issue the free subscription:', trial.error)
-      }
+      /* These are the contact's own credentials, used by the CUSTOMER app — not
+         a portal login. Partner and supplier portal logins, and the subscription
+         each one carries, are made in the Logins panel on this profile (fix160),
+         so nothing is issued here. */
     } catch (e) {
       const msg = e?.message || String(e)
       setCredError(
@@ -770,7 +751,6 @@ export default function ContactsPage({ type }) {
   // A login must be tied to a saved contact so the 2nd-party user only sees their
   // own orders — so this is offered on existing (edit-mode) contacts only.
   const isSavedContact = modal && modal !== 'add'
-  const canCreateUser  = isAdmin && !!loginRole && isSavedContact
 
   // Suggest a username from the contact's name (or company), sanitised.
   function suggestUsername() {
@@ -780,21 +760,7 @@ export default function ContactsPage({ type }) {
     return base.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 30)
   }
 
-  // Carry the contact's details (and id, to link the account) to the User
-  // Accounts form and open "New User".
-  function goCreateUser() {
-    navigate('/settings/users', {
-      state: {
-        prefillUser: {
-          contact_id: modal.id,
-          username: suggestUsername(),
-          email:  form.email?.trim()  || '',
-          mobile: form.mobile?.trim() || '',
-          role:   loginRole,
-        },
-      },
-    })
-  }
+
 
   /* ── render ──────────────────────────────────────────────── */
 
@@ -1104,25 +1070,27 @@ export default function ContactsPage({ type }) {
             )}
 
             {/* Login access — suppliers & partners may be given a user account. */}
+            {/* A partner's / supplier's logins, created and listed here (fix160).
+                This is the only place an administrator makes one: it is linked
+                to this contact by the database and cannot be moved afterwards.
+                Not offered to the call-centre ranks — isAdmin is strict. */}
             {activeTab === 'details' && isAdmin && loginRole && (
-              <div className="border border-surface-border rounded-lg p-3 flex items-start gap-3 bg-surface-hover/30">
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-300 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-brand-400" /> Login Access
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    {isSavedContact
-                      ? <>This {loginRole} can have a user account to sign in and see only their own orders. You’ll set the username &amp; password on the next screen.</>
-                      : <>This {loginRole} can be given a sign-in account. Save the contact first, then reopen it to create the login.</>}
+              isSavedContact ? (
+                <PartyLogins
+                  contact={modal}
+                  role={loginRole}
+                  isSuperAdmin={isSuperAdmin}
+                  currentUser={currentUser}
+                  companyId={COMPANY_ID}
+                  suggestUsername={suggestUsername}
+                />
+              ) : (
+                <div className="border border-surface-border rounded-lg p-3 bg-surface-hover/30">
+                  <p className="text-[11px] text-slate-500">
+                    This {loginRole} can be given logins. Save the contact first, then reopen it to add them.
                   </p>
                 </div>
-                {canCreateUser && (
-                  <button type="button" onClick={goCreateUser}
-                    className="btn-primary whitespace-nowrap self-center">
-                    <UserPlus className="w-4 h-4" /> Create User Profile
-                  </button>
-                )}
-              </div>
+              )
             )}
 
             {/* The free introductory period, announced before it is issued — a 2nd

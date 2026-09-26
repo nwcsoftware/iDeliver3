@@ -176,7 +176,8 @@ export async function downloadDuePaymentsPdf(rows, { generatedBy = '', today = t
         const a = accessOf(r, today)
         const d = daysOutstanding(r, today)
         return [
-          contactLabel(r.contact) || '—',
+          (contactLabel(r.contact) || '—') + (r.login ? `
+@${r.login}` : ''),
           r.description || '—',
           // No arrow: the standard PDF fonts have no → and print it as "!'".
           `${r.start_date || '?'}

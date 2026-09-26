@@ -5,8 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import {
-  fetchSubscriptionsForContact, subscriptionStatus, STATUS_STYLES, daysLeft, todayStr,
-} from '../lib/subscriptions'
+  fetchSubscriptionsForContact, subscriptionStatus, STATUS_STYLES, daysLeft, todayStr, rowsForLogin } from '../lib/subscriptions'
 import {
   fetchAgreement, agreementText, AGREEMENT_STATUS, SUBSCRIPTION_PLANS, PLAN_CURRENCY,
   fetchAgreementParty,
@@ -43,8 +42,12 @@ export default function MySubscriptionPage({ partyContactId = null }) {
       fetchAgreement(contactId),
       fetchAgreementParty(contactId),
     ])
-    setRows(r); setError(e || ''); setAgreement(ag.row); setParty(who); setLoading(false)
-  }, [contactId])
+    /* This login's subscription, not its colleagues' (fix160): a partner with
+       three logins holds three, and each person sees their own. */
+    // Office staff opening a partner's page see all of that partner's rows.
+    setRows(partyContactId ? r : rowsForLogin(r, currentUser?.user_id))
+    setError(e || ''); setAgreement(ag.row); setParty(who); setLoading(false)
+  }, [contactId, partyContactId, currentUser?.user_id])
 
   useEffect(() => { load() }, [load])
 

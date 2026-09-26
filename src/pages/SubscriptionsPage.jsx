@@ -48,7 +48,7 @@ import {
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
   isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
   rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
-  seatHolderIds, PAYMENT_METHODS, isAmountDue,
+  seatHolderIds, PAYMENT_METHODS, isAmountDue, ownerKey,
 } from '../lib/subscriptions'
 import { downloadDuePaymentsPdf, accessOf, daysOutstanding, totalsByCurrency } from '../lib/duePaymentsPdf'
 import { SEATS, UNPAID_GRACE_DAYS } from '../lib/billing'
@@ -80,7 +80,7 @@ function plusMonths(dateStr, months) {
 }
 
 const emptyForm = () => ({
-  contact_id: '', description: '', start_date: todayStr(), end_date: plusMonths(todayStr(), 1),
+  contact_id: '', user_account_id: '', description: '', start_date: todayStr(), end_date: plusMonths(todayStr(), 1),
   amount: '', currency: 'USD', is_paid: false, paid_by_note: '', is_active: false,
 })
 
@@ -144,6 +144,11 @@ export default function SubscriptionsPage() {
   // Contacts with ANY login, active or not — only to tell “no login at all”
   // apart from “login deactivated” when saying why a partner holds no seat.
   const [anyLoginIds, setAnyLoginIds] = useState(() => new Set())
+  /* Every party login (fix160: a partner may have several). A subscription
+     belongs to ONE of them, so the list and the form name which. */
+  const [logins, setLogins] = useState([])
+  const loginById = useMemo(() => new Map(logins.map(l => [l.id, l])), [logins])
+  const loginsOf  = useCallback((contactId) => logins.filter(l => l.contact_id === contactId), [logins])
   /* Super-admin dialogs (fix159): how to switch on an unpaid subscription, the
      payment record with its reference, and the Due Payments report. */
   const [activateFor, setActivateFor] = useState(null)
@@ -246,10 +251,12 @@ export default function SubscriptionsPage() {
 
       const { data: logins } = await supabase
         .from('user_accounts')
-        .select('contact_id, status')
+        .select('id, username, status, contact_id, created_at')
         .not('contact_id', 'is', null)
+        .order('created_at')
       setLoginIds(seatHolderIds(logins))
       setAnyLoginIds(new Set((logins ?? []).map(l => l.contact_id)))
+      setLogins(logins ?? [])
     })()
   }, [canView])
 
@@ -260,7 +267,7 @@ export default function SubscriptionsPage() {
   const covered = useMemo(() => coveredContactIds(rows, today), [rows, today])
 
   const stageOf = useCallback(
-    (r) => renewalStage(r, today, covered.has(r.contact_id)),
+    (r) => renewalStage(r, today, covered.has(ownerKey(r))),
     [today, covered])
 
   // No row on file means they haven't been asked yet — which is 'pending', not
@@ -278,7 +285,7 @@ export default function SubscriptionsPage() {
       const st = subscriptionStatus(r, today)
       if (statusFilter !== 'all' && st !== statusFilter) return false
       if (partyFilter !== 'all' && !(r.contact?.contact_types ?? []).includes(partyFilter)) return false
-      if (renewalFilter && renewalStage(r, today, covered.has(r.contact_id)).stage !== renewalFilter) return false
+      if (renewalFilter && renewalStage(r, today, covered.has(ownerKey(r))).stage !== renewalFilter) return false
       if (agreeFilter && (agreements.get(r.contact_id)?.status || 'pending') !== agreeFilter) return false
       if (!q) return true
       return [contactLabel(r.contact), r.description, r.contact?.mobile]
@@ -520,6 +527,7 @@ export default function SubscriptionsPage() {
     const from = r?.end_date && r.end_date >= todayStr() ? addDays(r.end_date, 1) : todayStr()
     setForm({
       contact_id: r.contact_id,
+      user_account_id: r.user_account_id || '',   // renewing THIS login's seat
       description: `Annual partner seat — ${from.slice(0, 4)}`,
       start_date: from,
       end_date: addDays(from, 364),
@@ -535,7 +543,7 @@ export default function SubscriptionsPage() {
   function openEdit(r) {
     if (!canEditSubs) return
     setForm({
-      contact_id: r.contact_id ?? '', description: r.description ?? '',
+      contact_id: r.contact_id ?? '', user_account_id: r.user_account_id ?? '', description: r.description ?? '',
       start_date: r.start_date ?? todayStr(), end_date: r.end_date ?? '',
       amount: r.amount ?? '', currency: r.currency || 'USD',
       is_paid: !!r.is_paid, paid_by_note: r.paid_by_note ?? '', is_active: !!r.is_active,
@@ -547,6 +555,9 @@ export default function SubscriptionsPage() {
   async function save() {
     if (!canEditSubs) return
     if (!form.contact_id)  { setFormErr('Choose the supplier or partner.'); return }
+    if (loginsOf(form.contact_id).length > 1 && !form.user_account_id) {
+      setFormErr('This partner has several logins — choose which one this subscription is for.'); return
+    }
     if (!form.start_date)  { setFormErr('Start date is required.'); return }
     if (!form.end_date)    { setFormErr('End date is required.'); return }
     if (form.end_date < form.start_date) { setFormErr('The end date must be after the start date.'); return }
@@ -959,6 +970,12 @@ export default function SubscriptionsPage() {
                     <div className="flex items-center gap-2">
                       <Icon className="w-4 h-4 text-slate-500 flex-shrink-0" />
                       <span className={`font-medium ${lapsed ? strike : 'text-slate-100'}`}>{contactLabel(r.contact)}</span>
+                      {r.user_account_id && loginById.get(r.user_account_id) && (
+                        <span title="The login this subscription lets in"
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-surface-border text-slate-400 whitespace-nowrap flex-shrink-0">
+                          @{loginById.get(r.user_account_id).username}
+                        </span>
+                      )}
                       {(() => {
                         /* Up to two badges beside the name: whether the row is
                            awaiting payment, and — for a contact that is not
@@ -1195,10 +1212,45 @@ export default function SubscriptionsPage() {
                 <ContactCombobox
                   value={form.contact_id}
                   options={parties}
-                  onSelect={c => { setForm(f => ({ ...f, contact_id: c?.id || '' })); setFormErr('') }}
+                  onSelect={c => {
+                    const own = c?.id ? loginsOf(c.id) : []
+                    // One login: it is that login's. Several: the super admin picks.
+                    setForm(f => ({ ...f, contact_id: c?.id || '', user_account_id: own.length === 1 ? own[0].id : '' }))
+                    setFormErr('')
+                  }}
                   placeholder="Type a name, contact code or mobile…"
                 />
               </div>
+
+              {/* WHICH LOGIN this subscription lets in (fix160). A partner may
+                  have several, each with its own subscription. With one it is
+                  chosen for you; with none, the row waits and goes to the first
+                  login created from the partner's profile. */}
+              {form.contact_id && (() => {
+                const own = loginsOf(form.contact_id)
+                if (own.length === 0) {
+                  return (
+                    <p className="text-[11px] text-slate-500">
+                      This contact has no login yet. The subscription is held for it and goes to the first
+                      login created from its profile.
+                    </p>
+                  )
+                }
+                return (
+                  <div>
+                    <label className="label" htmlFor="sub-login">Login *</label>
+                    <select id="sub-login" className="input" value={form.user_account_id || ''}
+                      onChange={e => setForm(f => ({ ...f, user_account_id: e.target.value }))}>
+                      {own.length > 1 && <option value="">Choose the login…</option>}
+                      {own.map(l => (
+                        <option key={l.id} value={l.id}>
+                          {l.username}{l.status !== 'active' ? ` (${l.status})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })()}
 
               <div>
                 <label className="label">Description</label>
@@ -1383,7 +1435,9 @@ export default function SubscriptionsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" disabled={!dueRows.length}
-                  onClick={() => downloadDuePaymentsPdf(dueRows, { generatedBy: currentUserName, today })}
+                  onClick={() => downloadDuePaymentsPdf(
+                    dueRows.map(r => ({ ...r, login: loginById.get(r.user_account_id)?.username || '' })),
+                    { generatedBy: currentUserName, today })}
                   className="btn-primary disabled:opacity-40">
                   <FileDown className="w-4 h-4" /> Download PDF
                 </button>
@@ -1416,6 +1470,9 @@ export default function SubscriptionsPage() {
                       <tr key={r.id} className="border-b border-surface-border/50">
                         <td className="px-4 py-2.5">
                           <span className="text-slate-200 font-medium">{contactLabel(r.contact)}</span>
+                          {loginById.get(r.user_account_id) && (
+                            <span className="ml-1.5 text-[10px] font-mono text-slate-400">@{loginById.get(r.user_account_id).username}</span>
+                          )}
                           <span className="block text-[11px] text-slate-500">{r.description || '—'}</span>
                         </td>
                         <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.start_date} → {r.end_date}</td>

@@ -22,7 +22,7 @@
  */
 
 import { SEATS, SEAT_BY_ROLE, CURRENCY } from './billing'
-import { isSubscriptionActive, subscriptionStatus, STATUS_STYLES } from './subscriptions'
+import { isSubscriptionActive, subscriptionStatus, STATUS_STYLES, rowsForLogin } from './subscriptions'
 
 /** Roles that hold no seat: nothing to run out of, nothing to charge. */
 export const UNSEATED_ROLES = ['super_admin', 'customer', 'driver']
@@ -169,10 +169,11 @@ export function seatStatus(user, { partnerRanks = new Map(), subsByContact = new
          report. */
       const rank = partnerRanks.get(user.contact_id)
       if (rank && rank <= SEATS.partner.included) {
-        return { ...SEAT_STATUS.included, row: (subsByContact.get(user.contact_id) || [])[0] ?? null }
+        return { ...SEAT_STATUS.included, row: rowsForLogin(subsByContact.get(user.contact_id), user.id)[0] ?? null }
       }
     }
-    return fromRows(subsByContact.get(user.contact_id))
+    // This login's rows only: a partner's other logins hold their own (fix160).
+    return fromRows(rowsForLogin(subsByContact.get(user.contact_id), user.id))
   }
 
   /* Office seats: position among active logins of the same role, oldest first,
@@ -235,7 +236,7 @@ export function accountLevel(user, { partnerRanks = new Map(), subsByContact = n
 
   if (role === 'partner' || role === 'supplier') {
     if (!user.contact_id) return { level: 'No linked contact', detail: 'No subscription can apply' }
-    const row = currentRow(subsByContact.get(user.contact_id), today)
+    const row = currentRow(rowsForLogin(subsByContact.get(user.contact_id), user.id), today)
     if (role === 'partner') {
       const rank = partnerRanks.get(user.contact_id)
       if (rank && rank <= SEATS.partner.included) {
