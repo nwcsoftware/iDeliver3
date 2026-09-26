@@ -37,7 +37,7 @@ import {
 } from '../lib/userDeletion'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
-import { checkSeat, seatPosition, seatPrice, seatStatus } from '../lib/officeSeats'
+import { checkSeat, seatPosition, seatPrice, seatStatus, accountLevel } from '../lib/officeSeats'
 import { rankPartners, seatHolderIds } from '../lib/subscriptions'
 import { downloadUserAccountsPdf } from '../lib/userAccountsPdf'
 import { formatMobile } from '../lib/phone'
@@ -393,7 +393,10 @@ export default function UserAccountsPage() {
       ].filter(Boolean)
       const rows = filtered.map(u => {
         const st = seatStatus(u, seatLookups)
+        const lv = accountLevel(u, seatLookups)
         return {
+          level:     lv.level,
+          levelDetail: lv.detail,
           username:  u.username,
           contact:   u.contact_id ? contactLabel(linkedContacts[u.contact_id]) : '',
           role:      roleLabel[u.role] || u.role,

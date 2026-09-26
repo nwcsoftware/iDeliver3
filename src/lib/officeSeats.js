@@ -22,7 +22,7 @@
  */
 
 import { SEATS, SEAT_BY_ROLE, CURRENCY } from './billing'
-import { isSubscriptionActive } from './subscriptions'
+import { isSubscriptionActive, subscriptionStatus, STATUS_STYLES } from './subscriptions'
 
 /** Roles that hold no seat: nothing to run out of, nothing to charge. */
 export const UNSEATED_ROLES = ['super_admin', 'customer', 'driver']
@@ -44,9 +44,12 @@ export function seatPosition({ users = [], role, excludeId = null }) {
   const seat = SEATS[family]
   if (!seat) return null
 
-  // Only ACTIVE logins hold a seat — deactivating one hands its seat back.
+  /* Only ACTIVE logins hold a seat — deactivating one hands its seat back.
+     Counted over the seat FAMILY, not the exact role: a senior call centre
+     login draws an administrator seat (SEAT_BY_ROLE), so counting only its own
+     rank let admins and seniors each believe they had all four. */
   const used = users.filter(u =>
-    u.role === role && u.status === 'active' && u.id !== excludeId).length
+    SEAT_BY_ROLE[u.role] === family && u.status === 'active' && u.id !== excludeId).length
   const next = used + 1
 
   return {
@@ -176,10 +179,100 @@ export function seatStatus(user, { partnerRanks = new Map(), subsByContact = new
      so the people who were here first hold the included seats. */
   const family = SEAT_BY_ROLE[role]
   const peers = users
-    .filter(u => u.role === role && u.status === 'active')
+    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active')
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
   const idx = peers.findIndex(u => u.id === user.id)
   const position = idx === -1 ? peers.length + 1 : idx + 1
   if (position <= SEATS[family].included) return { ...SEAT_STATUS.included, row: null }
   return fromRows(subsByUser.get(user.id))
+}
+
+
+/* ── what a login IS, for the printed account list ───────────────────────
+ *
+ * For a partner or supplier: the subscription it holds — which one, for what
+ * period, how much, and where it stands (paid, payment due, unpaid…), or that
+ * it sits inside the ten free partner seats.
+ *
+ * For an office login: its level — the rank, and which seat of that rank's
+ * allowance it occupies: included in the annual package, or chargeable beyond
+ * it. Worked out by the same position rule seatStatus uses (active logins of
+ * the role, oldest first), so the paper and the billing agree about who is
+ * seat 7.
+ *
+ * Returns { level, detail }. */
+const RANK_TEXT = {
+  super_admin:        'Owner — full control',
+  admin:              'Administration',
+  senior_call_center: 'Senior call centre',
+  call_center:        'Call centre',
+}
+
+const fmtAmt = (n, cur) =>
+  `${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim()
+
+/* The subscription row that describes the account today: the live one, else
+   the most recent by end date. */
+function currentRow(rows, today) {
+  const list = rows || []
+  return list.find(r => isSubscriptionActive(r, today))
+    || list.slice().sort((a, b) => String(b.end_date || '').localeCompare(String(a.end_date || '')))[0]
+    || null
+}
+
+function describeRow(r, today) {
+  if (!r) return null
+  const st  = subscriptionStatus(r, today)
+  const lbl = STATUS_STYLES[st]?.label || st
+  const amt = Number(r.amount) > 0 ? fmtAmt(r.amount, r.currency) : 'free'
+  return `${r.description || 'Subscription'} · ${r.start_date || '?'} to ${r.end_date || '?'} · ${amt} · ${lbl}`
+}
+
+export function accountLevel(user, { partnerRanks = new Map(), subsByContact = new Map(), subsByUser = new Map(),
+                                     users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
+  const role = user?.role
+  if (role === 'super_admin') return { level: RANK_TEXT.super_admin, detail: 'Holds no seat' }
+
+  if (role === 'partner' || role === 'supplier') {
+    if (!user.contact_id) return { level: 'No linked contact', detail: 'No subscription can apply' }
+    const row = currentRow(subsByContact.get(user.contact_id), today)
+    if (role === 'partner') {
+      const rank = partnerRanks.get(user.contact_id)
+      if (rank && rank <= SEATS.partner.included) {
+        // A charge raised before it moved into the ten is not owed any more.
+        const stale = row && !row.is_paid && Number(row.amount) > 0
+        return { level: `Free partner #${rank} of ${SEATS.partner.included}`,
+                 detail: row ? describeRow(row, today) + (stale ? ' — not due, free seat' : '')
+                             : 'Included in the annual package — no subscription needed' }
+      }
+      if (rank) return { level: `Partner #${rank} — subscribes`, detail: describeRow(row, today) || 'No subscription on file' }
+      /* No rank: either the login is switched off, or the contact behind it is
+         no longer a live partner. Both hold no seat, and sign-in is refused. */
+      return {
+        level: user.status !== 'active' ? 'Partner — login inactive, no seat'
+                                        : 'Partner — contact is not a live partner, sign-in refused',
+        detail: describeRow(row, today) || 'No subscription on file',
+      }
+    }
+    return { level: 'Supplier — own monthly plan', detail: describeRow(row, today) || 'No subscription on file' }
+  }
+
+  const family = SEAT_BY_ROLE[role]
+  if (!family) return { level: role || '—', detail: 'This role holds no seat' }
+  const seat = SEATS[family]
+  const rank = RANK_TEXT[role] || role
+  if (user.status !== 'active') return { level: rank, detail: 'Inactive — holds no seat' }
+
+  const peers = users
+    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active')
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+  const idx = peers.findIndex(u => u.id === user.id)
+  const pos = idx === -1 ? peers.length + 1 : idx + 1
+  if (pos <= seat.included) {
+    return { level: rank, detail: `Included seat ${pos} of ${seat.included} — ${seat.label.toLowerCase()}, annual package` }
+  }
+  const row = currentRow(subsByUser.get(user.id), today)
+  return { level: rank,
+           detail: `Chargeable seat ${pos} (beyond ${seat.included}) — ${fmtAmt(seat.extraRate, CURRENCY)} per ${seat.period}`
+             + (row ? ` · ${STATUS_STYLES[subscriptionStatus(row, today)]?.label || ''}` : ' · not yet invoiced') }
 }

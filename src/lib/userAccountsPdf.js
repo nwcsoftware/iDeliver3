@@ -84,12 +84,15 @@ export async function downloadUserAccountsPdf(rows, { filters = [], preparedBy =
   y = Math.max(afterPrepared + 6 + fLines.length * 4, topY - 4 + panelH + 6)
 
   // ── the list ───────────────────────────────────────────────────────────────
-  const head = [['Username', 'Linked to', 'Role', 'Mobile', 'Email', 'Status', 'Seat',
+  // Mobile and email share a cell; the widest column goes to what the account
+  // IS — its subscription, or its level and seat.
+  const head = [['Username', 'Linked to', 'Role', 'Contact', 'Status', 'Subscription / level',
                  'Last login', ...(showDevice ? ['Device'] : [])]]
   autoTable(doc, {
     startY: y,
     margin: { left: M, right: M, bottom: 20 },
     theme: 'plain',
+    rowPageBreak: 'avoid',        // an account is never split across two pages
     styles: { fontSize: 7.8, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 }, textColor: INK, valign: 'middle' },
     headStyles: { fillColor: SOFT, textColor: MUTED, fontStyle: 'bold', fontSize: 7 },
     head,
@@ -97,31 +100,31 @@ export async function downloadUserAccountsPdf(rows, { filters = [], preparedBy =
       r.username || '—',
       r.contact || '—',
       r.role || '—',
-      r.mobile || '—',
-      r.email || '—',
+      [r.mobile, r.email].filter(Boolean).join('\n') || '—',
       `${r.status ? r.status[0].toUpperCase() + r.status.slice(1) : '—'}${r.online ? '\nonline now' : ''}`,
-      r.seat && r.seat.key !== 'na' ? `${r.seat.label}${r.seat.until ? `\nto ${r.seat.until}` : ''}` : '—',
+      `${r.level || '—'}${r.levelDetail ? `\n${r.levelDetail}` : ''}`,
       when(r.lastLogin),
       ...(showDevice ? [r.device || '—'] : []),
     ]),
     columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 40 },
-      1: { cellWidth: 48 },
-      2: { cellWidth: 26 },
-      3: { cellWidth: 26 },
-      5: { cellWidth: 18 },
-      6: { cellWidth: 22 },
-      7: { cellWidth: 36 },
+      0: { fontStyle: 'bold', cellWidth: 34 },
+      1: { cellWidth: 40 },
+      2: { cellWidth: 24 },
+      3: { cellWidth: 30 },
+      4: { cellWidth: 17 },
+      6: { cellWidth: 30 },
+      7: { cellWidth: 27 },
     },
     didParseCell: (data) => {
       if (data.section !== 'body') return
       const r = rows[data.row.index]
-      if (data.column.index === 5) {
+      if (data.column.index === 4) {
         data.cell.styles.textColor = STATUS_COLOR[r.status] || INK
         data.cell.styles.fontStyle = 'bold'
       }
-      if (data.column.index === 6 && r.seat) data.cell.styles.textColor = SEAT_COLOR[r.seat.key] || MUTED
-      if (data.column.index === 7 && !r.lastLogin) data.cell.styles.textColor = MUTED
+      // The level in the seat's colour: money owed reads fuchsia, refused red.
+      if (data.column.index === 5 && r.seat) data.cell.styles.textColor = SEAT_COLOR[r.seat.key] || INK
+      if (data.column.index === 6 && !r.lastLogin) data.cell.styles.textColor = MUTED
     },
     didDrawCell: (data) => {
       if (data.section === 'body') {
