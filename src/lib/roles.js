@@ -121,13 +121,12 @@ export const canManagePartyLogins = (role) =>
   roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 
 /* A contact's CUSTOMER APP login (fix162): the same three may create it and
-   reset its password. Changing a username once it has been saved is an
-   administrator's — for the senior rank it is fixed — and removing the
-   login altogether is the super admin's. contact_login_set / _clear refuse the
-   same in the database. */
+   reset its password. Once saved, the username is fixed for all but the super
+   admin, who alone may change it or remove the login altogether.
+   contact_login_set / _clear refuse the same in the database. */
 export const canManageCustomerLogin = (role) =>
   roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
-export const canRenameCustomerLogin = (role) => isStrictAdmin(role)
+export const canRenameCustomerLogin = (role) => roleIsExactly(role, 'super_admin')
 export const canReopenClosedOrder = (role) => isStrictAdmin(role)
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a

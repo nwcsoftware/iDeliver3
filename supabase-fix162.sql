@@ -14,9 +14,9 @@
 --   contact_login_set     super admin, admin, senior call center
 --                         (_assert_login_creator, fix161). Creates the login,
 --                         or resets its password.
---                         CHANGING AN EXISTING USERNAME: super admin and admin
---                         only. A Senior Call Center user sets the username
---                         once; after it is saved it is fixed for them
+--                         CHANGING AN EXISTING USERNAME: the super admin only.
+--                         An admin or a Senior Call Center user sets the
+--                         username once; after it is saved it is fixed for them
 --                         (USERNAME_LOCKED) — they can still reset the password.
 --   contact_login_clear   super admin only, as the page already had it.
 --
@@ -54,9 +54,9 @@ BEGIN
   SELECT c.username INTO v_current FROM contacts c WHERE c.id = p_contact_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'CONTACT_NOT_FOUND'; END IF;
 
-  -- Once saved, the username is fixed for everyone below an administrator.
+  -- Once saved, the username is fixed for everyone but the super admin.
   IF v_current IS NOT NULL AND lower(v_current) <> v_username
-     AND v_actor.role::TEXT NOT IN ('super_admin', 'admin') THEN
+     AND v_actor.role::TEXT <> 'super_admin' THEN
     RAISE EXCEPTION 'USERNAME_LOCKED';
   END IF;
 

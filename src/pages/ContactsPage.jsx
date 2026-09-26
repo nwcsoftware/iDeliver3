@@ -162,7 +162,7 @@ export default function ContactsPage({ type }) {
      Senior Call Center (and the super admin). Nothing else about a login. */
   const canPartyLogins = canManagePartyLogins(currentUser?.role)
   /* The contact's own customer-app login: admin, Senior Call Center and the
-     super admin set it and reset its password. Only an administrator may change
+     super admin set it and reset its password. Only the super admin may change
      a username once it is saved (fix162). */
   const canCustomerLogin   = canManageCustomerLogin(currentUser?.role)
   const canRenameCustomer  = canRenameCustomerLogin(currentUser?.role)
@@ -447,10 +447,10 @@ export default function ContactsPage({ type }) {
   async function resetCustomerPassword() {
     if (!canCustomerLogin || !modal || modal === 'add') return
     const uname = usernameInput.trim()
-    // Once saved, the username is fixed for anyone who is not an administrator.
+    // Once saved, the username is fixed for everyone but the super admin.
     if (savedCustomerUsername && !canRenameCustomer
         && uname.toLowerCase() !== savedCustomerUsername.toLowerCase()) {
-      setCredError('The username is fixed once it is saved — ask an administrator to change it.'); return
+      setCredError('The username is fixed once it is saved — only the super admin can change it.'); return
     }
     const pwd = pwInput
     if (uname.length < 3) { setCredError('Username must be at least 3 characters.'); return }
@@ -480,7 +480,7 @@ export default function ContactsPage({ type }) {
         /USERNAME_TAKEN/i.test(msg)      ? 'That username is already used by another contact.'
         : /USERNAME_TOO_SHORT/i.test(msg) ? 'Username must be at least 3 characters.'
         : /PASSWORD_TOO_SHORT/i.test(msg) ? `Password must be at least ${PW_MIN} characters.`
-        : /USERNAME_LOCKED/i.test(msg)    ? 'The username is fixed once it is saved — ask an administrator to change it.'
+        : /USERNAME_LOCKED/i.test(msg)    ? 'The username is fixed once it is saved — only the super admin can change it.'
         : /NOT_AUTHORIZED/i.test(msg)     ? 'You are not allowed to set this login.'
         : /contact_login_set/i.test(msg) && /not exist|schema cache/i.test(msg)
           ? 'The customer-app login setup needs supabase-fix162.sql.'
@@ -1176,7 +1176,7 @@ export default function ContactsPage({ type }) {
                         placeholder="Set a username (min 3 characters)" autoComplete="off" />
                       <p className="text-[10px] text-slate-600 mt-0.5">
                         {usernameFixed
-                          ? 'Fixed once saved — an administrator can change it. You can still reset the password.'
+                          ? 'Fixed once saved — only the super admin can change it. You can still reset the password.'
                           : 'Set this contact’s username (must be unique across all contacts).'}
                       </p>
                     </div>
