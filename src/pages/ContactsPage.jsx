@@ -35,9 +35,8 @@ import { canManagePartyLogins, canManageCustomerLogin, canRenameCustomerLogin } 
 import { isStrictAdmin } from '../lib/roles'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
 import {
-  TRIAL_DAYS, reviewSubscriptionAfterTypeChange, RATE_CURRENCY,
+  TRIAL_DAYS, RATE_CURRENCY,
 } from '../lib/subscriptions'
-import { syncLoginRole } from '../lib/contactLogin'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES, normalizeOptions } from '../components/contacts/ContactFormFields'
 import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
@@ -47,7 +46,6 @@ import ContactPartnerPackages from '../components/contacts/ContactPartnerPackage
 import ContactPartnerOrders from '../components/contacts/ContactPartnerOrders'
 import { saveContactAddresses } from '../lib/contactAddresses'
 import { loadSubAccounts, saveSubAccounts, ensurePrimarySubAccount, accountNature, CREDIT } from '../lib/subAccounts'
-import { checkPartyTypeChange } from '../lib/subscriptions'
 import { SEATS } from '../lib/billing'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
@@ -532,20 +530,31 @@ export default function ContactsPage({ type }) {
     const selectedTypes = (Array.isArray(form.contact_types) && form.contact_types.length)
       ? [...new Set(form.contact_types)]
       : [cfg.contactType]
-    /* Turning an ordinary contact into a partner or supplier is a seat decision,
-       not a piece of paperwork (fix146). If the contact holds a login and the
-       seat would fall outside the annual package, the change is refused until a
-       subscription exists — otherwise the portal opens on the strength of a type
-       acquired a moment ago, with nothing behind it. */
-    if (modal !== 'add') {
-      const guard = await checkPartyTypeChange({
-        contactId: modal.id,
-        nextTypes: selectedTypes,
-        currentTypes: Array.isArray(modal.contact_types) && modal.contact_types.length
-          ? modal.contact_types
-          : (modal.contact_type ? [modal.contact_type] : []),
+    /* Adding or removing the partner / supplier type no longer touches any login
+       or subscription (fix163): each portal login keeps the role it was made
+       with and the subscription that goes with it. Adding "supplier" gives
+       nobody supplier access — that takes a supplier login and its own paid
+       plan. Removing "partner" closes that contact's partner logins at sign-in. */
+
+    /* THE MOBILE IS FIXED ONCE SET (fix163). The super admin changes it through
+       its own function, which is the only thing the database lets through; for
+       anybody else the field is read-only, and this refuses a change that got
+       past it. A contact with no number yet may be given one once. */
+    const savedMobile = modal !== 'add' ? String(modal.mobile || '').trim() : ''
+    const nextMobile  = String(form.mobile || '').trim()
+    if (modal !== 'add' && savedMobile && nextMobile !== savedMobile) {
+      if (!isSuperAdmin) {
+        setError('The mobile number is fixed once the contact is created — only the super admin can change it.')
+        setSaving(false); return
+      }
+      const { error: mErr } = await supabase.rpc('super_admin_set_contact_mobile', {
+        p_actor_id: currentUser?.user_id, p_contact_id: modal.id, p_mobile: nextMobile,
       })
-      if (!guard.ok) { setError(guard.message); setSaving(false); return }
+      if (mErr) {
+        setError(/not exist|schema cache/i.test(mErr.message)
+          ? 'Changing a mobile number needs supabase-fix163.sql.' : mErr.message)
+        setSaving(false); return
+      }
     }
 
     // The primary type drives the contact code & account-number prefix. Keep the
@@ -631,37 +640,16 @@ export default function ContactsPage({ type }) {
        and at this point nobody can: the login is created separately, and that
        is where the free period now begins (fix136). */
 
-    /* The login's role follows the contact's roles. They are separate records —
-       the portal reads the login — so a partner retagged as a supplier would
-       otherwise keep signing in as a partner, without the supplier pages. */
-    const roleSync = await syncLoginRole(contactId, selectedTypes, {
-      actorId: currentUser?.user_id || null,
-    })
-    if (roleSync.error) console.warn('Could not update the login role:', roleSync.error)
-
-    /* A partner promoted to supplier is billed at the supplier rate. The
-       difference for whatever is left of their period is added to the
-       subscription and it goes unpaid, which closes their portal until the
-       money is confirmed — checked here AND at every sign-in, so neither the
-       party nor the admin who made the change can leave it unsettled. */
-    const rolesChanged = modal !== 'add'
-      && JSON.stringify([...(modal.contact_types || [])].sort()) !== JSON.stringify([...selectedTypes].sort())
-    const review = rolesChanged
-      ? await reviewSubscriptionAfterTypeChange(contactId, { userId: currentUser?.user_id || null })
-      : { changed: false, none: false, error: null }
-    if (review.error) console.warn('Could not review the subscription:', review.error)
-
+    /* Say what a type change means, since nothing happens to the logins. */
+    const before = modal !== 'add' ? (modal.contact_types || []) : []
+    const dropped = ['partner', 'supplier'].filter(t => before.includes(t) && !selectedTypes.includes(t))
+    const added   = ['partner', 'supplier'].filter(t => !before.includes(t) && selectedTypes.includes(t))
     setNotice([
-      roleSync.changed
-        ? `Their login now signs in as ${roleSync.to} (was ${roleSync.from}). They will see the change the next time the app starts.`
+      dropped.length
+        ? `No longer a ${dropped.join(' or ')}: that contact's ${dropped.join(' / ')} portal logins are now refused at sign-in.`
         : '',
-      review.changed
-        ? `Subscription upgraded: ${review.from.toFixed(2)} → ${review.to.toFixed(2)} ${RATE_CURRENCY}/month. `
-          + `${review.due.toFixed(2)} ${RATE_CURRENCY} is due for the remaining ${review.days} day${review.days === 1 ? '' : 's'}, `
-          + 'and their portal stays closed until the super admin confirms the payment on Settings → Subscriptions.'
-        : '',
-      review.none
-        ? 'This contact now needs a subscription and holds none — they cannot sign in until the super admin creates one.'
+      added.includes('supplier') && before.includes('partner')
+        ? 'Supplier access needs its own supplier login, added under Portal logins, with its own paid supplier plan — the partner seat does not cover it.'
         : '',
     ].filter(Boolean).join(' '))
 
@@ -1064,6 +1052,7 @@ export default function ContactsPage({ type }) {
                 mode={modal === 'add' ? 'add' : 'edit'}
                 extraFields={formExtraFields}
                 showRoles
+                mobileLocked={modal !== 'add' && !!String(modal?.mobile || '').trim() && !isSuperAdmin}
               />
             )}
 
@@ -1106,6 +1095,7 @@ export default function ContactsPage({ type }) {
                   contact={modal}
                   role={loginRole}
                   isSuperAdmin={isSuperAdmin}
+                  canAssignSeat={isAdmin}
                   currentUser={currentUser}
                   companyId={COMPANY_ID}
                   suggestUsername={suggestUsername}
@@ -1128,10 +1118,11 @@ export default function ContactsPage({ type }) {
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   {loginRole === 'partner' ? (
                     <>
-                      <span className="text-green-300 font-medium">The first 10 partners are included</span>{' '}
-                      in the annual package, and all their portal logins are free. Beyond the tenth, each portal
-                      login you add opens its own payable seat of {RATE_CURRENCY} {SEATS.partner.extraRate} a year,
-                      and that login cannot sign in until the super admin activates it or records the payment
+                      <span className="text-green-300 font-medium">10 free partner seats</span>{' '}
+                      come with the annual package. A seat is assigned to a partner for one year, and all that
+                      partner's portal logins are free for the year; when it ends, the seat can be assigned again.
+                      A partner without a free seat pays {RATE_CURRENCY} {SEATS.partner.extraRate} a year for each
+                      portal login, which cannot sign in until the super admin activates it or records the payment
                       under <span className="text-slate-300">Settings → Subscriptions</span>.
                     </>
                   ) : (

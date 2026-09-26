@@ -326,6 +326,7 @@ const translations = {
     typeNew: 'Type new',
     unpaid: 'Unpaid',
     updateMobileNumber: 'Update Mobile Number',
+    mobileLockedNote: 'Your mobile number is linked to your account and cannot be changed here. To change it, please contact us.',
     username: 'Username',
     usernamePlaceholder: 'Username, mobile, or email',
     usernameRequired: 'Username is required.',
@@ -591,6 +592,7 @@ const translations = {
     typeNew: 'اكتب جديد',
     unpaid: 'غير مدفوع',
     updateMobileNumber: 'تحديث رقم الجوال',
+    mobileLockedNote: 'رقم جوالك مرتبط بحسابك ولا يمكن تغييره من هنا. لتغييره، يرجى التواصل معنا.',
     username: 'اسم المستخدم',
     usernamePlaceholder: 'اسم المستخدم أو الجوال أو البريد',
     usernameRequired: 'اسم المستخدم مطلوب.',
@@ -785,6 +787,7 @@ translations.fr = {
   trackStatus: 'Suivre le statut',
   unpaid: 'Non paye',
   updateMobileNumber: 'Mettre a jour le mobile',
+  mobileLockedNote: 'Votre numero est lie a votre compte et ne peut pas etre modifie ici. Pour le changer, contactez-nous.',
   username: 'Nom utilisateur',
   usernamePlaceholder: 'Nom utilisateur, mobile, ou email',
   usernameRequired: 'Nom utilisateur requis.',
@@ -975,6 +978,7 @@ translations.ro = {
   trackStatus: 'Urmareste statusul',
   unpaid: 'Neplatit',
   updateMobileNumber: 'Actualizeaza mobilul',
+  mobileLockedNote: 'Numarul tau de mobil este legat de cont si nu poate fi schimbat aici. Pentru a-l schimba, contacteaza-ne.',
   username: 'Utilizator',
   usernamePlaceholder: 'Utilizator, mobil, sau email',
   usernameRequired: 'Utilizatorul este obligatoriu.',
@@ -4695,7 +4699,8 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
 
     if (mobileError) {
       const message = mobileError.message || ''
-      if (message.includes('MOBILE_ALREADY_EXISTS')) setError('This mobile number is already used by another customer.')
+      if (message.includes('MOBILE_LOCKED')) setError(t('mobileLockedNote'))
+      else if (message.includes('MOBILE_ALREADY_EXISTS')) setError('This mobile number is already used by another customer.')
       else if (message.includes('MOBILE_REQUIRED')) setError(t('mobileNumberRequired'))
       else setError('Mobile number update failed. Please try again.')
       setSaving(false)
@@ -4877,11 +4882,14 @@ function ProfileScreen({ customerSession, onSessionUpdate, onLogout }) {
 
         {!loading && (
           <Section title={t('mobileNumber')} subtitle={t('mobileSubtitle')}>
-            <div className="space-y-3">
-              <ControlledField label={t('mobileNumber')} value={mobileInput} onChange={setMobileInput} />
-              <button type="button" onClick={saveMobileChange} disabled={saving || mobileInput.trim() === (profile?.mobile || '').trim()} className="flex h-11 w-full items-center justify-center rounded-lg bg-shop-600 text-sm font-bold text-white disabled:bg-slate-300">
-                {saving ? t('saving') : t('updateMobileNumber')}
-              </button>
+            {/* The mobile number is fixed once the account exists (fix163):
+                only the office's super admin may change it, and the database
+                refuses anyone else — so the app shows it and says whom to ask. */}
+            <div className="space-y-2">
+              <p className="text-base font-semibold text-slate-800" dir="ltr">
+                {formatMobile(profile?.mobile) || t('notSet')}
+              </p>
+              <p className="text-xs text-slate-500">{t('mobileLockedNote')}</p>
             </div>
           </Section>
         )}

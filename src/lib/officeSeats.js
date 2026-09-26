@@ -39,6 +39,10 @@ export const UNSEATED_ROLES = ['super_admin', 'customer', 'driver']
  * first day, so it has no free allowance to exceed.
  */
 export function seatPosition({ users = [], role, excludeId = null }) {
+  /* A partner's seat is not a count of partner logins: free partner seats are
+     assigned records held for a year (fix163), and every other partner login
+     pays for itself. Only office seats are positional. */
+  if (role === 'partner' || role === 'supplier') return null
   const family = SEAT_BY_ROLE[role]
   if (!family) return null
   const seat = SEATS[family]
@@ -139,16 +143,14 @@ const inDate = (r, today) => !!r && isSubscriptionActive(r, today)
 /**
  * The seat status of one login.
  *
- * `partnerRanks`   contact_id -> rank, from rankPartners() in lib/subscriptions.
- *                  Passed in rather than worked out here: the ranking counts
- *                  only partners who are not also suppliers and who hold a
- *                  login, and a second implementation of that would be a second
- *                  chance to disagree with the sign-in gate.
+ * `freeSeats`      contact_id -> { start, end, active }, from freeSeatMap() in
+ *                  lib/subscriptions: which partners hold a free seat, and until
+ *                  when. The same map the sign-in gate reads (fix163).
  * `subsByContact`  subscription rows keyed by contact_id
  * `subsByUser`     subscription rows keyed by user_account_id (office seats)
  * `users`          every login, so an office seat can find its own position
  */
-export function seatStatus(user, { partnerRanks = new Map(), subsByContact = new Map(), subsByUser = new Map(), users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
+export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(), users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
   const role = user?.role
   if (!SEAT_BY_ROLE[role] && role !== 'supplier') return { ...SEAT_STATUS.na, row: null }
 
@@ -164,12 +166,12 @@ export function seatStatus(user, { partnerRanks = new Map(), subsByContact = new
   if (role === 'partner' || role === 'supplier') {
     if (!user.contact_id) return { ...SEAT_STATUS.none, row: null }
     if (role === 'partner') {
-      /* Inside the first ten the seat is included whether or not a row exists —
-         the sign-in gate exempts them, so a missing row is not a problem to
-         report. */
-      const rank = partnerRanks.get(user.contact_id)
-      if (rank && rank <= SEATS.partner.included) {
-        return { ...SEAT_STATUS.included, row: rowsForLogin(subsByContact.get(user.contact_id), user.id)[0] ?? null }
+      /* The partner holds an active free seat: every partner login of it is
+         free for that year, whatever rows this login carries. */
+      const seat = freeSeats.get(user.contact_id)
+      if (seat?.active) {
+        return { ...SEAT_STATUS.included, row: rowsForLogin(subsByContact.get(user.contact_id), user.id)[0] ?? null,
+                 until: seat.end }
       }
     }
     // This login's rows only: a partner's other logins hold their own (fix160).
@@ -229,7 +231,7 @@ function describeRow(r, today) {
   return `${r.description || 'Subscription'} · ${r.start_date || '?'} to ${r.end_date || '?'} · ${amt} · ${lbl}`
 }
 
-export function accountLevel(user, { partnerRanks = new Map(), subsByContact = new Map(), subsByUser = new Map(),
+export function accountLevel(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(),
                                      users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
   const role = user?.role
   if (role === 'super_admin') return { level: RANK_TEXT.super_admin, detail: 'Holds no seat' }
@@ -238,24 +240,23 @@ export function accountLevel(user, { partnerRanks = new Map(), subsByContact = n
     if (!user.contact_id) return { level: 'No linked contact', detail: 'No subscription can apply' }
     const row = currentRow(rowsForLogin(subsByContact.get(user.contact_id), user.id), today)
     if (role === 'partner') {
-      const rank = partnerRanks.get(user.contact_id)
-      if (rank && rank <= SEATS.partner.included) {
-        // A charge raised before it moved into the ten is not owed any more.
+      const seat = freeSeats.get(user.contact_id)
+      if (seat?.active) {
+        // A charge raised before the seat was assigned is not owed any more.
         const stale = row && !row.is_paid && Number(row.amount) > 0
-        return { level: `Free partner #${rank} of ${SEATS.partner.included}`,
+        return { level: `Free partner seat — until ${seat.end}`,
                  detail: row ? describeRow(row, today) + (stale ? ' — not due, free seat' : '')
-                             : 'Included in the annual package — no subscription needed' }
+                             : 'Held by this partner for the year — no subscription needed' }
       }
-      if (rank) return { level: `Partner #${rank} — subscribes`, detail: describeRow(row, today) || 'No subscription on file' }
-      /* No rank: either the login is switched off, or the contact behind it is
-         no longer a live partner. Both hold no seat, and sign-in is refused. */
-      return {
-        level: user.status !== 'active' ? 'Partner — login inactive, no seat'
-                                        : 'Partner — contact is not a live partner, sign-in refused',
-        detail: describeRow(row, today) || 'No subscription on file',
+      if (seat && !seat.active) {
+        return { level: 'Free partner seat — switched off', detail: `Held until ${seat.end}; sign-in refused while it is off` }
       }
+      if (user.status !== 'active') {
+        return { level: 'Partner — login inactive', detail: describeRow(row, today) || 'No subscription on file' }
+      }
+      return { level: 'Partner — subscribes', detail: describeRow(row, today) || 'No subscription on file' }
     }
-    return { level: 'Supplier — own monthly plan', detail: describeRow(row, today) || 'No subscription on file' }
+    return { level: 'Supplier — own plan', detail: describeRow(row, today) || 'No subscription on file' }
   }
 
   const family = SEAT_BY_ROLE[role]

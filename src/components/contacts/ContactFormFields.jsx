@@ -92,7 +92,7 @@ export const ENTRY_FIELDS = [
  *                 switchable throughout the add flow (still locked in edit mode).
  *   showCreditDebit - render the "Credit / Debit allowed" checkbox (default true).
  */
-export default function ContactFormFields({ type, form, setField, mode, extraFields = [], showRoles = false, lockTypeOnEntry = true, showCreditDebit = true }) {
+export default function ContactFormFields({ type, form, setField, mode, extraFields = [], showRoles = false, lockTypeOnEntry = true, showCreditDebit = true, mobileLocked = false }) {
   const isCompany    = form.entity_type === 'company'
   // Toggle locks whenever editing an existing contact, and (unless disabled) once
   // data entry begins on a new contact.
@@ -223,7 +223,17 @@ export default function ContactFormFields({ type, form, setField, mode, extraFie
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label text-fuchsia-300">Mobile *</label>
-          <MobileInput value={form.mobile} onChange={v => setField('mobile', v)} />
+          {/* Fixed once the contact exists (fix163): only the super admin may
+              change it, and the database refuses anyone else. */}
+          {mobileLocked ? (
+            <>
+              <input className="input opacity-70 cursor-not-allowed" value={form.mobile || ''} readOnly
+                title="Fixed once the contact is created — only the super admin can change it" />
+              <p className="text-[10px] text-slate-500 mt-0.5">Fixed once created — only the super admin can change it.</p>
+            </>
+          ) : (
+            <MobileInput value={form.mobile} onChange={v => setField('mobile', v)} />
+          )}
         </div>
         <div>
           <label className="label">WhatsApp</label>

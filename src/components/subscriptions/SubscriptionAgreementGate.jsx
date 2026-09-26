@@ -50,10 +50,11 @@ export default function SubscriptionAgreementGate({ contactId, companyId = null,
     if (!contactId) { setState('open'); return }          // unlinked login: nothing to agree to
 
     /* The agreement is a promise to pay the monthly fee. A party that isn't
-       subject to a subscription — the first ten partners — has no fee to
-       promise, so asking them to accept one would be asking them to agree to
-       something that does not apply. */
-    const scope = await subscriptionScope(contactId)
+       subject to a subscription — a partner login whose partner holds a free
+       seat — has no fee to promise, so asking them to accept one would be
+       asking them to agree to something that does not apply. Judged by THIS
+       login's role: a supplier login of a free partner does pay (fix163). */
+    const scope = await subscriptionScope(contactId, currentUser?.role)
     if (!scope.subject) { setState('open'); return }
 
     const [{ status, missing, error: err }, end, who] = await Promise.all([

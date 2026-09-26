@@ -38,7 +38,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { checkSeat, seatPosition, seatPrice, seatStatus, accountLevel } from '../lib/officeSeats'
-import { rankPartners, seatHolderIds } from '../lib/subscriptions'
+import { freeSeatMap } from '../lib/subscriptions'
 import { downloadUserAccountsPdf } from '../lib/userAccountsPdf'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
@@ -255,7 +255,7 @@ export default function UserAccountsPage() {
       const { data } = await supabase
         .from('contacts')
         // created_at, is_active and contact_type are here for the seat column:
-        // rankPartners needs them to work out who holds an included seat.
+        // shown against each login and in the seat column.
         .select('id, first_name, last_name, company_name, code, contact_type, contact_types, created_at, is_active')
         .overlaps('contact_types', ['supplier', 'partner'])
         .order('first_name')
@@ -433,9 +433,6 @@ export default function UserAccountsPage() {
 
   /* Everything the seat column needs, worked out once for the whole list. */
   const seatLookups = useMemo(() => {
-    // Only ACTIVE logins hold a seat — the same rule the seat counter above
-    // already used, now shared with the ranking via seatHolderIds().
-    const loginIds = seatHolderIds(users)
     const subsByContact = new Map()
     const subsByUser    = new Map()
     for (const r of subs) {
@@ -446,7 +443,9 @@ export default function UserAccountsPage() {
       m.get(key).push(r)
     }
     return {
-      partnerRanks: rankPartners(partyContacts, loginIds),
+      // Which partners hold a free seat, and until when (fix163) — read from
+      // the same rows the sign-in gate reads.
+      freeSeats: freeSeatMap(subs),
       subsByContact,
       subsByUser,
       users,
@@ -572,8 +571,8 @@ export default function UserAccountsPage() {
         const { data: c } = await supabase.from('contacts')
           .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
         const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
-        const trial = await ensureLoginSubscription(form.contact_id, newLoginId, types, {
-          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
+        const trial = await ensureLoginSubscription(form.contact_id, newLoginId, form.role, {
+          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id, contactTypes: types,
         })
         if (trial.error) console.warn('Could not open the subscription:', trial.error)
       }
@@ -636,8 +635,8 @@ export default function UserAccountsPage() {
         const { data: c } = await supabase.from('contacts')
           .select('contact_types, contact_type').eq('id', form.contact_id).maybeSingle()
         const types = (c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : []))
-        const opened = await ensureLoginSubscription(form.contact_id, modal.id, types, {
-          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id,
+        const opened = await ensureLoginSubscription(form.contact_id, modal.id, form.role, {
+          companyId: currentUser?.company_id ?? null, userId: currentUser.user_id, contactTypes: types,
         })
         if (opened.error) console.warn('Could not open the subscription:', opened.error)
       }

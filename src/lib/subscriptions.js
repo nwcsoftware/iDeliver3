@@ -62,89 +62,88 @@ export const isSupplierContact = (c) => typesOf(c).includes('supplier')
 export const isPartnerContact  = (c) => typesOf(c).includes('partner')
 
 export const SCOPE = {
-  supplier:     'supplier',      // always subscribes
-  partnerFree:  'partner-free',  // one of the first ten partners
-  partnerPaid:  'partner-paid',  // partner eleven onward
+  supplier:     'supplier',      // a supplier login: always subscribes
+  partnerFree:  'partner-free',  // a partner login whose partner holds an active free seat
+  partnerPaid:  'partner-paid',  // a partner login without one: pays for its seat
   notParty:     'not-party',     // neither — nothing to subscribe to
   unknown:      'unknown',       // the lookup failed; treated as exempt
 }
 
-/* Where this contact stands, from the contact row plus its position among
-   partners. `rank` is 1-based and only meaningful for partners. */
-export function scopeFor(contact, rank = null) {
-  if (isSupplierContact(contact)) return { subject: true, scope: SCOPE.supplier, rank: null }
-  if (!isPartnerContact(contact))  return { subject: false, scope: SCOPE.notParty, rank: null }
-  if (rank == null)                return { subject: false, scope: SCOPE.unknown, rank: null }
-  return rank > PARTNER_FREE_LIMIT
-    ? { subject: true,  scope: SCOPE.partnerPaid, rank }
-    : { subject: false, scope: SCOPE.partnerFree, rank }
-}
+/* FREE PARTNER SEATS (fix163).
 
-/* How many partners were created before this one, +1. One counting query
-   rather than pulling the list down. */
-export async function partnerRank(contact) {
-  if (!contact?.id || !isPartnerContact(contact) || isSupplierContact(contact)) return null
-  try {
-    /* Only partners with a login hold a seat, so the ranking is taken over
-       those contacts alone. The logins are few — a handful of rows — so this
-       is one small query, not a scan of the address book. */
-    const { data: logins, error: le } = await supabase
-      .from('user_accounts')
-      .select('contact_id, status')
-      .not('contact_id', 'is', null)
-      .eq('status', SEAT_LOGIN_STATUS)             // a deactivated login holds no seat
-    if (le) return null
-    const ids = [...seatHolderIds(logins)]
-    if (ids.length === 0) return 1
-    const { count, error } = await supabase
-      .from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .in('id', ids)
-      .overlaps('contact_types', ['partner'])
-      .not('is_active', 'is', false)               // retired partners release their slot
-      .lt('created_at', contact.created_at || new Date().toISOString())
-    if (error) return null
-    return (count ?? 0) + 1
-  } catch {
-    return null
+   A free seat is not a place in a queue; it is a record. It is a subscription
+   row marked is_free_seat — 0 USD, one year — held by the PARTNER: every
+   partner login of that partner gets its own free row for the same year. The
+   seat stays theirs for the whole year whatever happens to their logins, and
+   only when the year ends is it free again, for an administrator to assign to
+   a partner by hand (assign_free_partner_seat).
+
+   This replaced "the first ten partners by creation date", which moved a seat
+   the moment somebody older left, was deactivated or was retyped.
+
+   Two questions, answered from the same rows:
+     HELD    in date — counts against the ten, even if switched off
+     ACTIVE  in date AND switched on — lets that partner's logins in free */
+export const isFreeSeatRow = (r) =>
+  !!r && (r.is_free_seat === true
+    || (r.is_free_seat == null && Number(r.amount) === 0 && /^Included partner seat/i.test(r.description || '')))
+
+/* contact_id → { start, end, active } for every partner holding an in-date seat. */
+export function freeSeatMap(rows = [], today = todayStr()) {
+  const map = new Map()
+  for (const r of rows || []) {
+    if (!isFreeSeatRow(r) || !r.contact_id) continue
+    if (!(String(r.start_date) <= today && today <= String(r.end_date))) continue
+    const cur = map.get(r.contact_id)
+    const seat = { start: r.start_date, end: r.end_date, active: !!r.is_active || !!cur?.active }
+    if (!cur || String(r.end_date) > String(cur.end)) map.set(r.contact_id, seat)
+    else if (r.is_active) cur.active = true
   }
+  return map
 }
 
-/* The whole answer for one contact id: is this party required to hold a
-   subscription? Fails OPEN — an unanswerable question must not invent a bill
-   or lock someone out. */
-export async function subscriptionScope(contactId) {
-  if (!contactId) return { subject: false, scope: SCOPE.notParty, rank: null, contact: null }
+/* A login's scope: its ROLE decides what it subscribes to, and for a partner
+   login, whether its partner holds an active free seat. `seat` is the entry
+   from freeSeatMap() for this contact, or null. When no role is given, the
+   contact's own type answers (supplier first, as before). */
+export function scopeFor(contact, seat = null, role = null) {
+  const kind = role === 'supplier' || role === 'partner' ? role
+    : isSupplierContact(contact) ? 'supplier'
+    : isPartnerContact(contact) ? 'partner' : null
+  if (!kind) return { subject: false, scope: SCOPE.notParty, seat: null }
+  if (kind === 'supplier') return { subject: true, scope: SCOPE.supplier, seat: null }
+  if (seat?.active) return { subject: false, scope: SCOPE.partnerFree, seat }
+  return { subject: true, scope: SCOPE.partnerPaid, seat: seat || null }
+}
+
+/* The whole answer for one contact and login role. Fails OPEN — an unanswerable
+   question must not invent a bill or lock someone out. */
+export async function subscriptionScope(contactId, role = null) {
+  if (!contactId) return { subject: false, scope: SCOPE.notParty, seat: null, contact: null }
   try {
     const { data, error } = await supabase
       .from('contacts')
       .select('id, code, contact_type, contact_types, created_at')
       .eq('id', contactId)
       .maybeSingle()
-    if (error || !data) return { subject: false, scope: SCOPE.unknown, rank: null, contact: null }
-    const rank = await partnerRank(data)
-    return { ...scopeFor(data, rank), contact: data }
+    if (error || !data) return { subject: false, scope: SCOPE.unknown, seat: null, contact: null }
+    const { data: seatRows } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('contact_id', contactId)
+    const seat = freeSeatMap(seatRows ?? []).get(contactId) || null
+    return { ...scopeFor(data, seat, role), contact: data }
   } catch {
-    return { subject: false, scope: SCOPE.unknown, rank: null, contact: null }
+    return { subject: false, scope: SCOPE.unknown, seat: null, contact: null }
   }
 }
 
-/* Ranks for a whole list of partner contacts at once — the office list would
-   otherwise ask the same question eighty times. Ordered by creation, so the
-   first ten partners ever created are ranks 1…10.
-
-   `loginContactIds` must be the contacts with an ACTIVE login — build it with
-   seatHolderIds(), never from every user row, or a deactivated login keeps a
-   seat it cannot use. */
-export function rankPartners(contacts = [], loginContactIds = null) {
-  const holdsSeat = (c) => (loginContactIds ? loginContactIds.has(c.id) : true)
-  const partners = contacts
-    .filter(c => isPartnerContact(c) && !isSupplierContact(c) && c.is_active !== false && holdsSeat(c))
-    .slice()
-    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
-  const ranks = new Map()
-  partners.forEach((c, i) => ranks.set(c.id, i + 1))
-  return ranks
+/* How many of the ten free seats are held today, and when the next one frees. */
+export function freeSeatsSummary(rows = [], today = todayStr()) {
+  const map = freeSeatMap(rows, today)
+  const ends = [...map.values()].map(v => String(v.end)).sort()
+  return { inUse: map.size, limit: PARTNER_FREE_LIMIT, available: Math.max(0, PARTNER_FREE_LIMIT - map.size),
+           nextFreesOn: ends[0] || null, map }
 }
 
 /* ── what each party type pays ────────────────────────────────────────────
@@ -369,7 +368,7 @@ export function daysLeft(endDate, today = todayStr()) {
 export async function checkSubscriptionAccess(contactId, role = null, userId = null) {
   if (!contactId) return { allowed: false, reason: 'no-contact', row: null }
   try {
-    const scope = await subscriptionScope(contactId)
+    const scope = await subscriptionScope(contactId, role)
 
     /* THE LOGIN'S ROLE MUST STILL MATCH WHAT THE CONTACT IS.
 
@@ -390,9 +389,10 @@ export async function checkSubscriptionAccess(contactId, role = null, userId = n
       }
     }
 
-    /* Exempt parties are let in without a subscription at all: the first ten
-       partners were never asked for one, so refusing them for not having it
-       would be inventing a rule nobody set. */
+    /* A partner login whose partner holds an ACTIVE free seat is let in: the
+       seat is the partner's, so every one of its partner logins is free for
+       that year (fix163). A supplier login never is — a free partner seat does
+       not buy supplier access. */
     if (!scope.subject) {
       return { allowed: true, reason: 'exempt', row: null, scope: scope.scope, rank: scope.rank }
     }
@@ -535,70 +535,6 @@ export async function saveSubscription(row, { companyId = null, userId = null } 
     created_by: userId,
   }])
   return error ? error.message : null
-}
-
-/* The contact's type just changed — settle what that means for their bill.
-
-   Called after a contact is saved. If the party now owes more than the
-   subscription they hold is worth, the difference for the remaining days is
-   added to that subscription and it is marked UNPAID: the same flag the office
-   already uses for money it is waiting on, and the same flag the sign-in gate
-   already refuses. So the account closes the moment the type changes and opens
-   again the moment the super admin confirms the money — with nothing new to
-   remember, and no way for either side to step around it.
-
-   Returns { changed, due, days, from, to, error } for the caller to report. */
-export async function reviewSubscriptionAfterTypeChange(contactId, { userId = null } = {}) {
-  const none = { changed: false, due: 0, days: 0, from: null, to: null, error: null, none: false }
-  if (!contactId) return none
-  try {
-    const scope = await subscriptionScope(contactId)
-    if (!scope.subject) return none                       // exempt: nothing to charge
-
-    const { data, error } = await supabase
-      .from('subscriptions')
-      .select('*')
-      .eq('contact_id', contactId)
-    if (error) return { ...none, error: error.message }
-
-    const rows = data ?? []
-    /* Every live row, one per login (fix160). Topping up only the first would
-       leave the partner's other logins on a subscription that no longer
-       covers what they are. */
-    const live = rows.filter(r => isSubscriptionActive(r))
-    // Subject to a subscription and holding none: there is nothing to top up —
-    // they need one, and the gate will say so at their next sign-in.
-    if (!live.length) return { ...none, none: true, to: scope.scope }
-
-    let changed = null
-    for (const active of live) {
-    const short = subscriptionShortfall(active, scope)
-    if (short.ok) continue
-
-    const note = [
-      active.paid_by_note,
-      `Type changed to ${scope.scope === SCOPE.supplier ? 'supplier' : 'partner'} on ${todayStr()}: `
-      + `${short.perMonth.toFixed(2)} ${RATE_CURRENCY}/month more, `
-      + `${short.due.toFixed(2)} ${RATE_CURRENCY} due for the remaining ${short.days} day${short.days === 1 ? '' : 's'}.`,
-    ].filter(Boolean).join(' — ')
-
-    const { error: upErr } = await supabase.from('subscriptions').update({
-      amount:       Math.round(((Number(active.amount) || 0) + short.due) * 100) / 100,
-      is_paid:      false,        // closes the account until the office confirms the money
-      paid_at:      null,
-      paid_by_note: note,
-      updated_at:   new Date().toISOString(),
-    }).eq('id', active.id)
-    if (upErr) return { ...none, error: upErr.message }
-    changed = changed
-      ? { ...changed, due: Math.round((changed.due + short.due) * 100) / 100 }
-      : { changed: true, due: short.due, days: short.days,
-          from: short.paying, to: short.required, error: null, none: false }
-    }
-    return changed || none
-  } catch (e) {
-    return { ...none, error: e?.message || 'Could not review the subscription.' }
-  }
 }
 
 export async function deleteSubscription(id) {
@@ -820,203 +756,93 @@ export async function fetchLoginForContact(contactId) {
   return all[0] ?? null
 }
 
-/* Open the subscription for ONE login (fix160). A partner inside the free ten
-   gets nothing; beyond it, each login gets its own payable seat, unpaid and
-   switched off until the super admin activates it or records the payment; a
-   supplier login gets its free trial. A contact row not yet given to a login
-   is handed to this one instead of raising a second charge. */
-export async function ensureLoginSubscription(contactId, loginId, contactTypes = [], { companyId = null, userId = null } = {}) {
-  return ensureTrialSubscription(contactId, contactTypes, { companyId, userId, loginId })
-}
+/* OPEN THE SUBSCRIPTION FOR ONE NEW LOGIN, by the LOGIN'S role (fix163).
 
-export async function ensureTrialSubscription(contactId, contactTypes = [], { companyId = null, userId = null, loginId = null } = {}) {
-  const types = Array.isArray(contactTypes) ? contactTypes : [contactTypes]
-  const isSecondParty = types.some(t => t === 'supplier' || t === 'partner')
-  if (!contactId || !isSecondParty) return { created: false, row: null, error: null }
+     partner login   its partner holds an in-date free seat → a free row for the
+                     same year (the seat is the partner's, so all its logins are
+                     free). Otherwise a payable partner seat, unpaid and switched
+                     off, until the super admin activates it or records payment.
+                     A row placed on the contact before any login existed is
+                     given to this login instead of raising a second charge.
+     supplier login  a supplier that is ALSO a partner pays for supplier access
+                     from the first day — a free partner seat never buys it.
+                     A supplier and nothing else gets the free trial, as before.
 
-  /* A subscription exists to let somebody SIGN IN. Without a login there is
-     nobody to let in, so there is nothing to subscribe: no trial is issued for
-     a contact that has no user account, and the office is not left counting
-     down an expiry on an account that does not exist (fix136). */
-  const login = loginId ? { id: loginId } : await fetchLoginForContact(contactId)
-  if (!login) return { created: false, row: null, error: null, noLogin: true }
-
-  /* Only a party that has to subscribe gets a trial of one. A supplier always
-     does; a partner only from the eleventh onward. Issuing a countdown to
-     someone who will never be billed would put an expiry date on a free
-     arrangement. */
-  const scope = await subscriptionScope(contactId)
-  if (!scope.subject) return { created: false, row: null, error: null, exempt: true }
-
+   Returns { created, attached, exempt, row, error }. */
+export async function ensureLoginSubscription(contactId, loginId, role, { companyId = null, userId = null, contactTypes = null } = {}) {
+  if (!contactId || !loginId || !['partner', 'supplier'].includes(role)) {
+    return { created: false, row: null, error: null }
+  }
   try {
-    // Anything already on file — paid, expired or awaiting payment — means this
-    // contact has been dealt with; the trial is for genuinely new parties only.
-    const { data: existingAll, error: readErr } = await supabase
-      .from('subscriptions').select('id, user_account_id').eq('contact_id', contactId)
+    const { data: rows, error: readErr } = await supabase
+      .from('subscriptions').select('*').eq('contact_id', contactId)
     if (readErr) {
       const missing = /subscriptions/i.test(readErr.message) && /not exist|schema cache/i.test(readErr.message)
       return { created: false, row: null, error: missing ? null : readErr.message }
     }
-    // This login already has one: nothing to do.
-    if ((existingAll ?? []).some(r => r.user_account_id === login.id)) return { created: false, row: null, error: null }
-    /* The contact has a row nobody has been given yet (placed before any login
-       existed): it becomes this login's, rather than a second charge. */
-    const unassigned = (existingAll ?? []).find(r => !r.user_account_id)
-    if (unassigned) {
-      const { error: attErr } = await supabase.from('subscriptions')
-        .update({ user_account_id: login.id, updated_at: new Date().toISOString() }).eq('id', unassigned.id)
-      return { created: false, attached: !attErr, row: null, error: attErr ? attErr.message : null }
-    }
+    const all = rows ?? []
+    if (all.some(r => r.user_account_id === loginId)) return { created: false, row: null, error: null }
 
     const start = todayStr()
+    let seed
 
-    /* WHAT A NEW PARTY IS GIVEN, AND WHY THE TWO DIFFER.
-
-       A SUPPLIER gets the 90 free days the agreement promises them (A5B). That
-       trial is the supplier product: they try the shop, then choose a monthly
-       plan.
-
-       A PARTNER past the tenth gets NO free period. The ten included seats are
-       taken, so an eleventh partner is a seat somebody has to pay for from the
-       day it exists — and handing out 90 free days would be giving away a seat
-       that has already been sold. Instead the seat itself is placed, at the
-       rate in the licence, UNPAID and NOT ACTIVATED: the partner cannot sign in
-       until the office confirms the payment and activates the row.
-
-       This is also why the free ten never reach here at all: scope.subject is
-       false for them, and the function returned above. Nobody inside the
-       allowance is issued anything, because they owe nothing. */
-    const isPaidSeat = scope.scope === SCOPE.partnerPaid
-    const seed = isPaidSeat
-      ? {
+    if (role === 'partner') {
+      const seat = freeSeatMap(all).get(contactId)
+      if (seat) {
+        seed = {
+          description:  'Included partner seat — inside the annual package (A5A)',
+          start_date:   seat.start, end_date: seat.end,
+          amount: 0, is_paid: true, paid_at: new Date().toISOString(),
+          paid_by_note: 'Free partner seat held by this partner', is_active: !!seat.active, is_free_seat: true,
+        }
+      } else {
+        // A row waiting on the contact (placed before any login) becomes this login's.
+        const waiting = all.find(r => !r.user_account_id && !isFreeSeatRow(r))
+        if (waiting) {
+          const { error: attErr } = await supabase.from('subscriptions')
+            .update({ user_account_id: loginId, updated_at: new Date().toISOString() }).eq('id', waiting.id)
+          return { created: false, attached: !attErr, row: waiting, error: attErr ? attErr.message : null }
+        }
+        seed = {
           description:  `Annual partner seat — ${start.slice(0, 4)} — awaiting payment`,
-          end_date:     addDays(start, 364),
-          amount:       SEATS.partner.extraRate,
-          is_paid:      false,   // there is something to collect
-          paid_at:      null,
-          paid_by_note: 'Partner beyond the ten included seats — payable before the portal opens',
-          is_active:    false,   // and the portal stays shut until it is collected
+          start_date:   start, end_date: addDays(start, 364),
+          amount: SEATS.partner.extraRate, is_paid: false, paid_at: null,
+          paid_by_note: 'Partner login without a free seat — payable before the portal opens', is_active: false,
         }
-      : {
-          description:  TRIAL_DESCRIPTION,
-          end_date:     addDays(start, TRIAL_DAYS),
-          amount:       0,
-          is_paid:      true,    // nothing to collect — it is free
-          paid_at:      new Date().toISOString(),
-          paid_by_note: 'Issued automatically when the login was created',
-          is_active:    true,    // they can sign in straight away
-        }
+      }
+    } else {
+      let types = contactTypes
+      if (!types) {
+        const { data: c } = await supabase.from('contacts').select('contact_types, contact_type').eq('id', contactId).maybeSingle()
+        types = c?.contact_types?.length ? c.contact_types : (c?.contact_type ? [c.contact_type] : [])
+      }
+      const alsoPartner = (types || []).includes('partner')
+      const plan = SUPPLIER_SUBSCRIPTION.plans[0]
+      seed = alsoPartner
+        ? {
+            description:  `Supplier ${plan.name} plan — awaiting payment`,
+            start_date:   start, end_date: addDays(start, 29),
+            amount: plan.price, is_paid: false, paid_at: null,
+            paid_by_note: 'A partner adding supplier access pays for it — the free partner seat does not cover it',
+            is_active: false,
+          }
+        : {
+            description:  TRIAL_DESCRIPTION,
+            start_date:   start, end_date: addDays(start, TRIAL_DAYS),
+            amount: 0, is_paid: true, paid_at: new Date().toISOString(),
+            paid_by_note: 'Issued automatically when the login was created', is_active: true,
+          }
+    }
 
     const { data, error } = await supabase.from('subscriptions').insert([{
-      contact_id:   contactId,
-      user_account_id: login.id,
-      start_date:   start,
-      currency:     'USD',
+      contact_id: contactId, user_account_id: loginId, currency: 'USD',
       ...seed,
-      billed_to:    billedToFor(scope),        // partners → 3asari3; suppliers → themselves
       ...(companyId ? { company_id: companyId } : {}),
-      created_by:   userId,
+      created_by: userId,
     }]).select('*').single()
-
-    if (error) {
-      // billed_to arrives with fix136; without it, issue the trial anyway.
-      if (/billed_to/i.test(error.message)) {
-        const { data: retry, error: e2 } = await supabase.from('subscriptions').insert([{
-          contact_id: contactId,
-          user_account_id: login.id,
-          start_date: start,
-          currency: 'USD',
-          ...seed,
-          ...(companyId ? { company_id: companyId } : {}),
-          created_by: userId,
-        }]).select('*').single()
-        return e2
-          ? { created: false, row: null, error: e2.message }
-          : { created: true, row: retry, error: null, degraded: 'fix136' }
-      }
-      return { created: false, row: null, error: error.message }
-    }
-    return { created: true, row: data, error: null }
+    if (error) return { created: false, row: null, error: error.message }
+    return { created: true, row: data, exempt: !!seed.is_free_seat, error: null }
   } catch (e) {
-    return { created: false, row: null, error: e?.message || 'Could not issue the trial subscription.' }
-  }
-}
-
-/* ── changing a contact INTO a party (fix146) ─────────────────────────────
- *
- * An administrator creates an ordinary customer, and later switches it to
- * partner or supplier. Nothing used to happen: no seat was counted, no
- * subscription was asked for, and the login that came with it opened the portal
- * on the strength of a type it had only just acquired. That is the shape of the
- * Kitchefia fault, arrived at from the other direction.
- *
- * So the change is refused while it would leave a chargeable party with no
- * subscription. The test runs BEFORE the contact is written, against the types
- * it is about to have.
- *
- * It only bites when the contact actually holds a login: a partner with no way
- * to sign in occupies no seat and opens no portal, and demanding money for it
- * would be charging for nothing.
- */
-export async function checkPartyTypeChange({ contactId, nextTypes = [], currentTypes = null }) {
-  const ok = { ok: true, message: null }
-  if (!contactId) return ok
-  const types = (nextTypes || []).filter(Boolean)
-  const wantsSupplier = types.includes('supplier')
-  const wantsPartner  = types.includes('partner')
-  if (!wantsSupplier && !wantsPartner) return ok
-
-  // Already a party before this edit? Then this is not a change INTO one, and
-  // the sign-in gate already governs them.
-  const had = (currentTypes || []).filter(Boolean)
-  if ((wantsSupplier && had.includes('supplier')) || (wantsPartner && had.includes('partner'))) return ok
-
-  try {
-    const { data: logins, error: le } = await supabase
-      .from('user_accounts').select('id').eq('contact_id', contactId)
-      .eq('status', SEAT_LOGIN_STATUS).limit(1)
-    if (le) return ok                                   // never block on a lookup failure
-    if (!logins?.length) return ok                      // no ACTIVE login, no seat, no portal
-
-    /* Is the seat chargeable? A supplier always is. A partner is only once the
-       ten included seats are taken — and this contact has to be counted among
-       them, since it is about to become one. */
-    let chargeable = wantsSupplier
-    if (!chargeable && wantsPartner) {
-      const { data: seatLogins } = await supabase
-        .from('user_accounts').select('contact_id, status').not('contact_id', 'is', null)
-        .eq('status', SEAT_LOGIN_STATUS)
-      const ids = [...seatHolderIds(seatLogins)]
-      const { data: seated } = await supabase
-        .from('contacts')
-        .select('id, created_at, contact_type, contact_types, is_active')
-        .in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000'])
-      const live = (seated ?? []).filter(c =>
-        c.is_active !== false && isPartnerContact(c) && !isSupplierContact(c) && c.id !== contactId)
-      // Where this contact lands once it joins them, oldest contact first.
-      const self = (seated ?? []).find(c => c.id === contactId)
-      const olderThanSelf = live.filter(c =>
-        String(c.created_at || '').localeCompare(String(self?.created_at || '')) <= 0).length
-      chargeable = (olderThanSelf + 1) > PARTNER_FREE_LIMIT
-    }
-    if (!chargeable) return ok
-
-    const { data: subs } = await supabase
-      .from('subscriptions')
-      .select('*')
-      .eq('contact_id', contactId)
-    const valid = (subs ?? []).some(r => isSubscriptionActive(r))
-    if (valid) return ok
-
-    const what = wantsSupplier ? 'supplier' : 'partner'
-    return {
-      ok: false,
-      message: `This contact holds a login, and making it a ${what} puts it outside the seats included in `
-        + `the annual package. A subscription has to exist before the change can be saved — create one on `
-        + `Administration → Subscriptions, then come back. Without it the ${what} would be able to open the `
-        + 'portal without a seat, which is the fault this check exists to prevent.',
-    }
-  } catch {
-    return ok
+    return { created: false, row: null, error: e?.message || 'Could not open the subscription.' }
   }
 }

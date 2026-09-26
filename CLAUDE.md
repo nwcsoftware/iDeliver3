@@ -76,6 +76,17 @@ What that means when building:
   on User Accounts, is the super admin's alone — enforced in the SQL functions,
   not just hidden. Call Center has no login controls at all. These PORTAL logins
   are not the contact's own customer-app username/password on the same profile.
+- **Subscriptions & seats (fix163)** — a subscription belongs to a LOGIN, and the
+  login's ROLE decides it: partner logins need a partner seat, supplier logins a
+  supplier plan (a partner adding supplier pays; a free partner seat never covers
+  it). A contact that is both holds separate partner and supplier logins.
+  **Free partner seats are records**, not a ranking: `is_free_seat` rows, one
+  year, held by the partner (all its partner logins free) whatever happens to
+  its logins; max 10 in date; assigned by hand via `assign_free_partner_seat`
+  (admin/super admin) once one frees. Changing a contact's type changes no login
+  and bills nobody. A contact's **mobile is fixed once set** (trigger
+  `trg_contacts_mobile_lock`; only `super_admin_set_contact_mobile` gets
+  through; drivers exempt; applies in the customer app too).
 - **Customer-app login (fix162)** — the contact's own username/password for the
   customer mobile app. Admin, Senior Call Center and super admin set it and reset
   its password (`contact_login_set`); once saved, only the super admin may

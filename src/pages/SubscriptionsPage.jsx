@@ -47,7 +47,7 @@ import {
   subscriptionsSummary, coveredContactIds, renewalStage, RENEWAL_STAGES,
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
   isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
-  rankPartners, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
+  freeSeatMap, freeSeatsSummary, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
   seatHolderIds, PAYMENT_METHODS, isAmountDue, ownerKey,
 } from '../lib/subscriptions'
 import { downloadDuePaymentsPdf, accessOf, daysOutstanding, totalsByCurrency } from '../lib/duePaymentsPdf'
@@ -251,7 +251,7 @@ export default function SubscriptionsPage() {
 
       const { data: logins } = await supabase
         .from('user_accounts')
-        .select('id, username, status, contact_id, created_at')
+        .select('id, username, role, status, contact_id, created_at')
         .not('contact_id', 'is', null)
         .order('created_at')
       setLoginIds(seatHolderIds(logins))
@@ -338,7 +338,10 @@ export default function SubscriptionsPage() {
   /* Who actually has to subscribe: every supplier, and partners from the
      eleventh onward. Computed from the party list already loaded, so it costs
      nothing extra. */
-  const partnerRanks = useMemo(() => rankPartners(parties, loginIds), [parties, loginIds])
+  /* Which partners hold a free seat, and until when (fix163) — from the rows
+     on this page, the same records the sign-in gate reads. */
+  const freeSeats = useMemo(() => freeSeatMap(rows), [rows])
+  const seatSummary = useMemo(() => freeSeatsSummary(rows), [rows])
   /* WHY A ROW IS NOT BEING CHARGED, said accurately.
 
      This badge used to read “free partner” for every contact that was not
@@ -378,8 +381,8 @@ export default function SubscriptionsPage() {
       return {
         label: 'not due — free seat',
         cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
-        title: `This ${money} charge is no longer owed: the partner is now #${sc.rank}, inside the free `
-             + `${PARTNER_FREE_LIMIT}, and signs in without a subscription. Delete this row, or set its amount `
+        title: `This ${money} charge is no longer owed: the partner holds a free seat until ${sc.seat?.end || '?'}, `
+             + 'and its partner logins sign in without paying. Delete this row, or set its amount '
              + 'to 0 and mark it paid, so it stops reading as unpaid.',
       }
     }
@@ -409,9 +412,10 @@ export default function SubscriptionsPage() {
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
       return {
-        label: `free partner #${sc.rank}`,
+        label: `free seat · to ${sc.seat?.end || '?'}`,
         cls:   'border-fresh-500/30 bg-fresh-500/10 text-fresh-300',
-        title: `Partner #${sc.rank} — inside the first ${PARTNER_FREE_LIMIT}, so no subscription is required.`,
+        title: `This partner holds one of the ${PARTNER_FREE_LIMIT} free seats until ${sc.seat?.end || '?'}: `
+             + 'all its partner logins are free for that year. When it ends, the seat can be assigned again.',
       }
     }
     if (sc.scope === SCOPE.notParty) {
@@ -465,10 +469,13 @@ export default function SubscriptionsPage() {
     }
   }, [loginIds, anyLoginIds])
 
-  const scopeOf = useCallback((contact) => {
-    if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
-    return scopeFor(contact, partnerRanks.get(contact.id) ?? null)
-  }, [partnerRanks])
+  /* A row is judged by the ROLE of the login it belongs to: the partner login
+     of a free partner is free, its supplier login is not (fix163). */
+  const scopeOf = useCallback((contact, row = null) => {
+    if (!contact) return { subject: true, scope: SCOPE.supplier, seat: null }
+    const role = row?.user_account_id ? loginById.get(row.user_account_id)?.role : null
+    return scopeFor(contact, freeSeats.get(contact.id) ?? null, role)
+  }, [freeSeats, loginById])
 
   /* The Due Payments report: money owed and actually due. A charge that is
      “not due — free seat” is left off and counted apart, because chasing it
@@ -477,25 +484,24 @@ export default function SubscriptionsPage() {
    Declared AFTER scopeOf on purpose: useMemo runs during render, and calling
    a const declared further down blanked the whole page. */
   const dueRows = useMemo(() => rows
-    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope !== SCOPE.partnerFree)
+    .filter(r => isAmountDue(r) && scopeOf(r.contact, r).scope !== SCOPE.partnerFree)
     .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))),
   [rows, scopeOf])
   const staleFreeCount = useMemo(() => rows
-    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope === SCOPE.partnerFree).length,
+    .filter(r => isAmountDue(r) && scopeOf(r.contact, r).scope === SCOPE.partnerFree).length,
   [rows, scopeOf])
 
 
   const scopeCounts = useMemo(() => {
-    // Seats are held by parties that can sign in; the rest of the address book
-    // is contacts, not subscriptions.
+    // Parties that can sign in; the rest of the address book is contacts.
     const seated = parties.filter(c => c.is_active !== false && loginIds.has(c.id))
-    const livePartners = seated.filter(c => isPartnerContact(c) && !isSupplierContact(c))
+    const partners = seated.filter(c => isPartnerContact(c))
     return {
       suppliers: seated.filter(c => isSupplierContact(c)).length,
-      free: Math.min(PARTNER_FREE_LIMIT, livePartners.length),
-      paying: Math.max(0, livePartners.length - PARTNER_FREE_LIMIT),
+      free:      seatSummary.inUse,
+      paying:    partners.filter(c => !freeSeats.get(c.id)).length,
     }
-  }, [parties, loginIds])
+  }, [parties, loginIds, seatSummary, freeSeats])
 
   const agreeCounts = useMemo(() => {
     const seen = new Map()
@@ -835,13 +841,15 @@ export default function SubscriptionsPage() {
         <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-slate-400 leading-relaxed">
           <span className="text-slate-200">Suppliers always subscribe.</span>{' '}
-          Partners get the first {PARTNER_FREE_LIMIT} free — from the {PARTNER_FREE_LIMIT + 1}th onward they
-          subscribe too. The free slots are held by the {PARTNER_FREE_LIMIT} longest-standing live partners, so
-          retiring one passes its slot to the next in line.
+          {PARTNER_FREE_LIMIT} free partner seats come with the package. A seat is assigned to a partner for one
+          year — all that partner&rsquo;s partner logins are free for the year — and when the year ends it can be
+          assigned again, from the partner&rsquo;s profile. Every other partner login pays for itself, and a supplier
+          login always pays, even for a partner that holds a free seat.
           <span className="block mt-1 text-slate-500">
-            Today: {scopeCounts.suppliers} supplier{scopeCounts.suppliers === 1 ? '' : 's'} ·
-            {' '}{scopeCounts.free} free partner{scopeCounts.free === 1 ? '' : 's'} ·
-            {' '}{scopeCounts.paying} partner{scopeCounts.paying === 1 ? '' : 's'} subscribing.
+            Today: <span className="text-slate-300">{seatSummary.inUse} of {PARTNER_FREE_LIMIT} free seats in use</span>
+            {seatSummary.available === 0 && seatSummary.nextFreesOn ? ` (next frees on ${seatSummary.nextFreesOn})` : ''} ·
+            {' '}{scopeCounts.paying} partner{scopeCounts.paying === 1 ? '' : 's'} paying ·
+            {' '}{scopeCounts.suppliers} supplier{scopeCounts.suppliers === 1 ? '' : 's'}.
           </span>
         </p>
       </div>
@@ -981,7 +989,7 @@ export default function SubscriptionsPage() {
                            awaiting payment, and — for a contact that is not
                            charged — why not. The first is the same sentence on
                            every unpaid row, so the list reads one way. */
-                        const sc = scopeOf(r.contact)
+                        const sc = scopeOf(r.contact, r)
                         const owed = unpaidBadge(r, sc)
                         const b = sc.subject ? null : exemptBadge(sc, r.contact)
                         if (!owed && !b) return null
@@ -1499,7 +1507,7 @@ export default function SubscriptionsPage() {
             {staleFreeCount > 0 && (
               <p className="px-5 py-2.5 border-t border-surface-border text-[11px] text-slate-500">
                 {staleFreeCount} unpaid charge{staleFreeCount === 1 ? ' is' : 's are'} left off: the partner is now inside
-                the free {PARTNER_FREE_LIMIT}, so nothing is owed. Those rows read “not due — free seat”.
+                a free seat, so nothing is owed. Those rows read “not due — free seat”.
               </p>
             )}
           </div>
