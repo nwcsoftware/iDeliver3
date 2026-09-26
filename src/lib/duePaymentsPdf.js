@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import logoUrl from '../assets/nxcore-logo.png'
+import { loadNxcoreLogo, drawLetterhead, drawFooters, drawPreparedBlock, PDF_COLORS } from './nxcoreLetterhead'
 import { contactLabel, subscriptionStatus, graceDaysLeft, todayStr } from './subscriptions'
 
 /* DUE PAYMENTS — every partner / supplier subscription with money still owed.
@@ -21,14 +21,7 @@ import { contactLabel, subscriptionStatus, graceDaysLeft, todayStr } from './sub
    carries its own subtotal, and the totals sit on the right of the page.
    Money is per currency and never added across currencies. */
 
-const ISSUER       = '_NXCORE'
-const ISSUER_PHONE = '+961 70 334 868'
-
-const BRAND = [37, 99, 235]
-const INK   = [17, 24, 39]
-const MUTED = [107, 114, 128]
-const LINE  = [209, 213, 219]
-const SOFT  = [243, 246, 252]
+const { BRAND, INK, MUTED, LINE, SOFT } = PDF_COLORS
 
 export const DUE_GROUPS = [
   { key: 'credit',  label: 'Activated — full term, payment pending', short: 'Full term, pending',
@@ -95,24 +88,8 @@ const money = (n, cur) =>
   `${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim()
 const moneyLines = (t) => Object.entries(t).map(([c, a]) => money(a, c))
 
-let logoPromise = null
-function loadLogo() {
-  if (!logoPromise) {
-    logoPromise = fetch(logoUrl)
-      .then(r => r.blob())
-      .then(b => new Promise((resolve, reject) => {
-        const fr = new FileReader()
-        fr.onload = () => resolve(String(fr.result))
-        fr.onerror = reject
-        fr.readAsDataURL(b)
-      }))
-      .catch(() => null)          // no logo → the report still prints
-  }
-  return logoPromise
-}
-
 export async function downloadDuePaymentsPdf(rows, { generatedBy = '', today = todayStr() } = {}) {
-  const logo = await loadLogo()
+  const logo = await loadNxcoreLogo()
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const W = doc.internal.pageSize.getWidth()
   const H = doc.internal.pageSize.getHeight()
@@ -124,36 +101,14 @@ export async function downloadDuePaymentsPdf(rows, { generatedBy = '', today = t
     rows: rows.filter(r => accessOf(r, today).group === g.key),
   }))
 
-  // ── header, as the receipt ────────────────────────────────────────────────
-  let y = M
-  if (logo) {
-    try {
-      const p = doc.getImageProperties(logo)
-      const h = 11
-      doc.addImage(logo, 'PNG', M, y, (p.width / p.height) * h, h)
-    } catch { /* printed without it */ }
-  }
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...INK)
-  doc.text('DUE PAYMENTS', W - M, y + 5.5, { align: 'right' })
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTED)
-  doc.text(`Partner & supplier subscriptions · ${docNo}`, W - M, y + 10.5, { align: 'right' })
-  y += 15
-  doc.setDrawColor(...BRAND); doc.setLineWidth(0.7)
-  doc.line(M, y, W - M, y)
-  y += 7
+  // ── the _NXCORE letterhead, shared with every report ───────────────────
+  let y = drawLetterhead(doc, { logo, title: 'Due payments', subtitle: `Partner & supplier subscriptions · ${docNo}`, margin: M })
 
   // ── left: as of / prepared by ─────────────────────────────────────────────
   const boxW = 104                        // the totals panel on the right
   const boxX = W - M - boxW
   const topY = y
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...MUTED)
-  doc.text('STATEMENT AS OF', M, y)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...INK)
-  doc.text(new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { dateStyle: 'long' }), M, y + 5)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...MUTED)
-  doc.text('PREPARED BY', M, y + 13)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...INK)
-  doc.text(`${generatedBy || '—'} · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`, M, y + 18)
+  drawPreparedBlock(doc, { x: M, y, asOf: today, preparedBy: generatedBy })
   const openCount = grouped[0].rows.length + grouped[1].rows.length
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTED)
   doc.text(doc.splitTextToSize(
@@ -260,19 +215,7 @@ to ${r.end_date || '?'}`,
     y = (doc.lastAutoTable?.finalY ?? y) + 9
   }
 
-  // ── footer on every page ──────────────────────────────────────────────────
-  const pages = doc.getNumberOfPages()
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i)
-    const fy = H - 12
-    doc.setDrawColor(...LINE); doc.setLineWidth(0.25)
-    doc.line(M, fy - 4, W - M, fy - 4)
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...INK)
-    doc.text(`Issued by ${ISSUER} · ${ISSUER_PHONE}`, M, fy)
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...MUTED)
-    doc.text(`${docNo} · amounts per currency, never combined`, M, fy + 4)
-    doc.text(`Page ${i} of ${pages}`, W - M, fy, { align: 'right' })
-  }
+  drawFooters(doc, { reference: `${docNo} · amounts per currency, never combined`, margin: M })
 
   doc.save(`due-payments-${today}.pdf`)
 }

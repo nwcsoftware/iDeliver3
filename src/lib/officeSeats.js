@@ -22,6 +22,7 @@
  */
 
 import { SEATS, SEAT_BY_ROLE, CURRENCY } from './billing'
+import { isSubscriptionActive } from './subscriptions'
 
 /** Roles that hold no seat: nothing to run out of, nothing to charge. */
 export const UNSEATED_ROLES = ['super_admin', 'customer', 'driver']
@@ -121,12 +122,16 @@ export const SEAT_STATUS = {
   included: { key: 'included', label: 'Included',  note: 'Inside the annual package — no charge' },
   trial:    { key: 'trial',    label: 'Free trial', note: 'Free period — ends on the date shown' },
   paid:     { key: 'paid',     label: 'Paid',      note: 'Paid subscription, in date' },
+  due:      { key: 'due',      label: 'Payment due', note: 'Open while unpaid — activated by the super admin for the full term or on trust' },
   none:     { key: 'none',     label: 'None',      note: 'Subject to a subscription and has none — sign-in is refused' },
   na:       { key: 'na',       label: '—',         note: 'This role holds no seat' },
 }
 
-const inDate = (r, today) =>
-  r && r.is_active && r.is_paid && String(r.start_date) <= today && today <= String(r.end_date)
+/* Live = what the sign-in gate lets through (isSubscriptionActive): paid and in
+   date, OR switched on unpaid by the super admin — for the full term (fix159)
+   or on trust. Testing is_paid here instead called those partners “None —
+   sign-in is refused” while they were signing in. */
+const inDate = (r, today) => !!r && isSubscriptionActive(r, today)
 
 /**
  * The seat status of one login.
@@ -147,6 +152,7 @@ export function seatStatus(user, { partnerRanks = new Map(), subsByContact = new
   const fromRows = (rows) => {
     const live = (rows || []).find(r => inDate(r, today))
     if (!live) return { ...SEAT_STATUS.none, row: (rows || [])[0] ?? null }
+    if (!live.is_paid) return { ...SEAT_STATUS.due, row: live }
     return Number(live.amount) > 0
       ? { ...SEAT_STATUS.paid,  row: live }
       : { ...SEAT_STATUS.trial, row: live }

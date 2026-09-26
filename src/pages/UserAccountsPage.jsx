@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   CalendarClock,
   BadgeDollarSign,
+  FileDown,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { ensureTrialSubscription, TRIAL_DAYS } from '../lib/subscriptions'
@@ -38,6 +39,7 @@ import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { checkSeat, seatPosition, seatPrice, seatStatus } from '../lib/officeSeats'
 import { rankPartners, seatHolderIds } from '../lib/subscriptions'
+import { downloadUserAccountsPdf } from '../lib/userAccountsPdf'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 import SearchField from '../components/ui/SearchField'
@@ -373,6 +375,46 @@ export default function UserAccountsPage() {
     })
   })()
 
+  /* Export the page as filtered (super admin). The filters go on the paper in
+     words, because a list read later without them reads as everybody. */
+  const [exporting, setExporting] = useState(false)
+  async function exportUsers() {
+    if (!isSuperAdmin || exporting) return
+    setExporting(true)
+    try {
+      const SORT_NAMES = { username: 'username', email: 'email', mobile: 'mobile', role: 'role', status: 'status',
+                           online: 'online', device: 'device', last: 'last login' }
+      const filters = [
+        roleFilter   !== 'all' && `Role: ${roleLabel[roleFilter] || roleFilter}`,
+        statusFilter !== 'all' && `Status: ${statusFilter}`,
+        onlineFilter !== 'all' && `Online: ${onlineFilter === 'online' ? 'online now' : 'offline'}`,
+        search.trim()          && `Search: “${search.trim()}”`,
+        sort.key && sort.dir   && `Sorted by ${SORT_NAMES[sort.key] || sort.key} (${sort.dir === 'asc' ? 'A–Z / oldest first' : 'Z–A / newest first'})`,
+      ].filter(Boolean)
+      const rows = filtered.map(u => {
+        const st = seatStatus(u, seatLookups)
+        return {
+          username:  u.username,
+          contact:   u.contact_id ? contactLabel(linkedContacts[u.contact_id]) : '',
+          role:      roleLabel[u.role] || u.role,
+          mobile:    u.mobile,
+          email:     u.email,
+          status:    u.status,
+          online:    onlineSet.has(String(u.id)),
+          seat:      { key: st.key, label: st.label, until: st.row?.end_date ? String(st.row.end_date).slice(0, 10) : '' },
+          lastLogin: u.last_login_at,
+          device:    u.last_login_device,
+        }
+      })
+      const who = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
+      await downloadUserAccountsPdf(rows, { filters, preparedBy: who })
+    } catch (e) {
+      setError?.(e?.message || 'Could not build the PDF.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   // The roles actually present, so the filter never offers an empty one.
   const rolesPresent = [...new Set(visibleUsers.map(u => u.role))]
     .sort((a, b) => (roleLabel[a] || a).localeCompare(roleLabel[b] || b))
@@ -688,7 +730,21 @@ export default function UserAccountsPage() {
             className="input pl-9"
           />
         </div>
-        <button className="btn-primary ml-auto" onClick={openAdd}>
+        {/* Super admin: the list as it is filtered right now, on the _NXCORE
+            letterhead. It exports `filtered` — search, chips and sort — so
+            what prints is what is on screen. */}
+        {isSuperAdmin && (
+          <button type="button" onClick={exportUsers} disabled={exporting || filtered.length === 0}
+            title={anyFilter ? `Export the ${filtered.length} account(s) matching the current filters`
+                             : 'Export every account'}
+            className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+                       border-surface-border bg-surface-hover text-slate-200 hover:text-white disabled:opacity-40">
+            {exporting ? <Loader className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            Export PDF
+            <span className="text-[11px] tabular-nums px-1.5 rounded bg-surface-border">{filtered.length}</span>
+          </button>
+        )}
+        <button className={`btn-primary ${isSuperAdmin ? '' : 'ml-auto'}`} onClick={openAdd}>
           <UserPlus className="w-4 h-4" /> New User
         </button>
       </div>
@@ -825,8 +881,10 @@ export default function UserAccountsPage() {
                           included: { Icon: ShieldCheck,     cls: 'text-slate-400' },
                           trial:    { Icon: CalendarClock,   cls: 'text-amber-400' },
                           paid:     { Icon: BadgeDollarSign, cls: 'text-green-400' },
+                          // open while unpaid — same fuchsia as "awaiting payment"
+                          due:      { Icon: BadgeDollarSign, cls: 'text-fuchsia-400' },
                           none:     { Icon: ShieldAlert,     cls: 'text-red-400' },
-                        }[st.key]
+                        }[st.key] ?? { Icon: ShieldAlert, cls: 'text-slate-500' }
                         const Icon = look.Icon
                         return (
                           <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${look.cls}`}
