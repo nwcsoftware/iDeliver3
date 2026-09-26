@@ -399,19 +399,6 @@ export default function SubscriptionsPage() {
       + 'and the subscription is activated.')
   }, [loginIds])
 
-  /* The Due Payments report: money owed and actually due. A charge that is
-     “not due — free seat” is left off and counted apart, because chasing it
-     would be chasing money nobody owes. Longest-owed first. */
-  const dueRows = useMemo(() => rows
-    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope !== SCOPE.partnerFree)
-    .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [rows, partnerRanks])
-  const staleFreeCount = useMemo(() => rows
-    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope === SCOPE.partnerFree).length,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [rows, partnerRanks])
-
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
       return {
@@ -475,6 +462,21 @@ export default function SubscriptionsPage() {
     if (!contact) return { subject: true, scope: SCOPE.supplier, rank: null }
     return scopeFor(contact, partnerRanks.get(contact.id) ?? null)
   }, [partnerRanks])
+
+  /* The Due Payments report: money owed and actually due. A charge that is
+     “not due — free seat” is left off and counted apart, because chasing it
+     would be chasing money nobody owes. Longest-owed first.
+
+   Declared AFTER scopeOf on purpose: useMemo runs during render, and calling
+   a const declared further down blanked the whole page. */
+  const dueRows = useMemo(() => rows
+    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope !== SCOPE.partnerFree)
+    .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))),
+  [rows, scopeOf])
+  const staleFreeCount = useMemo(() => rows
+    .filter(r => isAmountDue(r) && scopeOf(r.contact).scope === SCOPE.partnerFree).length,
+  [rows, scopeOf])
+
 
   const scopeCounts = useMemo(() => {
     // Seats are held by parties that can sign in; the rest of the address book
