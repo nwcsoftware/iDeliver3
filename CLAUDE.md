@@ -128,7 +128,8 @@ What that means when building:
   return posts `returned_empty` (empties +1, not on hand), a `refill` moves
   empties to filled. The filled count is `summarise().onHand` and is shown as
   **Available** (what can be sold; low/out judge it); the Inventory "On hand"
-  column shows available + empty — every bottle in the shop. Each type's effect on both counts is in
+  column shows available + empty — every bottle in the shop. For every other
+  product Available is the same number as On hand. Each type's effect on both counts is in
   `MOVEMENT_TYPES` (`sign`, `empty`); read them through `summarise()` /
   `movementEffect()`, never a hand-written sign table.
 - Prefer one shared calculation over two that agree today. Where two pages show

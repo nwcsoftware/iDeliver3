@@ -44,7 +44,7 @@ const bagText = (bag) => {
    refillable, and the header is where somebody looks when a number surprises. */
 const COLUMN_HINT = {
   'On hand':  'Every unit in the shop. For gas and water: available + empty.',
-  Available:  'Filled and ready to sell now (gas, water). Low and out are judged on this.',
+  Available:  'What can be sold now — the same as On hand, except gas and water (full ones only). Low and out are judged on this.',
   Empty:     'Back from customers, waiting to be refilled.',
 }
 
@@ -378,41 +378,25 @@ export default function ProductInventoryPage() {
                     </td>
                     <td className="px-3 py-2 text-slate-100">{p.name}</td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{p.category?.name || '—'}</td>
-                    {/* ON HAND is every unit on the shelf. For most products
-                        that is also what can be sold, so it carries the out /
-                        low flags. For a refillable it counts the empties too,
-                        and the flags move to AVAILABLE — a shelf of empty bottles
-                        is not stock anyone can sell. */}
+                    {/* ON HAND is every unit on the shelf; AVAILABLE is what can
+                        be sold. For most products they are the same number.
+                        For a refillable, On hand counts the empties too — a
+                        shelf of empty bottles is not stock anyone can sell —
+                        so the out / low flags always sit on Available, in the
+                        same column for every row. */}
                     <td className="px-3 py-2">
-                      {refillable ? (
-                        <>
-                          <span className="inline-flex items-center gap-1.5 tabular-nums font-semibold text-slate-100">
-                            {fmtQty(p.stock.onHand + p.stock.empty)}
-                            <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
-                          </span>
-                          <span className="block text-[10px] text-slate-500">available + empty</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className={`inline-flex items-center gap-1.5 tabular-nums font-semibold ${
-                            zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-slate-100'}`}>
-                            {fmtQty(p.stock.onHand)}
-                            <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
-                          </span>
-                          <StockFlag zero={zero} low={low} />
-                        </>
-                      )}
+                      <span className="inline-flex items-center gap-1.5 tabular-nums font-semibold text-slate-100">
+                        {fmtQty(refillable ? p.stock.onHand + p.stock.empty : p.stock.onHand)}
+                        <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
+                      </span>
+                      {refillable && <span className="block text-[10px] text-slate-500">available + empty</span>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      {refillable ? (
-                        <>
-                          <span className={`tabular-nums font-semibold ${
-                            zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-emerald-300'}`}>
-                            {fmtQty(p.stock.onHand)}
-                          </span>
-                          <StockFlag zero={zero} low={low} />
-                        </>
-                      ) : <span className="text-slate-700 text-xs">—</span>}
+                      <span className={`tabular-nums font-semibold ${
+                        zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-emerald-300'}`}>
+                        {fmtQty(p.stock.onHand)}
+                      </span>
+                      <StockFlag zero={zero} low={low} />
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {refillable ? (
