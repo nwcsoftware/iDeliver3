@@ -181,6 +181,21 @@ export async function deleteProductMovement(id) {
  * missed and never recover; a function that can be run twice and change nothing
  * the second time cannot drift. It is safe to call after any save.
  */
+/* DOES SELLING THIS PRODUCT TAKE IT OFF THE SHELF? (fix164)
+
+   Retail goods: yes. Services and adverts: never — they are not goods. A
+   returnable: only when the product says its CONTENTS are consumed. Gas is
+   sold and only the empty bottle comes back, so a gas sale uses a full bottle;
+   a shisha is lent and comes back whole, so it moves nothing.
+   `sales_reduce_stock` on the product decides: TRUE / FALSE override, NULL
+   follows the old rule (retail yes, everything else no). */
+export function salesReduceStock(p) {
+  if (!p || p.is_service || p.is_advertisement) return false
+  if (p.sales_reduce_stock === true)  return true
+  if (p.sales_reduce_stock === false) return false
+  return !!p.is_retail && !p.is_returnable
+}
+
 export async function syncOrderStock(orderId, { companyId = null, userId = null, userName = '' } = {}) {
   if (!orderId) return null
   try {
@@ -203,12 +218,14 @@ export async function syncOrderStock(orderId, { companyId = null, userId = null,
       if (le) return le.message
       const live = (lines ?? []).filter(l => !l.is_deleted && l.product_id)
       if (live.length) {
+        // Every column: sales_reduce_stock arrives with fix164, and naming it
+        // would fail the whole read on a database without it.
         const { data: prods } = await supabase
           .from('products')
-          .select('id, is_retail, is_returnable, is_service, is_advertisement')
+          .select('*')
           .in('id', [...new Set(live.map(l => l.product_id))])
         const stocked = new Map((prods ?? [])
-          .filter(p => p.is_retail && !p.is_returnable && !p.is_service && !p.is_advertisement)
+          .filter(salesReduceStock)
           .map(p => [p.id, p]))
 
         /* Several lines of the same product on one order become ONE movement:
