@@ -807,7 +807,7 @@ export default function ProductsPage() {
                       Refillable
                       <span className="block text-[11px] text-slate-500">
                         A gas cylinder, a 20 L water bottle: it comes back EMPTY and is not for sale again until it is
-                        refilled. Inventory then shows filled and empty apart, with a refill button beside the empties.
+                        refilled. Inventory then shows Available and Empty apart, with a refill button beside the empties.
                       </span>
                     </span>
                   </label>

@@ -40,6 +40,20 @@ const bagText = (bag) => {
   return parts.length ? parts.join('  +  ') : '—'
 }
 
+/* What each stock column means, on hover — "On hand" changes meaning for a
+   refillable, and the header is where somebody looks when a number surprises. */
+const COLUMN_HINT = {
+  'On hand':  'Every unit in the shop. For gas and water: available + empty.',
+  Available:  'Filled and ready to sell now (gas, water). Low and out are judged on this.',
+  Empty:     'Back from customers, waiting to be refilled.',
+}
+
+function StockFlag({ zero, low }) {
+  if (zero) return <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-300 border border-red-500/30">out</span>
+  if (low)  return <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">low</span>
+  return null
+}
+
 const TONE = {
   in:       'bg-green-500/10 text-green-300 border-green-500/30',
   returned: 'bg-teal-500/10 text-teal-300 border-teal-500/30',
@@ -154,8 +168,9 @@ export default function ProductInventoryPage() {
   const totals = useMemo(() => {
     const lowCount = products.filter(p => isLow(p, byId.get(p.id)?.onHand || 0)).length
     const outCount = products.filter(p => (byId.get(p.id)?.onHand || 0) <= 0).length
-    const units = products.reduce((s, p) => s + num(byId.get(p.id)?.onHand), 0)
     const empties = products.filter(isRefillable).reduce((s, p) => s + num(byId.get(p.id)?.empty), 0)
+    // Same as the On hand column: a refillable's empties are on the shelf too.
+    const units = products.reduce((s, p) => s + num(byId.get(p.id)?.onHand), 0) + empties
     return { lowCount, outCount, units, empties, value: stockValue(products, byId) }
   }, [products, byId])
 
@@ -332,16 +347,17 @@ export default function ProductInventoryPage() {
           <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="border-b border-surface-border">
-                {['Code', 'Product', 'Category', 'On hand', 'Empty', 'In', 'Out', 'Sold', 'Reorder at', 'Last movement', ''].map(h => (
-                  <th key={h} className="text-left px-3 py-2.5 text-slate-500 text-[11px] font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
+                {['Code', 'Product', 'Category', 'On hand', 'Available', 'Empty', 'In', 'Out', 'Sold', 'Reorder at', 'Last movement', ''].map(h => (
+                  <th key={h} title={COLUMN_HINT[h]}
+                    className={`text-left px-3 py-2.5 text-slate-500 text-[11px] font-medium uppercase tracking-wider whitespace-nowrap ${COLUMN_HINT[h] ? 'cursor-help' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
+                <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500 text-xs">
+                <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">
                   {onlyLow ? 'Nothing is below its reorder level.' : 'No products found.'}
                 </td></tr>
               ) : rows.map(p => {
@@ -362,18 +378,41 @@ export default function ProductInventoryPage() {
                     </td>
                     <td className="px-3 py-2 text-slate-100">{p.name}</td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{p.category?.name || '—'}</td>
+                    {/* ON HAND is every unit on the shelf. For most products
+                        that is also what can be sold, so it carries the out /
+                        low flags. For a refillable it counts the empties too,
+                        and the flags move to AVAILABLE — a shelf of empty bottles
+                        is not stock anyone can sell. */}
                     <td className="px-3 py-2">
-                      <span className={`inline-flex items-center gap-1.5 tabular-nums font-semibold ${
-                        zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-slate-100'}`}>
-                        {fmtQty(p.stock.onHand)}
-                        <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
-                      </span>
-                      {zero && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-300 border border-red-500/30">out</span>}
-                      {!zero && low && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">low</span>}
-                      {/* For a refillable, on hand is what is FILLED — the
-                          bottles that can go out today. Said here, because the
-                          same word means every bottle on the other rows. */}
-                      {refillable && <span className="block text-[10px] text-slate-500">filled &amp; ready</span>}
+                      {refillable ? (
+                        <>
+                          <span className="inline-flex items-center gap-1.5 tabular-nums font-semibold text-slate-100">
+                            {fmtQty(p.stock.onHand + p.stock.empty)}
+                            <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
+                          </span>
+                          <span className="block text-[10px] text-slate-500">available + empty</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className={`inline-flex items-center gap-1.5 tabular-nums font-semibold ${
+                            zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-slate-100'}`}>
+                            {fmtQty(p.stock.onHand)}
+                            <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
+                          </span>
+                          <StockFlag zero={zero} low={low} />
+                        </>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {refillable ? (
+                        <>
+                          <span className={`tabular-nums font-semibold ${
+                            zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-emerald-300'}`}>
+                            {fmtQty(p.stock.onHand)}
+                          </span>
+                          <StockFlag zero={zero} low={low} />
+                        </>
+                      ) : <span className="text-slate-700 text-xs">—</span>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {refillable ? (
@@ -429,9 +468,13 @@ export default function ProductInventoryPage() {
               <span className="text-sm font-medium text-slate-100">{history.name}</span>
               <span className="font-mono text-[11px] text-slate-500">{history.code}</span>
               <span className="ml-auto text-xs text-slate-400 tabular-nums">
-                On hand <b className="text-slate-100">{fmtQty(byId.get(history.id)?.onHand || 0)}</b>
-                {isRefillable(history) && (
-                  <> · Empty <b className="text-cyan-300">{fmtQty(byId.get(history.id)?.empty || 0)}</b></>
+                {isRefillable(history) ? (
+                  <>
+                    Available <b className="text-emerald-300">{fmtQty(byId.get(history.id)?.onHand || 0)}</b>
+                    {' · '}Empty <b className="text-cyan-300">{fmtQty(byId.get(history.id)?.empty || 0)}</b>
+                  </>
+                ) : (
+                  <>On hand <b className="text-slate-100">{fmtQty(byId.get(history.id)?.onHand || 0)}</b></>
                 )}
               </span>
               {canPost && (
@@ -533,7 +576,9 @@ export default function ProductInventoryPage() {
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-100 truncate">{moveFor.name}</h3>
                 <p className="text-[11px] text-slate-500">
-                  On hand {fmtQty(byId.get(moveFor.id)?.onHand || 0)} {moveFor.unit_of_measure || ''}
+                  {isRefillable(moveFor)
+                    ? <>Available {fmtQty(byId.get(moveFor.id)?.onHand || 0)} · Empty {fmtQty(byId.get(moveFor.id)?.empty || 0)}</>
+                    : <>On hand {fmtQty(byId.get(moveFor.id)?.onHand || 0)}</>} {moveFor.unit_of_measure || ''}
                 </p>
               </div>
               <button onClick={() => setMoveFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
@@ -585,7 +630,7 @@ export default function ProductInventoryPage() {
                       <span className="font-mono text-slate-300"> -2</span>.
                     </p>
                     <p className="text-[11px] text-slate-300 tabular-nums">
-                      On hand {fmtQty(adjustFrom)}
+                      {isRefillable(moveFor) ? 'Available' : 'On hand'} {fmtQty(adjustFrom)}
                       {num(draft.quantity) ? (
                         <>
                           {' → '}
@@ -667,7 +712,7 @@ export default function ProductInventoryPage() {
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-100 truncate">{emptyFor.name} — empties</h3>
                 <p className="text-[11px] text-slate-500 tabular-nums">
-                  Filled {fmtQty(filledNow)} · <span className="text-cyan-300">Empty {fmtQty(emptyNow)}</span> {emptyFor.unit_of_measure || ''}
+                  Available {fmtQty(filledNow)} · <span className="text-cyan-300">Empty {fmtQty(emptyNow)}</span> {emptyFor.unit_of_measure || ''}
                 </p>
               </div>
               <button onClick={() => setEmptyFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
@@ -715,7 +760,7 @@ export default function ProductInventoryPage() {
                       <>
                         Empty {fmtQty(emptyNow)} → <span className={emptyNow - q < 0 ? 'text-rose-300 font-semibold' : 'text-cyan-300 font-semibold'}>{fmtQty(emptyNow - q)}</span>
                         <span className="text-slate-600"> · </span>
-                        Filled {fmtQty(filledNow)} → <span className="text-brand-300 font-semibold">{fmtQty(filledNow + q)}</span>
+                        Available {fmtQty(filledNow)} → <span className="text-brand-300 font-semibold">{fmtQty(filledNow + q)}</span>
                       </>
                     ) : <span className="text-slate-500">Enter a quantity to see where it lands.</span>}
                   </p>
@@ -724,7 +769,7 @@ export default function ProductInventoryPage() {
                 <>
                   <p className="text-[11px] text-slate-500">
                     Count the empty bottles and enter the number you counted — not the difference. The
-                    system records the correction. Filled stock is not touched.
+                    system records the correction. Available stock is not touched.
                   </p>
                   <div>
                     <label className="label">Empties counted *</label>

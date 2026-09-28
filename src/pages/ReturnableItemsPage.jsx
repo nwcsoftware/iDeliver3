@@ -273,7 +273,7 @@ export default function ReturnableItemsPage() {
                   <span className="text-amber-300">Out: <b>{fmtQty(outByProduct[p.id] || 0)}</b></span>
                   {isRefillable(p) ? (
                     <>
-                      <span className="text-green-400" title="Filled and ready to go out">Filled: <b>{fmtQty(p.available)}</b></span>
+                      <span className="text-green-400" title="Filled and ready to go out">Available: <b>{fmtQty(p.available)}</b></span>
                       <span className="text-cyan-300" title="Back from customers, waiting to be refilled">Empty: <b>{fmtQty(p.empty)}</b></span>
                     </>
                   ) : (

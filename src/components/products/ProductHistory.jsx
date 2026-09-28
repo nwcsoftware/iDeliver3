@@ -254,7 +254,7 @@ export default function ProductHistory({ product }) {
           <h3 className="text-xs font-semibold text-slate-200">Stock movements</h3>
           <span className="text-[11px] text-slate-500">{moves.length}</span>
           <span className="text-[11px] text-slate-400 ml-auto tabular-nums">
-            On hand <span className={onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{onHand}</span>
+            {refillable ? 'Available' : 'On hand'} <span className={onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{onHand}</span>
             {refillable && (
               <> · Empty <span className={empty < 0 ? 'text-rose-300 font-semibold' : 'text-cyan-300 font-semibold'}>{empty}</span></>
             )}
