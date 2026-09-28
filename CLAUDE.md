@@ -121,5 +121,8 @@ What that means when building:
   (lib/productStock). Driver Settlements closed orders without it for three
   months, and 98 orders' goods never left the shelf. Whether a product's sale
   reduces stock is `salesReduceStock()` — never re-derive it from the flags.
+  **Returnables are stock too**: −1 when the order closes, +1 when the line is
+  marked returned (`order_items.is_returned`, Returnable Items page), both
+  posted by `syncOrderStock`. The old `returnable_issuances` table is not used.
 - Prefer one shared calculation over two that agree today. Where two pages show
   the same figure, they should be reading the same function.

@@ -181,20 +181,20 @@ export async function deleteProductMovement(id) {
  * missed and never recover; a function that can be run twice and change nothing
  * the second time cannot drift. It is safe to call after any save.
  */
-/* DOES SELLING THIS PRODUCT TAKE IT OFF THE SHELF? (fix164)
+/* DOES SELLING THIS PRODUCT TAKE IT OFF THE SHELF?
 
-   Retail goods: yes. Services and adverts: never — they are not goods. A
-   returnable: only when the product says its CONTENTS are consumed. Gas is
-   sold and only the empty bottle comes back, so a gas sale uses a full bottle;
-   a shisha is lent and comes back whole, so it moves nothing.
-   `sales_reduce_stock` on the product decides: TRUE / FALSE override, NULL
-   follows the old rule (retail yes, everything else no). */
+   Goods do; services and adverts are not goods. A RETURNABLE is goods like any
+   other: it leaves the shelf when the order closes (−1) and comes back when it
+   is marked returned (+1). Ten shishas on hand, one goes out: nine; it comes
+   back: ten. (fix165 — returnables used to be skipped entirely, and a return
+   touched no stock at all.) */
 export function salesReduceStock(p) {
   if (!p || p.is_service || p.is_advertisement) return false
-  if (p.sales_reduce_stock === true)  return true
-  if (p.sales_reduce_stock === false) return false
-  return !!p.is_retail && !p.is_returnable
+  return !!p.is_retail || !!p.is_returnable
 }
+
+/* Does marking a line RETURNED put the item back on the shelf? Returnables only. */
+export const returnsRestock = (p) => salesReduceStock(p) && !!p.is_returnable
 
 export async function syncOrderStock(orderId, { companyId = null, userId = null, userName = '' } = {}) {
   if (!orderId) return null
@@ -213,13 +213,12 @@ export async function syncOrderStock(orderId, { companyId = null, userId = null,
     if (shouldPost) {
       const { data: lines, error: le } = await supabase
         .from('order_items')
-        .select('product_id, quantity, unit_price, currency, is_deleted')
+        .select('product_id, quantity, unit_price, currency, is_deleted, is_returned, returned_at')
         .eq('order_id', orderId)
       if (le) return le.message
       const live = (lines ?? []).filter(l => !l.is_deleted && l.product_id)
       if (live.length) {
-        // Every column: sales_reduce_stock arrives with fix164, and naming it
-        // would fail the whole read on a database without it.
+        // Every column, so a flag added later can never fail the whole read.
         const { data: prods } = await supabase
           .from('products')
           .select('*')
@@ -253,18 +252,45 @@ export async function syncOrderStock(orderId, { companyId = null, userId = null,
             order_id:  orderId,
             moved_at:  when,
           }))
+
+        /* What came BACK: a returnable line marked returned puts its quantity
+           back on the shelf, dated when it was returned. Only once the order is
+           closed — before that nothing was taken off, so nothing comes back. */
+        const back = new Map()
+        for (const l of live) {
+          const p = stocked.get(l.product_id)
+          if (!p || !returnsRestock(p) || !l.is_returned) continue
+          const cur = back.get(l.product_id) || { qty: 0, currency: l.currency || 'USD', at: null }
+          cur.qty += num(l.quantity)
+          if (l.returned_at && (!cur.at || String(l.returned_at) > String(cur.at))) cur.at = l.returned_at
+          back.set(l.product_id, cur)
+        }
+        for (const [product_id, v] of back.entries()) {
+          if (v.qty <= 0) continue
+          wanted.push({
+            product_id,
+            movement_type: 'returned',
+            quantity:  round2(v.qty),
+            currency:  v.currency,
+            reference: order.order_number || null,
+            notes:     'Posted automatically when the item was marked returned',
+            order_id:  orderId,
+            moved_at:  v.at || when,
+          })
+        }
       }
     }
 
-    // What this order has already posted. Only its own 'sold' rows are touched:
-    // a hand-posted adjustment against the same product is somebody's decision.
+    // What this order has already posted. Only its own 'sold' and 'returned'
+    // rows are touched: a hand-posted adjustment is somebody's decision.
     const { data: existing, error: ee } = await supabase
       .from('product_movements')
-      .select('id, product_id, quantity, moved_at')
-      .eq('order_id', orderId).eq('movement_type', 'sold')
+      .select('id, product_id, quantity, moved_at, movement_type')
+      .eq('order_id', orderId).in('movement_type', ['sold', 'returned'])
     if (ee) return isMissingLedger(ee.message) ? null : ee.message
 
-    const same = (a, b) => a.product_id === b.product_id && round2(a.quantity) === round2(b.quantity)
+    const same = (a, b) => a.product_id === b.product_id && a.movement_type === b.movement_type
+      && round2(a.quantity) === round2(b.quantity)
     const toDelete = (existing ?? []).filter(e => !wanted.some(w => same(e, w)))
     const toInsert = wanted.filter(w => !(existing ?? []).some(e => same(e, w)))
 

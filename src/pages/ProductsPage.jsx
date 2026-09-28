@@ -319,12 +319,6 @@ export default function ProductsPage() {
       sizes:            mirror.sizes,
       // Whether customers see it in the 3asari3 shop (fix115).
       is_displayed:     !!form.is_displayed,
-      /* Returnables only: do their sales take stock off the shelf (fix164)?
-         Sent when the box was used, or the row already has the column, so a
-         database without fix164 can still save every other product. */
-      ...((form.sales_reduce_stock === true || (modal !== 'add' && modal && 'sales_reduce_stock' in modal))
-        ? { sales_reduce_stock: kind === 'returnable' ? form.sales_reduce_stock === true : null }
-        : {}),
     }
 
     let err = null
@@ -778,24 +772,7 @@ export default function ProductsPage() {
                   <p className="text-[10px] text-purple-300/80 mt-1">Stock moves in when purchased and out when sold.</p>
                 )}
                 {form.is_returnable && (
-                  <p className="text-[10px] text-amber-300/80 mt-1">Stock moves out when issued and back in when returned. Tracked in the Returnable Items page (e.g. shisha, gas cylinders).</p>
-                )}
-                {/* A returnable whose CONTENTS are sold (fix164): gas is used up,
-                    only the bottle comes back, so a sale takes a full one off the
-                    shelf. A shisha is lent and returned whole, so it does not. */}
-                {form.is_returnable && (
-                  <label className="mt-2 flex items-start gap-2.5 cursor-pointer select-none">
-                    <input type="checkbox" className="w-4 h-4 accent-amber-500 mt-0.5"
-                      checked={form.sales_reduce_stock === true}
-                      onChange={e => fld('sales_reduce_stock', e.target.checked)} />
-                    <span className="text-sm text-slate-200">
-                      Sales reduce stock
-                      <span className="block text-[11px] text-slate-500">
-                        Tick when the customer keeps what is inside and only the container comes back (gas).
-                        Leave it off when the whole item comes back (shisha).
-                      </span>
-                    </span>
-                  </label>
+                  <p className="text-[10px] text-amber-300/80 mt-1">Stock goes out when the order closes and comes back when the item is marked returned on the Returnable Items page (e.g. shisha, gas cylinders).</p>
                 )}
               </div>
             </div>

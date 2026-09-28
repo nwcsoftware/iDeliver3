@@ -3,6 +3,7 @@ import { X, Check, Truck, Circle, Package, ChevronDown, ChevronRight } from 'luc
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { syncOrderStock } from '../lib/productStock'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -118,6 +119,19 @@ export default function ReturnableItemsPage() {
   const { sort, cycle, sortRows } = useTableSort(sortValue)
   const visible = sortRows(filtered)
 
+  /* A return puts the item back on the shelf (+1), and undoing it takes it off
+     again. syncOrderStock recomputes what the order should have posted — its
+     sale and its returns — so it is right whichever button was pressed, and
+     never counts twice (fix165). */
+  async function restock(r) {
+    const orderId = r.order?.id || r.order_id || orderModal?.id
+    if (!orderId) return
+    const err = await syncOrderStock(orderId, {
+      companyId: COMPANY_ID, userId: currentUser?.user_id || null, userName,
+    })
+    if (err) console.warn('Could not update stock for this return:', err)
+  }
+
   /* ── actions ──────────────────────────────────────────────── */
 
   async function markReturned(r) {
@@ -126,6 +140,7 @@ export default function ReturnableItemsPage() {
     const { error: e } = await supabase.from('order_items')
       .update({ is_returned: true, returned_at: new Date().toISOString(), returned_by: userName })
       .eq('id', r.id)
+    if (!e) await restock(r)
     setBusyId(null)
     if (e) { alert(e.message); return }
     await fetchAll()
@@ -137,6 +152,7 @@ export default function ReturnableItemsPage() {
     const { error: e } = await supabase.from('order_items')
       .update({ is_returned: false, returned_at: null, returned_by: null })
       .eq('id', r.id)
+    if (!e) await restock(r)
     setBusyId(null)
     if (e) { alert(e.message); return }
     await fetchAll()
