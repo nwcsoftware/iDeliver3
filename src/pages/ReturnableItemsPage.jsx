@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { X, Check, Truck, Circle, Package, ChevronDown, ChevronRight } from 'lucide-react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { syncOrderStock } from '../lib/productStock'
+import { syncOrderStock, fetchProductMovements, summarise, isRefillable, returnMovementType } from '../lib/productStock'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -30,6 +30,7 @@ export default function ReturnableItemsPage() {
 
   const [products, setProducts] = useState([])   // returnable products + in-store qty
   const [rows,     setRows]     = useState([])    // returnable order_items
+  const [untracked, setUntracked] = useState({})  // product_id → qty sold before returns were tracked
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
   const [showReturned, setShowReturned] = useState(false)
@@ -51,28 +52,55 @@ export default function ReturnableItemsPage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
+    // Every column: is_refillable and returnable_since arrive with fix166.
     let pq = supabase.from('products')
-      .select('id, code, name, unit_of_measure, inventory(quantity_available)')
+      .select('*')
       .eq('is_active', true).eq('is_returnable', true).order('name')
     if (COMPANY_ID) pq = pq.eq('company_id', COMPANY_ID)
 
-    // Every order_item of a returnable product = an issued returnable.
-    const iq = supabase.from('order_items')
+    // Every order_item of a returnable product = an issued returnable. Paged:
+    // with Gallon 20 L returnable (fix166) this list grows by a few lines a
+    // day, and past 1000 a plain select would drop the oldest without a word.
+    const iq = fetchAllRows(() => supabase.from('order_items')
       .select(`id, product_id, quantity, added_at, is_returned, returned_at, returned_by,
         product:products!inner(code, name, is_returnable),
-        order:delivery_orders!inner(id, order_number, status, recipient_name, driver:contacts!driver_id(first_name, last_name))`)
+        order:delivery_orders!inner(id, order_number, status, isclosed, closed_at, recipient_name, driver:contacts!driver_id(first_name, last_name))`)
       .eq('product.is_returnable', true)
       .eq('is_deleted', false)
       // Nothing went out on a cancelled order, so there is nothing to get back.
       .or('status.is.null,status.neq.cancelled', { referencedTable: 'order' })
       .order('added_at', { ascending: false })
+      .order('id'))   // a stable order, or rows sharing a time can cross pages
 
     const [{ data: prods }, { data: items }] = await Promise.all([pq, iq])
+
+    /* In store from the stock LEDGER — the same summarise() the Inventory page
+       uses. This read the old `inventory` table, which nothing writes, so it
+       said 0 for everything. A refillable has two counts: filled and empty. */
+    const { rows: moves } = await fetchProductMovements(COMPANY_ID, (prods ?? []).map(p => p.id))
+    const stock = summarise(moves)
     setProducts((prods ?? []).map(p => ({
       ...p,
-      available: (p.inventory ?? []).reduce((s, i) => s + (Number(i.quantity_available) || 0), 0),
+      available: stock.get(p.id)?.onHand || 0,
+      empty:     stock.get(p.id)?.empty  || 0,
     })))
-    setRows(items ?? [])
+
+    /* An item that was sold outright and later made returnable (Gallon 20 L,
+       fix166): what it sold BEFORE was never going to be recorded back, so
+       those lines are not chased as "out". An order still open at that moment
+       goes out under the new rule and is chased like any other. */
+    const since = new Map((prods ?? []).filter(p => p.returnable_since).map(p => [p.id, p.returnable_since]))
+    const before = (r) => {
+      const at = since.get(r.product_id)
+      if (!at || r.is_returned || !r.order?.isclosed) return false
+      return !r.order.closed_at || new Date(r.order.closed_at) < new Date(at)
+    }
+    const skipped = {}
+    for (const r of items ?? []) {
+      if (before(r)) skipped[r.product_id] = (skipped[r.product_id] || 0) + (Number(r.quantity) || 0)
+    }
+    setUntracked(skipped)
+    setRows((items ?? []).filter(r => !before(r)))
     setLoading(false)
   }, [COMPANY_ID])
 
@@ -135,7 +163,10 @@ export default function ReturnableItemsPage() {
   /* ── actions ──────────────────────────────────────────────── */
 
   async function markReturned(r) {
-    if (!window.confirm(`Mark ${fmtQty(r.quantity)} × ${r.product?.name ?? 'item'} (order ${r.order?.order_number ?? ''}) as returned?`)) return
+    const prod = products.find(p => p.id === r.product_id)
+    const empty = returnMovementType(prod, new Date().toISOString()) === 'returned_empty'
+    if (!window.confirm(`Mark ${fmtQty(r.quantity)} × ${r.product?.name ?? 'item'} (order ${r.order?.order_number ?? ''}) as returned?`
+      + (empty ? '\n\nIt comes back EMPTY: it goes to the empties on the Inventory page, and is for sale again once it is refilled.' : ''))) return
     setBusyId(r.id)
     const { error: e } = await supabase.from('order_items')
       .update({ is_returned: true, returned_at: new Date().toISOString(), returned_by: userName })
@@ -240,9 +271,23 @@ export default function ReturnableItemsPage() {
                 </div>
                 <div className="flex items-center gap-4 mt-1.5 text-xs">
                   <span className="text-amber-300">Out: <b>{fmtQty(outByProduct[p.id] || 0)}</b></span>
-                  <span className="text-green-400">In store: <b>{fmtQty(p.available)}</b></span>
+                  {isRefillable(p) ? (
+                    <>
+                      <span className="text-green-400" title="Filled and ready to go out">Filled: <b>{fmtQty(p.available)}</b></span>
+                      <span className="text-cyan-300" title="Back from customers, waiting to be refilled">Empty: <b>{fmtQty(p.empty)}</b></span>
+                    </>
+                  ) : (
+                    <span className="text-green-400">In store: <b>{fmtQty(p.available)}</b></span>
+                  )}
                   <span className="text-slate-500">{p.unit_of_measure}</span>
                 </div>
+                {untracked[p.id] > 0 && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    {fmtQty(untracked[p.id])} sold before {fmtDate(p.returnable_since)}, when returns were not yet
+                    recorded — not chased here. Empties that come back from those go in with Correct empty count on
+                    Inventory.
+                  </p>
+                )}
               </div>
             ))}
           </div>

@@ -124,5 +124,10 @@ What that means when building:
   **Returnables are stock too**: −1 when the order closes, +1 when the line is
   marked returned (`order_items.is_returned`, Returnable Items page), both
   posted by `syncOrderStock`. The old `returnable_issuances` table is not used.
+  **Refillables (fix166)** — gas, 20 L water — are held filled *or* empty: a
+  return posts `returned_empty` (empties +1, not on hand), a `refill` moves
+  empties to filled. On hand = filled. Each type's effect on both counts is in
+  `MOVEMENT_TYPES` (`sign`, `empty`); read them through `summarise()` /
+  `movementEffect()`, never a hand-written sign table.
 - Prefer one shared calculation over two that agree today. Where two pages show
   the same figure, they should be reading the same function.

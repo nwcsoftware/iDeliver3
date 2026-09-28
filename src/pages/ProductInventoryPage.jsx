@@ -15,6 +15,8 @@ import {
   Calendar,
   Coins,
   Filter,
+  RefreshCcw,
+  ClipboardCheck,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import ProductMonthlySales from '../components/products/ProductMonthlySales'
@@ -23,7 +25,7 @@ import { useApp } from '../context/AppContext'
 import {
   MOVEMENT_TYPES, movementLabel, fetchProductMovements, summarise, stockValue,
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
-  movementDeleteRight,
+  movementDeleteRight, isRefillable, handMovementTypes,
 } from '../lib/productStock'
 import { isStrictAdmin } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
@@ -44,6 +46,9 @@ const TONE = {
   sold:     'bg-brand-500/10 text-brand-300 border-brand-500/30',
   out:      'bg-amber-500/10 text-amber-300 border-amber-500/30',
   adjust:   'bg-slate-500/10 text-slate-300 border-slate-500/30',
+  returned_empty: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30',
+  refill:         'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
+  empty_adjust:   'bg-slate-500/10 text-cyan-200 border-cyan-500/20',
 }
 
 const emptyMove = (product) => ({
@@ -55,6 +60,13 @@ const emptyMove = (product) => ({
   reference: '',
   notes: '',
   moved_at: '',
+})
+
+/* The empties form: refill some, or correct the count. A count is entered as
+   the number COUNTED, not a signed difference — "there are 15 empties in the
+   back" is what somebody actually knows, and the arithmetic is ours to do. */
+const newEmptiesDraft = (mode = 'refill') => ({
+  mode, quantity: '', counted: '', unit_cost: '', reference: '', notes: '', moved_at: '',
 })
 
 /* Inventory for 3asari3's own catalog (fix126).
@@ -90,13 +102,17 @@ export default function ProductInventoryPage() {
   const [formErr,   setFormErr]   = useState('')
   const [busyId,    setBusyId]    = useState(null)
   const [moveTypeFilter, setMoveTypeFilter] = useState('')   // '' = every kind
+  const [emptyFor,   setEmptyFor]   = useState(null)   // refillable whose empties are open
+  const [emptyDraft, setEmptyDraft] = useState(newEmptiesDraft())
 
   const load = useCallback(async () => {
     setLoading(true)
     // Only stocked kinds: a service or an advertisement has nothing to count.
     const { data, error: pe } = await fetchAllRows(() => {
       let q = supabase.from('products')
-        .select('id, code, name, unit_price, unit_cost, currency, unit_of_measure, is_active, is_service, is_advertisement, reorder_level, reorder_quantity, category:product_categories(name)')
+        // Every column: is_refillable arrives with fix166, and naming it
+        // would fail the whole read on a database without it.
+        .select('*, category:product_categories(name)')
         .eq('is_service', false)
         .eq('is_advertisement', false)
         .order('name')
@@ -127,7 +143,7 @@ export default function ProductInventoryPage() {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return products
-      .map(p => ({ ...p, stock: byId.get(p.id) || { onHand: 0, in: 0, out: 0, sold: 0, returned: 0, moves: 0, lastMovedAt: null } }))
+      .map(p => ({ ...p, stock: byId.get(p.id) || { onHand: 0, empty: 0, in: 0, out: 0, sold: 0, returned: 0, refill: 0, moves: 0, lastMovedAt: null } }))
       .filter(p => {
         if (onlyLow && !isLow(p, p.stock.onHand)) return false
         if (!q) return true
@@ -139,7 +155,8 @@ export default function ProductInventoryPage() {
     const lowCount = products.filter(p => isLow(p, byId.get(p.id)?.onHand || 0)).length
     const outCount = products.filter(p => (byId.get(p.id)?.onHand || 0) <= 0).length
     const units = products.reduce((s, p) => s + num(byId.get(p.id)?.onHand), 0)
-    return { lowCount, outCount, units, value: stockValue(products, byId) }
+    const empties = products.filter(isRefillable).reduce((s, p) => s + num(byId.get(p.id)?.empty), 0)
+    return { lowCount, outCount, units, empties, value: stockValue(products, byId) }
   }, [products, byId])
 
   /* Every movement for the product whose ledger is open, and the filtered view
@@ -174,6 +191,55 @@ export default function ProductInventoryPage() {
     setSaving(false)
     if (err) { setFormErr(err); return }
     setMoveFor(null); load()
+  }
+
+  /* ── empties: refill some, or correct the count ── */
+  const emptyNow  = emptyFor ? (byId.get(emptyFor.id)?.empty  || 0) : 0
+  const filledNow = emptyFor ? (byId.get(emptyFor.id)?.onHand || 0) : 0
+  const countDiff = Math.round((num(emptyDraft.counted) - emptyNow) * 100) / 100
+
+  function openEmpties(product, mode = 'refill') {
+    setEmptyDraft(newEmptiesDraft(mode))
+    setFormErr('')
+    setEmptyFor(product)
+  }
+
+  async function postEmpties() {
+    const refill = emptyDraft.mode === 'refill'
+    let quantity
+    if (refill) {
+      quantity = num(emptyDraft.quantity)
+      if (quantity <= 0) { setFormErr('Enter how many were refilled.'); return }
+      /* Refilling more than the empties on record would leave a negative
+         number of empty bottles, which only means the empty count was never
+         entered. Correct it first — it is the other tab of this same form. */
+      if (quantity > emptyNow) {
+        setFormErr(`Only ${fmtQty(emptyNow)} empty on record. If there are more, correct the empty count first `
+          + '(Correct empty count, above), then refill.'); return
+      }
+    } else {
+      if (emptyDraft.counted === '' || num(emptyDraft.counted) < 0) { setFormErr('Enter how many empties you counted.'); return }
+      if (!countDiff) { setFormErr('That is what the system already shows — nothing to correct.'); return }
+      quantity = countDiff
+    }
+    setSaving(true); setFormErr('')
+    const err = await saveProductMovement({
+      product_id:    emptyFor.id,
+      movement_type: refill ? 'refill' : 'empty_adjust',
+      quantity,
+      unit_cost:     refill ? emptyDraft.unit_cost : null,
+      currency:      emptyFor.currency || 'USD',
+      reference:     emptyDraft.reference,
+      notes:         emptyDraft.notes || (refill ? '' : `Counted ${fmtQty(num(emptyDraft.counted))} empty (system had ${fmtQty(emptyNow)})`),
+      moved_at:      emptyDraft.moved_at,
+    }, {
+      companyId: COMPANY_ID,
+      userId: currentUser?.user_id ?? null,
+      userName: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || '',
+    })
+    setSaving(false)
+    if (err) { setFormErr(err); return }
+    setEmptyFor(null); load()
   }
 
   async function removeMovement(m) {
@@ -235,7 +301,12 @@ export default function ProductInventoryPage() {
           <p className="text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
             <Boxes className="w-3.5 h-3.5" /> Units on hand
           </p>
-          <p className="mt-1.5 text-sm font-semibold text-slate-100 tabular-nums">{fmtQty(totals.units)}</p>
+          <p className="mt-1.5 text-sm font-semibold text-slate-100 tabular-nums">
+            {fmtQty(totals.units)}
+            {totals.empties !== 0 && (
+              <span className="text-cyan-300 font-normal text-xs"> · {fmtQty(totals.empties)} empty</span>
+            )}
+          </p>
         </div>
         <div className="card p-3">
           <p className="text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
@@ -261,21 +332,22 @@ export default function ProductInventoryPage() {
           <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="border-b border-surface-border">
-                {['Code', 'Product', 'Category', 'On hand', 'In', 'Out', 'Sold', 'Reorder at', 'Last movement', ''].map(h => (
+                {['Code', 'Product', 'Category', 'On hand', 'Empty', 'In', 'Out', 'Sold', 'Reorder at', 'Last movement', ''].map(h => (
                   <th key={h} className="text-left px-3 py-2.5 text-slate-500 text-[11px] font-medium uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
+                <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500 text-xs">
+                <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500 text-xs">
                   {onlyLow ? 'Nothing is below its reorder level.' : 'No products found.'}
                 </td></tr>
               ) : rows.map(p => {
                 const low  = isLow(p, p.stock.onHand)
                 const zero = p.stock.onHand <= 0
+                const refillable = isRefillable(p)
                 return (
                   <tr key={p.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/30 ${p.is_active === false ? 'opacity-60' : ''}`}>
                     <td className="px-3 py-2 whitespace-nowrap">
@@ -298,8 +370,29 @@ export default function ProductInventoryPage() {
                       </span>
                       {zero && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-300 border border-red-500/30">out</span>}
                       {!zero && low && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">low</span>}
+                      {/* For a refillable, on hand is what is FILLED — the
+                          bottles that can go out today. Said here, because the
+                          same word means every bottle on the other rows. */}
+                      {refillable && <span className="block text-[10px] text-slate-500">filled &amp; ready</span>}
                     </td>
-                    <td className="px-3 py-2 text-green-300/80 tabular-nums text-xs">{fmtQty(p.stock.in + p.stock.returned)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {refillable ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className={`tabular-nums text-xs font-semibold ${
+                            p.stock.empty < 0 ? 'text-rose-300' : p.stock.empty > 0 ? 'text-cyan-300' : 'text-slate-500'}`}>
+                            {fmtQty(p.stock.empty)}
+                          </span>
+                          {canPost && (
+                            <button onClick={() => openEmpties(p)}
+                              title="Empty bottles — refill some, or correct the count"
+                              className="btn-ghost p-1 text-cyan-400 hover:text-cyan-200">
+                              <RefreshCcw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </span>
+                      ) : <span className="text-slate-700 text-xs">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-green-300/80 tabular-nums text-xs">{fmtQty(p.stock.in + p.stock.returned + p.stock.refill)}</td>
                     <td className="px-3 py-2 text-amber-300/80 tabular-nums text-xs">{fmtQty(p.stock.out)}</td>
                     <td className="px-3 py-2 text-brand-300/80 tabular-nums text-xs">{fmtQty(p.stock.sold)}</td>
                     <td className="px-3 py-2 text-slate-400 tabular-nums text-xs">{num(p.reorder_level) || '—'}</td>
@@ -337,6 +430,9 @@ export default function ProductInventoryPage() {
               <span className="font-mono text-[11px] text-slate-500">{history.code}</span>
               <span className="ml-auto text-xs text-slate-400 tabular-nums">
                 On hand <b className="text-slate-100">{fmtQty(byId.get(history.id)?.onHand || 0)}</b>
+                {isRefillable(history) && (
+                  <> · Empty <b className="text-cyan-300">{fmtQty(byId.get(history.id)?.empty || 0)}</b></>
+                )}
               </span>
               {canPost && (
                 <button onClick={() => { setHistory(null); openMove(history, 'in') }}
@@ -447,7 +543,7 @@ export default function ProductInventoryPage() {
               <div>
                 <label className="label">Movement</label>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {MOVEMENT_TYPES.map(t => (
+                  {handMovementTypes(moveFor).map(t => (
                     <button key={t.value} type="button"
                       onClick={() => setDraft(d => ({ ...d, movement_type: t.value }))}
                       className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
@@ -461,6 +557,15 @@ export default function ProductInventoryPage() {
                 <p className="text-[11px] text-slate-500 mt-1.5">
                   {MOVEMENT_TYPES.find(t => t.value === draft.movement_type)?.hint}
                 </p>
+                {/* The mistake this prevents: recording a refill as Stock in.
+                    It would add filled bottles but leave the empties where
+                    they were, so the empties would never go down. */}
+                {isRefillable(moveFor) && draft.movement_type === 'in' && (
+                  <p className="text-[11px] text-cyan-300/90 mt-1.5">
+                    Stock in is for bottles bought new, full. Refilling your own empties is the
+                    <RefreshCcw className="inline w-3 h-3 mx-1 align-[-2px]" />button in the Empty column.
+                  </p>
+                )}
 
                 {/* An adjustment is the only entry where the SIGN is the whole
                     meaning, and the only one that can read as the opposite of
@@ -550,6 +655,133 @@ export default function ProductInventoryPage() {
           </div>
         </div>
       )}
+
+      {/* ── Empty bottles: refill, or correct the count ──────────── */}
+      {emptyFor && (() => {
+        const refill = emptyDraft.mode === 'refill'
+        const q = num(emptyDraft.quantity)
+        return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[75] p-4">
+          <div className="card w-full max-w-md flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-100 truncate">{emptyFor.name} — empties</h3>
+                <p className="text-[11px] text-slate-500 tabular-nums">
+                  Filled {fmtQty(filledNow)} · <span className="text-cyan-300">Empty {fmtQty(emptyNow)}</span> {emptyFor.unit_of_measure || ''}
+                </p>
+              </div>
+              <button onClick={() => setEmptyFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { v: 'refill', label: 'Refill empties', Icon: RefreshCcw },
+                  { v: 'count',  label: 'Correct empty count', Icon: ClipboardCheck },
+                ].map(({ v, label, Icon }) => (
+                  <button key={v} type="button"
+                    onClick={() => { setEmptyDraft(d => ({ ...d, mode: v })); setFormErr('') }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
+                      emptyDraft.mode === v
+                        ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30'
+                        : 'text-slate-400 border-surface-border hover:bg-surface-hover'}`}>
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" /> {label}
+                  </button>
+                ))}
+              </div>
+
+              {refill ? (
+                <>
+                  <p className="text-[11px] text-slate-500">
+                    Empties sent to be refilled and back full — they leave the empties and are ready to sell again.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Quantity refilled *</label>
+                      <input type="number" min="0" step="1" className="input" autoFocus value={emptyDraft.quantity}
+                        onChange={e => setEmptyDraft(d => ({ ...d, quantity: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="label">Refill cost / unit</label>
+                      <div className="relative">
+                        <input type="number" min="0" step="0.01" className="input pr-12" value={emptyDraft.unit_cost}
+                          onChange={e => setEmptyDraft(d => ({ ...d, unit_cost: e.target.value }))} />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{emptyFor.currency || 'USD'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] tabular-nums text-slate-300">
+                    {q > 0 ? (
+                      <>
+                        Empty {fmtQty(emptyNow)} → <span className={emptyNow - q < 0 ? 'text-rose-300 font-semibold' : 'text-cyan-300 font-semibold'}>{fmtQty(emptyNow - q)}</span>
+                        <span className="text-slate-600"> · </span>
+                        Filled {fmtQty(filledNow)} → <span className="text-brand-300 font-semibold">{fmtQty(filledNow + q)}</span>
+                      </>
+                    ) : <span className="text-slate-500">Enter a quantity to see where it lands.</span>}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] text-slate-500">
+                    Count the empty bottles and enter the number you counted — not the difference. The
+                    system records the correction. Filled stock is not touched.
+                  </p>
+                  <div>
+                    <label className="label">Empties counted *</label>
+                    <input type="number" min="0" step="1" className="input" autoFocus value={emptyDraft.counted}
+                      onChange={e => setEmptyDraft(d => ({ ...d, counted: e.target.value }))} />
+                  </div>
+                  <p className="text-[11px] tabular-nums text-slate-300">
+                    {emptyDraft.counted !== '' ? (
+                      <>
+                        The system says {fmtQty(emptyNow)} → you counted <span className="text-cyan-300 font-semibold">{fmtQty(num(emptyDraft.counted))}</span>
+                        <span className="text-slate-500"> ({countDiff > 0 ? '+' : ''}{fmtQty(countDiff)})</span>
+                      </>
+                    ) : <span className="text-slate-500">The system says {fmtQty(emptyNow)}.</span>}
+                  </p>
+                </>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">{refill ? 'Invoice / reference' : 'Reference'}</label>
+                  <input className="input" placeholder={refill ? 'Refill invoice no.' : 'Count sheet…'} value={emptyDraft.reference}
+                    onChange={e => setEmptyDraft(d => ({ ...d, reference: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Date</label>
+                  <input type="datetime-local" className="input" value={emptyDraft.moved_at ? emptyDraft.moved_at.slice(0, 16) : ''}
+                    onChange={e => setEmptyDraft(d => ({ ...d, moved_at: e.target.value ? new Date(e.target.value).toISOString() : '' }))} />
+                  <p className="text-[11px] text-slate-500 mt-1">Empty = now.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Notes</label>
+                <input className="input" placeholder={refill ? 'Supplier or station, anything worth keeping' : ''} value={emptyDraft.notes}
+                  onChange={e => setEmptyDraft(d => ({ ...d, notes: e.target.value }))} />
+              </div>
+
+              {formErr && (
+                <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-300 text-xs">{formErr}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
+              <button onClick={() => setEmptyFor(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button onClick={postEmpties} disabled={saving} className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
+                {saving ? <Loader className="w-4 h-4 animate-spin" />
+                  : refill ? <RefreshCcw className="w-4 h-4" /> : <ClipboardCheck className="w-4 h-4" />}
+                {refill ? 'Record refill' : 'Record count'}
+              </button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
     </div>
   )
 }

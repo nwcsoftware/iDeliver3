@@ -171,6 +171,11 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal, form.is_retail, form.is_returnable, form.is_service, form.is_advertisement])
 
+  /* Refillable (fix166) is offered only once the database has the column —
+     sending it to a database without one would fail the whole save. Rows are
+     read with every column, so any row says whether it is there. */
+  const hasRefillColumns = products.some(p => 'is_refillable' in p)
+
   /* Adding has no history, so the tab bar is hidden and details is the only
      pane; guarding here means a stale 'history' can never leave a blank form. */
   const activeTab = (modal !== 'add' && tab === 'history') ? 'history' : 'details'
@@ -188,7 +193,7 @@ export default function ProductsPage() {
       options: itemOptions(p),
       combos:  Array.isArray(p.combos) ? p.combos : [],
     })
-    setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName(''); setSizeInput('')
+    setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName('')
   }
   function closeModal() { setTab('details'); setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('') }
 
@@ -292,6 +297,25 @@ export default function ProductsPage() {
     setProgress({ state: 'busy', text: 'Checking code…' })
 
     const stocked = isStockedKind(kind)   // only Retail + Returnable carry stock
+
+    /* Two dates the stock rules read (fix166), each stamped at the moment it
+       starts to be true — never typed, never moved afterwards:
+         refillable_since  returns from now on come back EMPTY; earlier ones
+                           stay where they were posted
+         returnable_since  an item that was sold outright becomes returnable:
+                           the bottles it sold before were never going to be
+                           recorded back, so Returnable Items does not chase
+                           them */
+    function refillFields(k) {
+      const was = modal !== 'add' ? modal : null
+      const refillable = k === 'returnable' && !!form.is_refillable
+      const now = new Date().toISOString()
+      return {
+        is_refillable: refillable,
+        ...(refillable && !was?.is_refillable ? { refillable_since: now } : {}),
+        ...(k === 'returnable' && was && !was.is_returnable ? { returnable_since: now } : {}),
+      }
+    }
     const payload = {
       ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
       name:             form.name.trim(),
@@ -319,6 +343,7 @@ export default function ProductsPage() {
       sizes:            mirror.sizes,
       // Whether customers see it in the 3asari3 shop (fix115).
       is_displayed:     !!form.is_displayed,
+      ...(hasRefillColumns ? refillFields(kind) : {}),
     }
 
     let err = null
@@ -773,6 +798,19 @@ export default function ProductsPage() {
                 )}
                 {form.is_returnable && (
                   <p className="text-[10px] text-amber-300/80 mt-1">Stock goes out when the order closes and comes back when the item is marked returned on the Returnable Items page (e.g. shisha, gas cylinders).</p>
+                )}
+                {form.is_returnable && hasRefillColumns && (
+                  <label className="flex items-start gap-2.5 mt-2 cursor-pointer">
+                    <input type="checkbox" className="w-4 h-4 accent-cyan-500 mt-0.5" checked={!!form.is_refillable}
+                      onChange={e => fld('is_refillable', e.target.checked)} />
+                    <span className="text-sm text-slate-200">
+                      Refillable
+                      <span className="block text-[11px] text-slate-500">
+                        A gas cylinder, a 20 L water bottle: it comes back EMPTY and is not for sale again until it is
+                        refilled. Inventory then shows filled and empty apart, with a refill button beside the empties.
+                      </span>
+                    </span>
+                  </label>
                 )}
               </div>
             </div>

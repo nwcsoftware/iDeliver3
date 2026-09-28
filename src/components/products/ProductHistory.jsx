@@ -4,7 +4,7 @@ import {
 } from 'recharts'
 import { Loader2, TrendingUp, ShoppingCart, Truck, AlertCircle, Boxes } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { MOVEMENT_TYPES, movementLabel } from '../../lib/productStock'
+import { movementLabel, movementEffect, fetchProductMovements, isRefillable } from '../../lib/productStock'
 
 /* What this item has cost and what it has sold for.
  *
@@ -87,16 +87,15 @@ export default function ProductHistory({ product }) {
           .eq('product_id', product.id)
           .order('added_at', { ascending: false })
           .limit(500),
-        supabase.from('product_movements')
-          .select('id, movement_type, quantity, unit_cost, currency, reference, notes, moved_at, created_by_name, order_id')
-          .eq('product_id', product.id)
-          .order('moved_at', { ascending: false })
-          .limit(500),
+        /* Every movement, paged. This used to stop at the latest 500, and the
+           on-hand below is a sum of them: Arguile had 783, so its figure here
+           disagreed with the Inventory page. Same fetch that page uses. */
+        fetchProductMovements(null, product.id),
       ])
       if (pi.error) throw new Error(pi.error.message)
       if (oi.error) throw new Error(oi.error.message)
       // A missing ledger is not an error worth blocking the rest of the form.
-      setMoves(mv.error ? [] : (mv.data ?? []))
+      setMoves(mv.error ? [] : (mv.rows ?? []))
 
       setPurchases((pi.data ?? []).map(r => ({
         id: r.id,
@@ -145,10 +144,9 @@ export default function ProductHistory({ product }) {
   /* On hand from the ledger — the same signs the Inventory page uses, so the
      two can never show different numbers for the same shelf. Not filtered by
      currency: a count is a count. */
-  const onHand = useMemo(() => Math.round(moves.reduce((n, m) => {
-    const sign = MOVEMENT_TYPES.find(t => t.value === m.movement_type)?.sign ?? 1
-    return n + (Number(m.quantity) || 0) * sign
-  }, 0) * 100) / 100, [moves])
+  const onHand = useMemo(() => Math.round(moves.reduce((n, m) => n + movementEffect(m).filled, 0) * 100) / 100, [moves])
+  const empty  = useMemo(() => Math.round(moves.reduce((n, m) => n + movementEffect(m).empty,  0) * 100) / 100, [moves])
+  const refillable = isRefillable(product)
 
   const buys  = purchases.filter(p => p.currency === currency)
   const sells = sales.filter(s => s.currency === currency)
@@ -257,6 +255,9 @@ export default function ProductHistory({ product }) {
           <span className="text-[11px] text-slate-500">{moves.length}</span>
           <span className="text-[11px] text-slate-400 ml-auto tabular-nums">
             On hand <span className={onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{onHand}</span>
+            {refillable && (
+              <> · Empty <span className={empty < 0 ? 'text-rose-300 font-semibold' : 'text-cyan-300 font-semibold'}>{empty}</span></>
+            )}
           </span>
         </div>
         <div className="card overflow-hidden">
@@ -275,14 +276,15 @@ export default function ProductHistory({ product }) {
                 {moves.length === 0 ? (
                   <tr><td colSpan={5} className="px-3 py-5 text-center text-slate-600">Nothing has moved on the shelf.</td></tr>
                 ) : moves.map(m => {
-                  const sign = MOVEMENT_TYPES.find(t => t.value === m.movement_type)?.sign ?? 1
-                  const eff  = (Number(m.quantity) || 0) * sign
+                  const { filled: eff, empty: effEmpty } = movementEffect(m)
+                  const signed = v => (v > 0 ? `+${v}` : `${v}`)
                   return (
                     <tr key={m.id} className="border-b border-surface-border/50 last:border-0">
                       <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{String(m.moved_at || '').slice(0, 10)}</td>
                       <td className="px-3 py-1.5 text-slate-300">{movementLabel(m.movement_type)}</td>
-                      <td className={`px-3 py-1.5 text-right tabular-nums ${eff < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
-                        {eff > 0 ? `+${eff}` : eff}
+                      <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap ${eff < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+                        {eff !== 0 || !effEmpty ? signed(eff) : null}
+                        {effEmpty ? <span className="text-cyan-300">{eff !== 0 ? ' · ' : ''}{signed(effEmpty)} empty</span> : null}
                       </td>
                       <td className="px-3 py-1.5 text-slate-500 font-mono text-[11px]">{m.reference || '—'}</td>
                       <td className="px-3 py-1.5 text-slate-500">{m.created_by_name || '—'}</td>

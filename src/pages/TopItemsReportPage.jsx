@@ -153,14 +153,15 @@ export default function TopItemsReportPage() {
       : (data ?? [])
     setLines(rows)
 
-    /* What came IN, so the table can put bought beside sold. Stock-in
-       movements only — 'in' and nothing else. A return to the shelf, an
-       adjustment or an opening balance are not purchases, and folding them in
-       here would quietly inflate the figure. */
+    /* What came IN, so the table can put bought beside sold. Stock in, and a
+       refill (fix166) — the gas or the water in a refilled bottle was bought
+       just the same. A return to the shelf, an adjustment or an opening
+       balance are not purchases, and folding them in here would quietly
+       inflate the figure. */
     const { data: mv } = await fetchAllRows(() => {
       let q = supabase.from('product_movements')
         .select('product_id, quantity, moved_at, movement_type')
-        .eq('movement_type', 'in')
+        .in('movement_type', ['in', 'refill'])
         .order('id')
       if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
       return q
