@@ -9,6 +9,7 @@ import { isCancelledOrder } from '../lib/orderStatus'
 import { isCreditOrder } from '../lib/subAccounts'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
+import { syncOrderStock } from '../lib/productStock'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -124,7 +125,7 @@ function orderDate(o) {
 /* ── page ─────────────────────────────────────────────────── */
 
 export default function DriverDuesPage() {
-  const { orders, drivers, loading, fetchOrders, showSummary, loadFullOrderHistory } = useApp()
+  const { orders, drivers, loading, fetchOrders, showSummary, loadFullOrderHistory, COMPANY_ID } = useApp()
   const { currentUser, hasRole } = useAuth()
 
   // Driver balances span the whole history, so pull every order (beyond the window).
@@ -612,6 +613,8 @@ export default function DriverDuesPage() {
         })
         .in('id', closedIds)
       if (ue) { fail(ue.message); return }
+      setProgress({ pct: 66, label: 'Updating stock…', phase: 'run' })
+      await postStock(closedIds)
     }
 
     // Refresh in place while the overlay stays up, so the underlying list's
@@ -630,6 +633,24 @@ export default function DriverDuesPage() {
     setCollectRows([]); setPosting(false); setProgress(null)
   }
 
+  /* CLOSING AN ORDER TAKES ITS GOODS OFF THE SHELF — whichever page does it.
+     Settling a driver closes orders here, and this page used to set the flag
+     and nothing else: 98 orders closed this way between July and September
+     never took their stock off the shelf, so on-hand read high for every
+     product sold through a driver. syncOrderStock is the same function the
+     Orders page calls; it recomputes what an order should have posted, so it
+     is right after a close, a reopen, or a repeat, and never counts twice.
+     A failure is logged rather than undoing the close — the money side has
+     already happened, and the stock can be re-synced by saving the order. */
+  async function postStock(orderIds) {
+    for (const id of orderIds) {
+      const err = await syncOrderStock(id, {
+        companyId: COMPANY_ID, userId: currentUser?.user_id || null, userName: currentUserName,
+      })
+      if (err) console.warn('Could not update stock for order', id, err)
+    }
+  }
+
   /* ── mark an order as closed ─────────────────────────────────
      Only allowed once the cash has been collected from the driver (a settlement
      line exists) and nothing is pending — i.e. the order balance is zero. Locks
@@ -646,6 +667,7 @@ export default function DriverDuesPage() {
       .from('delivery_orders')
       .update({ isclosed: true, closed_at: closedAt, closed_by: currentUser?.user_id || null, closed_by_name: currentUserName })
       .eq('id', orderId)
+    if (!error) await postStock([orderId])
     setClosingId(null)
     if (!error) await fetchOrders()
   }
@@ -659,6 +681,7 @@ export default function DriverDuesPage() {
       .from('delivery_orders')
       .update({ isclosed: false, closed_at: null, closed_by: null, closed_by_name: null })
       .eq('id', orderId)
+    if (!error) await postStock([orderId])   // reopened: its sold movement is withdrawn
     setClosingId(null)
     if (!error) await fetchOrders()
   }

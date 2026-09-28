@@ -117,5 +117,9 @@ What that means when building:
   mistake being avoided. Code that reads as obvious needs none.
 - There is **no error boundary** in this app. A render error blanks the whole
   screen with no message, so a wrong data shape looks like a dead app.
+- **Anything that closes or reopens an order must call `syncOrderStock(orderId)`**
+  (lib/productStock). Driver Settlements closed orders without it for three
+  months, and 98 orders' goods never left the shelf. Whether a product's sale
+  reduces stock is `salesReduceStock()` — never re-derive it from the flags.
 - Prefer one shared calculation over two that agree today. Where two pages show
   the same figure, they should be reading the same function.
