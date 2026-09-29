@@ -41,17 +41,19 @@ export function useTableSort(value) {
 }
 
 /* One header cell. `sortKey` omitted = a plain, unsortable heading (an actions
-   column, say). */
-export function SortTh({ label, sortKey = null, sort, onSort, className = '', align = 'left' }) {
+   column, say). `hint` says what the column means; it is shown above the sort
+   instruction on hover, so explaining a column never costs its sorting. */
+export function SortTh({ label, sortKey = null, sort, onSort, className = '', align = 'left', hint = '' }) {
   const active = sortKey && sort.key === sortKey
   const base = `px-3 py-2 font-medium bg-surface-card text-${align}`
-  if (!sortKey) return <th className={`${base} ${className}`}>{label}</th>
+  if (!sortKey) return <th className={`${base} ${className}`} title={hint || undefined}>{label}</th>
+  const how = active
+    ? (sort.dir === 'asc' ? 'Sorted A→Z — click for Z→A' : 'Sorted Z→A — click to clear')
+    : `Sort by ${label}`
   return (
     <th className={`${base} ${className}`}>
       <button type="button" onClick={() => onSort(sortKey)}
-        title={active
-          ? (sort.dir === 'asc' ? 'Sorted A→Z — click for Z→A' : 'Sorted Z→A — click to clear')
-          : `Sort by ${label}`}
+        title={hint ? `${hint}\n${how}` : how}
         className={`inline-flex items-center gap-1 uppercase tracking-wider transition-colors ${
           active ? 'text-brand-300' : 'hover:text-slate-300'}`}>
         {label}

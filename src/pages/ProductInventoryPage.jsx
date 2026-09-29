@@ -30,6 +30,7 @@ import {
 } from '../lib/productStock'
 import { isStrictAdmin, canEditProducts } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
+import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
 const num = n => Number(n) || 0
 const fmtQty = n => Number(num(n).toFixed(2)).toLocaleString()
@@ -170,6 +171,29 @@ export default function ProductInventoryPage() {
       })
   }, [products, byId, search, onlyLow])
 
+  /* What each column sorts BY: the number the cell shows, not its text, so 9
+     sorts before 10. A product with no empties or no reorder level has a blank,
+     and blanks sink to the bottom whichever way the column is sorted. */
+  const sortValue = useCallback((p, key) => {
+    const refill = isRefillable(p)
+    switch (key) {
+      case 'code':      return (p.code || '').toLowerCase()
+      case 'product':   return (p.name || '').toLowerCase()
+      case 'category':  return p.category?.name ? p.category.name.toLowerCase() : null
+      case 'onHand':    return refill ? p.stock.onHand + p.stock.empty : p.stock.onHand
+      case 'available': return p.stock.onHand
+      case 'empty':     return refill ? p.stock.empty : null
+      case 'in':        return p.stock.in + p.stock.returned + p.stock.refill
+      case 'out':       return p.stock.out
+      case 'sold':      return p.stock.sold
+      case 'reorder':   return num(p.reorder_level) || null
+      case 'last':      return p.stock.lastMovedAt || null
+      default:          return null
+    }
+  }, [])
+  const { sort, cycle, sortRows } = useTableSort(sortValue)
+  const shown = useMemo(() => sortRows(rows), [sortRows, rows])
+
   const totals = useMemo(() => {
     const lowCount = products.filter(p => isLow(p, byId.get(p.id)?.onHand || 0)).length
     const outCount = products.filter(p => (byId.get(p.id)?.onHand || 0) <= 0).length
@@ -278,13 +302,11 @@ export default function ProductInventoryPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    /* The page itself does not scroll: the stock sheet does, inside its card,
+       so its header stays in place while a long list is read. */
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <Boxes className="w-5 h-5 text-brand-400" />
-          <span className="text-[11px] text-slate-500">3asari3 products</span>
-        </div>
+      <div className="flex items-center gap-3 flex-wrap flex-shrink-0">
         <div className="relative flex-1 max-w-sm">
           <SearchField
             value={search}
@@ -305,14 +327,14 @@ export default function ProductInventoryPage() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+        <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg flex-shrink-0">
           <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <p className="text-amber-200 text-xs leading-relaxed">{error}</p>
         </div>
       )}
 
       {/* Headline figures */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
         <div className="card p-3">
           <p className="text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
             <Package className="w-3.5 h-3.5" /> Products stocked
@@ -349,25 +371,31 @@ export default function ProductInventoryPage() {
       </div>
 
       {/* The stock sheet */}
-      <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1 min-h-0">
           <table className="w-full text-sm min-w-[900px]">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-surface-card">
               <tr className="border-b border-surface-border">
-                {['Code', 'Product', 'Category', 'On hand', 'Available', 'Empty', 'In', 'Out', 'Sold', 'Reorder at', 'Last movement', ''].map(h => (
-                  <th key={h} title={COLUMN_HINT[h]}
-                    className={`text-left px-3 py-2.5 text-slate-500 text-[11px] font-medium uppercase tracking-wider whitespace-nowrap ${COLUMN_HINT[h] ? 'cursor-help' : ''}`}>{h}</th>
+                {[
+                  ['Code', 'code'], ['Product', 'product'], ['Category', 'category'],
+                  ['On hand', 'onHand'], ['Available', 'available'], ['Empty', 'empty'],
+                  ['In', 'in'], ['Out', 'out'], ['Sold', 'sold'],
+                  ['Reorder at', 'reorder'], ['Last movement', 'last'], ['', null],
+                ].map(([label, key]) => (
+                  <SortTh key={label || 'actions'} label={label} sortKey={key} sort={sort} onSort={cycle}
+                    hint={COLUMN_HINT[label]}
+                    className="py-2.5 text-slate-500 text-[11px] uppercase tracking-wider whitespace-nowrap" />
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
-              ) : rows.length === 0 ? (
+              ) : shown.length === 0 ? (
                 <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">
                   {onlyLow ? 'Nothing is below its reorder level.' : 'No products found.'}
                 </td></tr>
-              ) : rows.map(p => {
+              ) : shown.map(p => {
                 const low  = isLow(p, p.stock.onHand)
                 const zero = p.stock.onHand <= 0
                 const refillable = isRefillable(p)
