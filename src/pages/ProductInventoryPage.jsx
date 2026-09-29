@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Boxes,
   AlertCircle,
@@ -27,7 +28,7 @@ import {
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
   movementDeleteRight, isRefillable, handMovementTypes,
 } from '../lib/productStock'
-import { isStrictAdmin } from '../lib/roles'
+import { isStrictAdmin, canEditProducts } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 
 const num = n => Number(n) || 0
@@ -102,6 +103,10 @@ export default function ProductInventoryPage() {
   const isSuperAdmin  = hasRole('super_admin')
   const strictAdmin   = isStrictAdmin(currentUser?.role)
   const canDeleteAny  = isSuperAdmin || strictAdmin
+  const navigate = useNavigate()
+  // The product form itself decides what this user may change (lib/roles);
+  // here it only names the click honestly.
+  const canEditProduct = canEditProducts(currentUser?.role)
 
   const [products,  setProducts]  = useState([])
   const [movements, setMovements] = useState([])
@@ -367,11 +372,13 @@ export default function ProductInventoryPage() {
                 return (
                   <tr key={p.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/30 ${p.is_active === false ? 'opacity-60' : ''}`}>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      {/* The code is what everyone points at, so it is what opens
-                          the item. The button in the last column still does the
-                          same thing, for anyone who learned it there. */}
-                      <button type="button" onClick={() => setHistory(p)}
-                        title={`${p.name} — movements and monthly sales`}
+                      {/* The code is what everyone points at, so it opens the
+                          product itself — the same form as the Products page,
+                          with the same rules for who may change it — and closing
+                          it comes back here. Movements and monthly sales stay on
+                          the clock button at the end of the row. */}
+                      <button type="button" onClick={() => navigate(`/products?open=${p.id}&from=inventory`)}
+                        title={`${p.name} — ${canEditProduct ? 'open the product to view or edit' : 'view the product'}`}
                         className="font-mono text-xs text-slate-400 hover:text-brand-300 hover:underline transition-colors">
                         {p.code || '—'}
                       </button>

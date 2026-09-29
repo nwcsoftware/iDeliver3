@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus,
   Edit2,
+  Eye,
+  Lock,
   Power,
   X,
   Check,
@@ -24,6 +27,8 @@ import { uploadShopImage, removeShopImage } from '../lib/shopMedia'
 import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
 import { itemOptions, legacyMirror, choiceGroups } from '../lib/shopOptions'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { canEditProducts, canSeeProductCosts } from '../lib/roles'
 import {
   generateProductCode, insertProductWithUniqueCode,
   productKind, codePrefix, codeMatchesPrefix, kindFlags, isStockedKind,
@@ -76,6 +81,19 @@ const MAX_IMAGES = 3
 
 export default function ProductsPage() {
   const { COMPANY_ID } = useApp()
+  const { currentUser } = useAuth()
+  /* Who may change the catalog, and who may see what it costs (lib/roles).
+     Everyone else opens the same form read-only. This is the screen, not the
+     database: every client writes under the one anon key, so a determined user
+     could still reach the table — the rule keeps honest mistakes out. */
+  const canEdit  = canEditProducts(currentUser?.role)
+  const showCost = canSeeProductCosts(currentUser?.role)
+  const readOnly = !canEdit
+  const tabs = PRODUCT_TABS.filter(t => showCost || t.value !== 'history')
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Where to go when the form closes — set when another page opened it.
+  const [returnTo, setReturnTo] = useState(null)
 
   const [products,    setProducts]    = useState([])
   const [categories,  setCategories]  = useState([])
@@ -178,7 +196,7 @@ export default function ProductsPage() {
 
   /* Adding has no history, so the tab bar is hidden and details is the only
      pane; guarding here means a stale 'history' can never leave a blank form. */
-  const activeTab = (modal !== 'add' && tab === 'history') ? 'history' : 'details'
+  const activeTab = (modal !== 'add' && tab === 'history' && showCost) ? 'history' : 'details'
 
   function openAdd()    { setTab('details'); setForm(EMPTY_FORM); setError(''); setProgress(null); setModal('add'); setAddingCat(false); setNewCatName('') }
   function openEdit(p)  {
@@ -195,7 +213,26 @@ export default function ProductsPage() {
     })
     setError(''); setProgress(null); setModal(p); setAddingCat(false); setNewCatName('')
   }
-  function closeModal() { setTab('details'); setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('') }
+  function closeModal() {
+    setTab('details'); setModal(null); setForm(EMPTY_FORM); setError(''); setProgress(null); setAddingCat(false); setNewCatName('')
+    // Opened from another page (Inventory's product code): go back there.
+    if (returnTo) { const to = returnTo; setReturnTo(null); navigate(to) }
+  }
+
+  /* ?open=<product id> — how the Inventory page opens this form. The address
+     is cleared as soon as it is read, so a refresh or Back does not reopen the
+     form over and over. */
+  useEffect(() => {
+    const id = searchParams.get('open')
+    if (!id || loading) return
+    const from = searchParams.get('from')
+    setSearchParams({}, { replace: true })
+    const p = products.find(x => x.id === id)
+    if (!p) return
+    openEdit(p)
+    if (from === 'inventory') setReturnTo('/inventory')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, loading, products])
 
   /* Photos, colours and sizes — the same rules as the supplier's shop items, so
      a product presents identically wherever it is sold. */
@@ -237,7 +274,7 @@ export default function ProductsPage() {
   /* Create a new product category inline and select it for this product. */
   async function createCategory() {
     const name = newCatName.trim()
-    if (!name) return
+    if (!name || !canEdit) return
     setCatBusy(true)
     const { data, error: e } = await supabase
       .from('product_categories')
@@ -252,7 +289,7 @@ export default function ProductsPage() {
   }
 
   async function handleSave() {
-    if (saving) return                                   // guard against double-clicks
+    if (saving || !canEdit) return                       // double-clicks; and a read-only form never writes
     if (!form.name.trim()) return setError('Product name is required.')
 
     const cleanOptions = form.options
@@ -395,6 +432,7 @@ export default function ProductsPage() {
   }
 
   async function toggleActive(p) {
+    if (!canEdit) return
     setToggling(p.id)
     await supabase.from('products').update({ is_active: !p.is_active }).eq('id', p.id)
     await fetchProducts()
@@ -437,9 +475,11 @@ export default function ProductsPage() {
           ))}
         </div>
 
-        <button className="btn-primary ml-auto" onClick={openAdd}>
-          <Plus className="w-4 h-4" /> Add Product
-        </button>
+        {canEdit && (
+          <button className="btn-primary ml-auto" onClick={openAdd}>
+            <Plus className="w-4 h-4" /> Add Product
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -447,16 +487,16 @@ export default function ProductsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border">
-              {['Product', 'Category', 'Unit', 'Cost', 'Price', 'Flags', 'Status', ''].map(h => (
+              {['Product', 'Category', 'Unit', ...(showCost ? ['Cost'] : []), 'Price', 'Flags', 'Status', ''].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={showCost ? 8 : 7} className="px-4 py-10 text-center text-slate-500">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No products found</td></tr>
+              <tr><td colSpan={showCost ? 8 : 7} className="px-4 py-10 text-center text-slate-500">No products found</td></tr>
             ) : visible.map(p => (
               <tr key={p.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${!p.is_active ? 'opacity-50' : ''}`}>
 
@@ -485,9 +525,11 @@ export default function ProductsPage() {
                 <td className="px-4 py-3 text-slate-400 text-xs">{p.unit_of_measure}</td>
 
                 {/* Cost */}
-                <td className="px-4 py-3 text-slate-400 text-xs">
-                  {p.unit_cost > 0 ? `${p.currency} ${Number(p.unit_cost).toFixed(2)}` : <span className="text-slate-600">—</span>}
-                </td>
+                {showCost && (
+                  <td className="px-4 py-3 text-slate-400 text-xs">
+                    {p.unit_cost > 0 ? `${p.currency} ${Number(p.unit_cost).toFixed(2)}` : <span className="text-slate-600">—</span>}
+                  </td>
+                )}
 
                 {/* Price */}
                 <td className="px-4 py-3 text-slate-100 text-xs font-medium">
@@ -521,19 +563,21 @@ export default function ProductsPage() {
                 {/* Actions */}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openEdit(p)} className="btn-ghost p-1.5 text-slate-500" title="Edit">
-                      <Edit2 className="w-4 h-4" />
+                    <button onClick={() => openEdit(p)} className="btn-ghost p-1.5 text-slate-500" title={canEdit ? 'Edit' : 'View'}>
+                      {canEdit ? <Edit2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    <button
-                      onClick={() => toggleActive(p)}
-                      disabled={toggling === p.id}
-                      className={`btn-ghost p-1.5 ${p.is_active
-                        ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10'
-                        : 'text-slate-500 hover:text-green-400 hover:bg-green-500/10'}`}
-                      title={p.is_active ? 'Deactivate' : 'Activate'}
-                    >
-                      <Power className="w-4 h-4" />
-                    </button>
+                    {canEdit && (
+                      <button
+                        onClick={() => toggleActive(p)}
+                        disabled={toggling === p.id}
+                        className={`btn-ghost p-1.5 ${p.is_active
+                          ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10'
+                          : 'text-slate-500 hover:text-green-400 hover:bg-green-500/10'}`}
+                        title={p.is_active ? 'Deactivate' : 'Activate'}
+                      >
+                        <Power className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -553,8 +597,14 @@ export default function ProductsPage() {
             activeTab === 'history' ? 'max-w-4xl' : 'max-w-lg'}`}>
 
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-100">
-                {modal === 'add' ? 'Add Product' : 'Edit Product'}
+              <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
+                {modal === 'add' ? 'Add Product' : readOnly ? 'Product' : 'Edit Product'}
+                {readOnly && modal !== 'add' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border border-surface-border text-slate-400"
+                    title="Only an administrator can change a product.">
+                    <Lock className="w-3 h-3" /> View only
+                  </span>
+                )}
               </h2>
               <button onClick={closeModal} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
@@ -563,9 +613,9 @@ export default function ProductsPage() {
                 another, and side by side they crowded each other. Validation and
                 the Save button live outside the tabs, so they are reachable from
                 either. Add has no history yet, so it shows no tab bar at all. */}
-            {modal !== 'add' && (
+            {modal !== 'add' && tabs.length > 1 && (
               <div className="flex items-center gap-1 border-b border-surface-border -mx-6 px-6 overflow-x-auto">
-                {PRODUCT_TABS.map(t => (
+                {tabs.map(t => (
                   <button key={t.value} type="button" onClick={() => setTab(t.value)}
                     className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${
                       activeTab === t.value
@@ -577,7 +627,11 @@ export default function ProductsPage() {
               </div>
             )}
 
-            <div className={activeTab === 'details' ? 'space-y-3' : 'hidden'}>
+            {/* One switch for the whole pane: a disabled fieldset disables every
+                control inside it — inputs, selects, the option editor — so a
+                field added to this form later is read-only too without anybody
+                remembering to say so. */}
+            <fieldset disabled={readOnly} className={activeTab === 'details' ? 'space-y-3 min-w-0 border-0 p-0 m-0' : 'hidden'}>
               {/* Code + Name */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -605,7 +659,7 @@ export default function ProductsPage() {
                 <div>
                   <div className="flex items-center justify-between">
                     <label className="label">Category</label>
-                    {!addingCat && (
+                    {!addingCat && canEdit && (
                       <button type="button" onClick={() => { setAddingCat(true); setNewCatName('') }}
                         className="text-[11px] text-brand-400 hover:text-brand-300 mb-1">
                         <Plus className="w-3 h-3 inline -mt-0.5" /> New
@@ -674,11 +728,13 @@ export default function ProductsPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label flex items-center gap-1"><DollarSign className="w-3 h-3" />Cost Price</label>
-                  <input type="number" min="0" step="0.01" className="input" value={form.unit_cost}
-                    onChange={e => fld('unit_cost', e.target.value)} placeholder="0.00" />
-                </div>
+                {showCost && (
+                  <div>
+                    <label className="label flex items-center gap-1"><DollarSign className="w-3 h-3" />Cost Price</label>
+                    <input type="number" min="0" step="0.01" className="input" value={form.unit_cost}
+                      onChange={e => fld('unit_cost', e.target.value)} placeholder="0.00" />
+                  </div>
+                )}
                 <div>
                   <label className="label flex items-center gap-1"><DollarSign className="w-3 h-3" />Selling Price</label>
                   <input type="number" min="0" step="0.01" className="input" value={form.unit_price}
@@ -706,13 +762,15 @@ export default function ProductsPage() {
                   {form.images.map((src, i) => (
                     <div key={i} className="relative w-20 h-20 flex-shrink-0">
                       <img src={src} alt="" className="w-20 h-20 rounded-md object-cover border border-surface-border" />
-                      <button type="button" onClick={() => removeImage(i)} title="Remove photo"
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500/90 text-white flex items-center justify-center hover:bg-red-500">
-                        <X className="w-3 h-3" />
-                      </button>
+                      {canEdit && (
+                        <button type="button" onClick={() => removeImage(i)} title="Remove photo"
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500/90 text-white flex items-center justify-center hover:bg-red-500">
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
                       {i === 0 ? (
                         <span className="absolute bottom-0 inset-x-0 text-[9px] text-center bg-brand-600/80 text-white rounded-b-md py-0.5">Cover</span>
-                      ) : (
+                      ) : !canEdit ? null : (
                         <button type="button" onClick={() => makeCover(i)} title="Use as cover photo"
                           className="absolute bottom-0 inset-x-0 text-[9px] text-center bg-slate-900/80 text-slate-300 rounded-b-md py-0.5 hover:text-white">
                           Make cover
@@ -729,7 +787,7 @@ export default function ProductsPage() {
                       )}
                     </div>
                   )}
-                  {form.images.length < MAX_IMAGES && !imgBusy && (
+                  {form.images.length < MAX_IMAGES && !imgBusy && canEdit && (
                     <label className="w-20 h-20 flex-shrink-0 rounded-md bg-surface-hover border border-dashed border-surface-border flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-500 hover:text-slate-300">
                       <Upload className="w-4 h-4" />
                       <span className="text-[10px]">Add photo</span>
@@ -742,7 +800,7 @@ export default function ProductsPage() {
                     </div>
                   )}
                 </div>
-                <p className="text-[10px] text-slate-500 mt-1.5">
+                <p className={`text-[10px] text-slate-500 mt-1.5 ${canEdit ? '' : 'hidden'}`}>
                   Up to {MAX_IMAGES} photos. The first is the cover shown in the customer app.
                   Pictures are resized and stored as files, so anything straight off a phone is fine.
                 </p>
@@ -813,7 +871,7 @@ export default function ProductsPage() {
                   </label>
                 )}
               </div>
-            </div>
+            </fieldset>
 
             {/* What this item has actually cost and sold for. Mounted only while
                 its tab is open, so opening a product does not fetch a history
@@ -845,12 +903,14 @@ export default function ProductsPage() {
             )}
 
             <div className="flex gap-3 justify-end pt-1">
-              <button className="btn-ghost" onClick={closeModal} disabled={saving}>Cancel</button>
-              <button className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed" onClick={handleSave}
-                disabled={saving || codeBusy || !form.name.trim()}>
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                {saving ? 'Saving…' : modal === 'add' ? 'Add Product' : 'Save Product'}
-              </button>
+              <button className="btn-ghost" onClick={closeModal} disabled={saving}>{readOnly ? 'Close' : 'Cancel'}</button>
+              {canEdit && (
+                <button className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed" onClick={handleSave}
+                  disabled={saving || codeBusy || !form.name.trim()}>
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {saving ? 'Saving…' : modal === 'add' ? 'Add Product' : 'Save Product'}
+                </button>
+              )}
             </div>
           </div>
         </div>

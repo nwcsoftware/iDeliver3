@@ -95,6 +95,9 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
                     and bypassing the payment / saved-invoice locks. The pages
                     stay open — the powers do not.
 
+     Products       readable, not editable (canEditProducts). Unlike Call
+                    Center, the rank still sees what a product costs.
+
    WHAT IS LEFT OF THE INHERITANCE, now that the list is this long: seeing the
    Administration menu (which holds one readable page for this rank) and
    reading Subscriptions. Nothing else administrative comes through it. When
@@ -128,6 +131,20 @@ export const canManageCustomerLogin = (role) =>
   roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 export const canRenameCustomerLogin = (role) => roleIsExactly(role, 'super_admin')
 export const canReopenClosedOrder = (role) => isStrictAdmin(role)
+
+/* The product catalog — the Products page, and the same form the Inventory page
+   opens from a product code. Changing it (price, cost, kind, options, adding a
+   product, switching one on or off) sets what every order is charged, so it is
+   the administrators'. Senior Call Center and Call Center open the same form
+   read-only. */
+export const canEditProducts = (role) => isStrictAdmin(role)
+
+/* What a product COSTS us: the cost price, the Cost column and the purchase
+   history behind it. The senior rank sees it; Call Center does not. Exact roles,
+   not inheritance — this is a grant, not something the rank picks up by being
+   "admin-like". */
+export const canSeeProductCosts = (role) =>
+  roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a
    person that way. */

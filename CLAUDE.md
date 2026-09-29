@@ -62,6 +62,8 @@ What that means when building:
   admin, editing the company, reactivating a cancelled order, erasing
   settlements, backdating, setting status by hand, bypassing the
   payment/invoice locks — the pages stay open, the powers do not.
+  Products are read-only below admin (`canEditProducts`); the senior rank still
+  sees costs, Call Center does not (`canSeeProductCosts`).
 - **Not** excluded: closing an order, and seeing the licence and expiry notices.
   An ordinary call-centre user does both, and this rank is an upgrade of that
   job, not a demotion from it. Check that before restricting anything else —
