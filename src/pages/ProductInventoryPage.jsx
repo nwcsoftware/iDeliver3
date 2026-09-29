@@ -219,6 +219,8 @@ export default function ProductInventoryPage() {
   const countDiff = Math.round((num(emptyDraft.counted) - emptyNow) * 100) / 100
 
   function openEmpties(product, mode = 'refill') {
+    // Nothing to refill: the refill button is greyed out, and this refuses too.
+    if (mode === 'refill' && (byId.get(product.id)?.empty || 0) <= 0) return
     setEmptyDraft(newEmptiesDraft(mode))
     setFormErr('')
     setEmptyFor(product)
@@ -412,12 +414,23 @@ export default function ProductInventoryPage() {
                             p.stock.empty < 0 ? 'text-rose-300' : p.stock.empty > 0 ? 'text-cyan-300' : 'text-slate-500'}`}>
                             {fmtQty(p.stock.empty)}
                           </span>
+                          {/* REFILL needs empties to refill, so it is off at 0 or
+                              below. The COUNT button is never off: an empty
+                              count of 0 (or less) is exactly when somebody has
+                              to be able to say "there are 12 in the back". */}
                           {canPost && (
-                            <button onClick={() => openEmpties(p)}
-                              title="Empty bottles — refill some, or correct the count"
-                              className="btn-ghost p-1 text-cyan-400 hover:text-cyan-200">
-                              <RefreshCcw className="w-3.5 h-3.5" />
-                            </button>
+                            <>
+                              <button onClick={() => openEmpties(p, 'refill')} disabled={p.stock.empty <= 0}
+                                title={p.stock.empty > 0 ? 'Refill empty bottles' : 'Nothing to refill — no empty bottles on record'}
+                                className="btn-ghost p-1 text-cyan-400 hover:text-cyan-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-cyan-400">
+                                <RefreshCcw className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => openEmpties(p, 'count')}
+                                title="Correct the empty count — enter how many empties you counted"
+                                className="btn-ghost p-1 text-slate-500 hover:text-cyan-200">
+                                <ClipboardCheck className="w-3.5 h-3.5" />
+                              </button>
+                            </>
                           )}
                         </span>
                       ) : <span className="text-slate-700 text-xs">—</span>}
@@ -715,9 +728,10 @@ export default function ProductInventoryPage() {
                   { v: 'refill', label: 'Refill empties', Icon: RefreshCcw },
                   { v: 'count',  label: 'Correct empty count', Icon: ClipboardCheck },
                 ].map(({ v, label, Icon }) => (
-                  <button key={v} type="button"
+                  <button key={v} type="button" disabled={v === 'refill' && emptyNow <= 0}
+                    title={v === 'refill' && emptyNow <= 0 ? 'Nothing to refill — no empty bottles on record' : undefined}
                     onClick={() => { setEmptyDraft(d => ({ ...d, mode: v })); setFormErr('') }}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                       emptyDraft.mode === v
                         ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30'
                         : 'text-slate-400 border-surface-border hover:bg-surface-hover'}`}>
