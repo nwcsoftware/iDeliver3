@@ -16,5 +16,10 @@ module.exports = defineConfig({
   },
   server: {
     port: 5173,
+    /* The installer build writes hundreds of megabytes into release/ and holds
+       its temp files locked; a dev server watching them crashed with EBUSY the
+       moment an installer was built beside it. Nothing the page loads lives
+       in either folder. */
+    watch: { ignored: ['**/release/**', '**/dist/**'] },
   },
 })
