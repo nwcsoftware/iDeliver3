@@ -17,6 +17,7 @@ import {
   Circle,
   Loader2,
   RefreshCw,
+  RefreshCcw,
   Wrench,
   Upload,
   Image as ImageIcon,
@@ -52,6 +53,36 @@ function FlagToggle({ active, onClick, color = 'cyan', children }) {
         ${active ? FLAG_COLORS[color] : 'bg-surface-hover border-surface-border text-slate-400 hover:text-slate-200'}`}>
       {active ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 flex-shrink-0" />}
       {children}
+    </button>
+  )
+}
+
+/* An on/off option as a card with a sliding switch: the whole card is the
+   button, so the hit area is the sentence that explains it, not a 16px box.
+   It is a real <button role="switch">, so a read-only form's fieldset disables
+   it like every other control — and `disabled` is passed as well, because a
+   fieldset stops the browser's clicks but not React's own onClick. */
+function OptionSwitch({ checked, onChange, disabled = false, Icon, title, children }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} disabled={disabled}
+      onClick={() => { if (!disabled) onChange(!checked) }}
+      className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors
+        disabled:cursor-not-allowed disabled:opacity-60 ${checked
+          ? 'border-cyan-500/40 bg-cyan-500/10'
+          : 'border-surface-border bg-surface-hover/40 hover:border-slate-500/60'}`}>
+      <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+        checked ? 'bg-cyan-500/20 text-cyan-300' : 'bg-surface-hover text-slate-500'}`}>
+        <Icon className="w-4 h-4" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium text-slate-100">{title}</span>
+        <span className="block text-[11px] text-slate-500 leading-snug mt-0.5">{children}</span>
+      </span>
+      <span aria-hidden="true" className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
+        checked ? 'bg-cyan-500' : 'bg-slate-600'}`}>
+        <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-4' : 'translate-x-0'}`} />
+      </span>
     </button>
   )
 }
@@ -858,17 +889,13 @@ export default function ProductsPage() {
                   <p className="text-[10px] text-amber-300/80 mt-1">Stock goes out when the order closes and comes back when the item is marked returned on the Returnable Items page (e.g. shisha, gas cylinders).</p>
                 )}
                 {form.is_returnable && hasRefillColumns && (
-                  <label className="flex items-start gap-2.5 mt-2 cursor-pointer">
-                    <input type="checkbox" className="w-4 h-4 accent-cyan-500 mt-0.5" checked={!!form.is_refillable}
-                      onChange={e => fld('is_refillable', e.target.checked)} />
-                    <span className="text-sm text-slate-200">
-                      Refillable
-                      <span className="block text-[11px] text-slate-500">
-                        A gas cylinder, a 20 L water bottle: it comes back EMPTY and is not for sale again until it is
-                        refilled. Inventory then shows Available and Empty apart, with a refill button beside the empties.
-                      </span>
-                    </span>
-                  </label>
+                  <div className="mt-2.5">
+                    <OptionSwitch checked={!!form.is_refillable} onChange={v => fld('is_refillable', v)} disabled={readOnly}
+                      Icon={RefreshCcw} title="Refillable">
+                      A gas cylinder, a 20 L water bottle: it comes back empty and is not for sale again until it is
+                      refilled. Inventory shows Available and Empty apart, with a refill button beside the empties.
+                    </OptionSwitch>
+                  </div>
                 )}
               </div>
             </fieldset>
