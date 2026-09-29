@@ -98,6 +98,9 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
      Products       readable, not editable (canEditProducts). Unlike Call
                     Center, the rank still sees what a product costs.
 
+     Empties        refilling gas / water and correcting the empty count on
+                    Inventory (canManageEmpties).
+
    WHAT IS LEFT OF THE INHERITANCE, now that the list is this long: seeing the
    Administration menu (which holds one readable page for this rank) and
    reading Subscriptions. Nothing else administrative comes through it. When
@@ -145,6 +148,12 @@ export const canEditProducts = (role) => isStrictAdmin(role)
    "admin-like". */
 export const canSeeProductCosts = (role) =>
   roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
+
+/* The EMPTIES of a refillable (gas, water) on the Inventory page: recording a
+   refill and correcting the empty count. Administrators only — Senior Call
+   Center and Call Center see the empty count but not the buttons. Stock in,
+   stock out and adjustments are a separate, wider rule on that page. */
+export const canManageEmpties = (role) => isStrictAdmin(role)
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a
    person that way. */

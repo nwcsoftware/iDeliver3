@@ -28,7 +28,7 @@ import {
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
   movementDeleteRight, isRefillable, handMovementTypes,
 } from '../lib/productStock'
-import { isStrictAdmin, canEditProducts } from '../lib/roles'
+import { isStrictAdmin, canEditProducts, canManageEmpties } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -98,6 +98,8 @@ export default function ProductInventoryPage() {
   const { hasRole, currentUser } = useAuth()
   const { COMPANY_ID } = useApp()
   const canPost = hasRole('super_admin', 'admin', 'call_center')
+  // Refilling and counting empties: administrators only (lib/roles).
+  const canEmpties = canManageEmpties(currentUser?.role)
   /* Deleting a movement: an administrator may remove a hand-typed one, a super
      admin may remove any, and a Senior Call Center user may remove none. The
      column itself only appears for somebody who could delete something. */
@@ -243,6 +245,7 @@ export default function ProductInventoryPage() {
   const countDiff = Math.round((num(emptyDraft.counted) - emptyNow) * 100) / 100
 
   function openEmpties(product, mode = 'refill') {
+    if (!canEmpties) return
     // Nothing to refill: the refill button is greyed out, and this refuses too.
     if (mode === 'refill' && (byId.get(product.id)?.empty || 0) <= 0) return
     setEmptyDraft(newEmptiesDraft(mode))
@@ -251,6 +254,7 @@ export default function ProductInventoryPage() {
   }
 
   async function postEmpties() {
+    if (!canEmpties) return
     const refill = emptyDraft.mode === 'refill'
     let quantity
     if (refill) {
@@ -446,7 +450,7 @@ export default function ProductInventoryPage() {
                               below. The COUNT button is never off: an empty
                               count of 0 (or less) is exactly when somebody has
                               to be able to say "there are 12 in the back". */}
-                          {canPost && (
+                          {canEmpties && (
                             <>
                               <button onClick={() => openEmpties(p, 'refill')} disabled={p.stock.empty <= 0}
                                 title={p.stock.empty > 0 ? 'Refill empty bottles' : 'Nothing to refill — no empty bottles on record'}
@@ -639,8 +643,11 @@ export default function ProductInventoryPage() {
                     they were, so the empties would never go down. */}
                 {isRefillable(moveFor) && draft.movement_type === 'in' && (
                   <p className="text-[11px] text-cyan-300/90 mt-1.5">
-                    Stock in is for bottles bought new, full. Refilling your own empties is the
-                    <RefreshCcw className="inline w-3 h-3 mx-1 align-[-2px]" />button in the Empty column.
+                    Stock in is for bottles bought new, full.{' '}
+                    {canEmpties
+                      ? <>Refilling your own empties is the
+                          <RefreshCcw className="inline w-3 h-3 mx-1 align-[-2px]" />button in the Empty column.</>
+                      : <>Refilling your own empties is recorded by an administrator, from the Empty column.</>}
                   </p>
                 )}
 
