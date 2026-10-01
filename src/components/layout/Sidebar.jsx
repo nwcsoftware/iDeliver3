@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Package, PackageCheck, MapPin, BarChart3,
   Building2, Tag, ChevronLeft, ChevronRight, FileText, Receipt, Car,
@@ -12,6 +12,7 @@ import { isStrictAdmin } from '../../lib/roles'
 import logo from '../../assets/Logo.png'
 import AboutPopup from '../about/AboutPopup'
 import MessagesIndicator from '../messages/MessagesIndicator'
+import SearchField from '../ui/SearchField'
 
 /* The menu, as three pinned screens plus collapsible groups.
 
@@ -157,6 +158,20 @@ export const navGroups = [
 
 const GROUPS_KEY = (userId) => `ideliver:navGroups:${userId || 'anon'}`
 
+/* A menu label with the searched-for part picked out, so it is plain why each
+   result is there. */
+function Highlight({ text, q }) {
+  const i = q ? text.toLowerCase().indexOf(q) : -1
+  if (i < 0) return text
+  return (
+    <>
+      {text.slice(0, i)}
+      <span className="text-brand-300 font-semibold">{text.slice(i, i + q.length)}</span>
+      {text.slice(i + q.length)}
+    </>
+  )
+}
+
 function NavItem({ to, icon: Icon, label, collapsed, onMouseEnter, onMouseLeave }) {
   return (
     <NavLink
@@ -191,6 +206,15 @@ export default function Sidebar() {
 
   const [collapsed,     setCollapsed]     = useState(true)
   const [secondaryOpen, setSecondaryOpen] = useState(false)   // the all-in-one fly-out
+  const navigate = useNavigate()
+
+  /* SEARCHING THE MENU. The box at the top of the Menu fly-out narrows it to
+     the buttons whose name — or whose group's name — holds what was typed.
+     It is emptied every time the menu is put away (closed, or the sidebar
+     minimised): a word left in it is how a menu comes to look half empty the
+     next time it is opened. */
+  const [menuQuery, setMenuQuery] = useState('')
+  useEffect(() => { if (!secondaryOpen || collapsed) setMenuQuery('') }, [secondaryOpen, collapsed])
 
   /* Which groups are open. Several may be at once, and the choice is kept per
      user on this device so the menu opens tomorrow the way it was left. */
@@ -233,6 +257,28 @@ export default function Sidebar() {
          (!i.superOnly || isSuperAdmin) && (!i.adminOnly || isAdmin)
       && (!i.strictAdminOnly || strictAdmin)) }))
     .filter(g => g.items.length > 0)
+  const q = menuQuery.trim().toLowerCase()
+  const searching = q.length > 0
+  const hit = (text) => String(text || '').toLowerCase().includes(q)
+  /* While searching: every group with a match, opened, holding only its
+     matches (all of it when the group's own name matched). The three screens
+     on the rail are found too, under "Main". */
+  const shownGroups = !searching ? visibleGroups : [
+    { key: 'main', label: 'Main', icon: LayoutDashboard, items: pinnedNav },
+    ...visibleGroups,
+  ].map(g => ({ ...g, items: hit(g.label) ? g.items : g.items.filter(i => hit(i.label)) }))
+   .filter(g => g.items.length > 0)
+  const firstHit = searching ? shownGroups[0]?.items[0] : null
+
+  function onMenuSearchKey(e) {
+    if (e.key === 'Enter' && firstHit) {         // straight to the first result
+      navigate(firstHit.to); setSecondaryOpen(false)
+    } else if (e.key === 'Escape') {
+      if (menuQuery) setMenuQuery('')            // first Escape empties the box,
+      else setSecondaryOpen(false)               // the second puts the menu away
+    }
+  }
+
   const [aboutOpen,     setAboutOpen]     = useState(false)   // "About _NXCORE" popup
   const [tip,           setTip]           = useState({ label: '', y: 0, visible: false })
 
@@ -363,17 +409,37 @@ export default function Sidebar() {
               <X className="w-4 h-4" />
             </button>
           </div>
-          <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+          {/* Search — above the list, so it stays put while the list scrolls. */}
+          <div className="px-2 pt-3 pb-1">
+            <div className="relative">
+              <SearchField
+                value={menuQuery}
+                onChange={e => setMenuQuery(e.target.value)}
+                onKeyDown={onMenuSearchKey}
+                placeholder="Search the menu…"
+                aria-label="Search the menu"
+                autoFocus
+                className="input pl-9 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+          <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
+            {searching && shownGroups.length === 0 && (
+              <p className="px-3 py-4 text-xs text-slate-500">
+                Nothing in the menu matches &ldquo;{menuQuery.trim()}&rdquo;.
+              </p>
+            )}
             {/* Grouped by the job being done. Several groups may be open at
                 once and the choice is remembered per user; the group holding
-                the current page opens itself. */}
-            {visibleGroups.map(g => {
-              const open = openGroups.has(g.key)
+                the current page opens itself. While searching, every group
+                with a match is shown open, without touching that choice. */}
+            {shownGroups.map(g => {
+              const open = searching || openGroups.has(g.key)
               const GroupIcon = g.icon
               const danger = g.tone === 'danger'
               return (
                 <div key={g.key}>
-                  <button type="button" onClick={() => toggleGroup(g.key)}
+                  <button type="button" onClick={() => { if (!searching) toggleGroup(g.key) }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-semibold
                                 uppercase tracking-wider transition-colors
                                 ${danger
@@ -385,7 +451,9 @@ export default function Sidebar() {
                       danger ? 'bg-red-500/10 text-red-300/80' : 'bg-surface-hover text-slate-500'}`}>
                       {g.items.length}
                     </span>
-                    <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+                    {!searching && (
+                      <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+                    )}
                   </button>
                   {open && (
                     <div className="mt-0.5 mb-1.5 ml-3 pl-2 border-l border-surface-border space-y-0.5">
@@ -399,7 +467,7 @@ export default function Sidebar() {
                                : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover border-transparent'}`
                           }>
                           <Icon className="w-[18px] h-[18px] flex-shrink-0" />
-                          <span className="truncate">{label}</span>
+                          <span className="truncate"><Highlight text={label} q={q} /></span>
                         </NavLink>
                       ))}
                     </div>
