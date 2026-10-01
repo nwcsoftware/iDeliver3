@@ -39,6 +39,9 @@ import {
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
+import {
+  fetchPriceFloors, priceProblem, minimumPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS,
+} from '../lib/subscriptionPrices'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
@@ -46,12 +49,12 @@ import {
   subscriptionStatus, STATUS_STYLES, contactLabel, todayStr, graceDaysLeft,
   subscriptionsSummary, coveredContactIds, renewalStage, RENEWAL_STAGES,
   daysLeftLabel, RENEWAL_WARN_DAYS, RENEWAL_URGENT_DAYS,
-  isTrialSubscription, TRIAL_DAYS, addDays, RATE_CURRENCY,
+  isTrialSubscription, TRIAL_DAYS, addDays,
   freeSeatMap, freeSeatsSummary, scopeFor, SCOPE, PARTNER_FREE_LIMIT, isSupplierContact, isPartnerContact,
   seatHolderIds, PAYMENT_METHODS, isAmountDue, ownerKey,
 } from '../lib/subscriptions'
 import { downloadDuePaymentsPdf, accessOf, daysOutstanding, totalsByCurrency } from '../lib/duePaymentsPdf'
-import { SEATS, UNPAID_GRACE_DAYS } from '../lib/billing'
+import { UNPAID_GRACE_DAYS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
 import SearchField from '../components/ui/SearchField'
@@ -113,8 +116,10 @@ const moneyLine = (bucket) => {
 /* Settings → Subscriptions.
 
    Suppliers and partners can only sign in while they hold a subscription that
-   is active, paid and in date. The super admin creates/edits/deletes them and
-   confirms payment; admins may view, search and filter the list only. */
+   is active, paid and in date. An admin adds them and prices them, never under
+   the minimum the super admin set (fix169); the super admin also records the
+   payment, switches them on and off, and deletes them. A Senior Call Center
+   user reads the list without its prices. */
 export default function SubscriptionsPage() {
   const { hasRole, currentUser } = useAuth()
   const { COMPANY_ID } = useApp()
@@ -133,6 +138,15 @@ export default function SubscriptionsPage() {
      reached, so a control added later cannot hand the power over by being
      written without a check. */
   const canEditSubs  = isStrictAdmin(currentUser?.role)
+  /* PRICES are for administrators (fix169). A Senior Call Center user reads this
+     page to know whether a partner is paid up, not what it pays — so the Amount
+     column, and every sentence that names a price, is left out for them.
+     An admin prices a subscription by hand; the super admin also records the
+     payment, switches it on and off, and may delete it. */
+  const showPrices   = canEditSubs
+  // The minimum price the super admin set (fix169); today's prices without it.
+  const [floors, setFloors] = useState(DEFAULT_FLOORS)
+  useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
 
   const [rows,       setRows]       = useState([])
   const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
@@ -368,6 +382,7 @@ export default function SubscriptionsPage() {
     if (!r || r.is_paid || !(Number(r.amount) > 0)) return null
     const st = subscriptionStatus(r)
     const money = `${Number(r.amount).toFixed(2)} ${r.currency || ''}`.trim()
+    const unpaid = showPrices ? `${money} not yet paid` : 'Not yet paid'
     const owed = (title) => ({
       label: 'awaiting payment',
       cls:   'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300',
@@ -381,33 +396,33 @@ export default function SubscriptionsPage() {
       return {
         label: 'not due — free seat',
         cls:   'border-amber-500/40 bg-amber-500/10 text-amber-300',
-        title: `This ${money} charge is no longer owed: the partner holds a free seat until ${sc.seat?.end || '?'}, `
+        title: `This ${showPrices ? `${money} ` : ''}charge is no longer owed: the partner holds a free seat until ${sc.seat?.end || '?'}, `
              + 'and its partner logins sign in without paying. Delete this row, or set its amount '
              + 'to 0 and mark it paid, so it stops reading as unpaid.',
       }
     }
     if (st === 'credit') {
-      return owed(`${money} not yet paid. Activated for the full term`
+      return owed(`${unpaid}. Activated for the full term`
         + `${r.credit_granted_at ? ` on ${String(r.credit_granted_at).slice(0, 10)}` : ''}`
         + `${r.credit_granted_by ? ` by ${r.credit_granted_by}` : ''} — they can sign in, and the payment `
         + 'stays due until it is recorded with its reference.')
     }
     if (st === 'grace') {
       const left = graceDaysLeft(r)
-      return owed(`${money} not yet paid. Let in on trust while it is outstanding — `
+      return owed(`${unpaid}. Let in on trust while it is outstanding — `
         + `${left} day${left === 1 ? '' : 's'} left, then sign-in closes again.`)
     }
     if (st === 'grace_over') {
-      return owed(`${money} not yet paid, and the trust period has ended. `
+      return owed(`${unpaid}, and the trust period has ended. `
         + 'Sign-in is closed until the payment is confirmed.')
     }
     if (r.contact && !loginIds.has(r.contact.id)) {
-      return owed(`${money} not yet paid. Nobody can sign in as this contact right now, so nothing is `
+      return owed(`${unpaid}. Nobody can sign in as this contact right now, so nothing is `
         + 'blocked today — once it has an active login, sign-in waits on this payment.')
     }
-    return owed(`${money} not yet paid. Sign-in stays closed until the payment is confirmed `
+    return owed(`${unpaid}. Sign-in stays closed until the payment is confirmed `
       + 'and the subscription is activated.')
-  }, [loginIds])
+  }, [loginIds, showPrices])
 
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
@@ -537,8 +552,8 @@ export default function SubscriptionsPage() {
       description: `Annual partner seat — ${from.slice(0, 4)}`,
       start_date: from,
       end_date: addDays(from, 364),
-      amount: String(SEATS.partner.extraRate),
-      currency: RATE_CURRENCY,
+      amount: String(floors.partner.amount),
+      currency: floors.partner.currency,
       is_paid: false,
       paid_by_note: 'Invoiced to 3asari3 with the annual package',
       is_active: false,
@@ -558,6 +573,21 @@ export default function SubscriptionsPage() {
   }
   function closeModal() { setModal(null); setForm(emptyForm()); setFormErr('') }
 
+  /* Partner or supplier — what the minimum is measured against. The login says
+     it outright; without one, a contact that is only one of the two does. A
+     contact that is both, with no login chosen yet, cannot be told, and is not
+     measured — the same answer the database gives. */
+  const formRole = (() => {
+    const login = form.user_account_id ? loginById.get(form.user_account_id) : null
+    if (login && ['partner', 'supplier'].includes(login.role)) return login.role
+    if (modal && modal !== 'add' && modal.subscription_role) return modal.subscription_role
+    const t = parties.find(p => p.id === form.contact_id)?.contact_types || []
+    if (t.includes('partner') && !t.includes('supplier')) return 'partner'
+    if (t.includes('supplier') && !t.includes('partner')) return 'supplier'
+    return null
+  })()
+  const formMinimum = formRole ? minimumPrice(formRole, form.start_date, form.end_date, floors) : 0
+
   async function save() {
     if (!canEditSubs) return
     if (!form.contact_id)  { setFormErr('Choose the supplier or partner.'); return }
@@ -569,6 +599,22 @@ export default function SubscriptionsPage() {
     if (form.end_date < form.start_date) { setFormErr('The end date must be after the start date.'); return }
     if (form.is_active && !form.is_paid) {
       setFormErr('Confirm the payment first — a subscription can only be activated once it is paid.'); return
+    }
+    /* THE MINIMUM (fix169). Checked when the price is being set — a new row, or
+       a change to its price, dates or currency — so an admin can still correct
+       the description of an old row that predates the minimum. Free seats and
+       trials are free by design, and the super admin's own price stands. */
+    const before = modal === 'add' ? null : modal
+    const priceTouched = !before || Number(form.amount) !== Number(before.amount)
+      || form.start_date !== before.start_date || form.end_date !== before.end_date
+      || (form.currency || 'USD') !== (before.currency || 'USD')
+    const exempt = isSuperAdmin || !!before?.is_free_seat || !!before?.is_trial || (before && isTrialSubscription(before))
+    if (priceTouched) {
+      const problem = priceProblem({
+        role: formRole, amount: form.amount, currency: form.currency,
+        start: form.start_date, end: form.end_date, exempt,
+      }, floors)
+      if (problem) { setFormErr(problem); return }
     }
     setSaving(true); setFormErr('')
     const err = await saveSubscription(
@@ -647,7 +693,8 @@ export default function SubscriptionsPage() {
   }
 
   const partyIcon = (c) => ((c?.contact_types ?? []).includes('supplier') ? Building : Handshake)
-  const COL_COUNT = isSuperAdmin ? 10 : 9     // header cells, for the empty/loading rows
+  // Header cells, for the empty/loading rows: eight always, then Amount and actions.
+  const COL_COUNT = 8 + (showPrices ? 1 : 0) + (canEditSubs ? 1 : 0)
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 gap-4">
@@ -675,8 +722,8 @@ export default function SubscriptionsPage() {
             <span className="text-[11px] tabular-nums px-1.5 rounded bg-fuchsia-500/20">{dueRows.length}</span>
           </button>
         )}
-        {isSuperAdmin && (
-          <button className="btn-primary" onClick={openAdd}>
+        {canEditSubs && (
+          <button className={`btn-primary ${isSuperAdmin ? '' : 'ml-auto'}`} onClick={openAdd}>
             <Plus className="w-4 h-4" /> New subscription
           </button>
         )}
@@ -928,9 +975,9 @@ export default function SubscriptionsPage() {
               {[
                 ['Supplier / Partner', 'party'], ['Description', 'description'],
                 ['Start', 'start'], ['End', 'end'], ['Renewal', 'renewal'],
-                ['Amount', 'amount'], ['Payment', 'payment'], ['Status', 'status'],
+                ...(showPrices ? [['Amount', 'amount']] : []), ['Payment', 'payment'], ['Status', 'status'],
                 ['Agreement', 'agreement'],
-                ...(isSuperAdmin ? [['', null]] : []),
+                ...(canEditSubs ? [['', null]] : []),
               ].map(([label, key]) => (
                 <th key={label || 'actions'}
                   className="text-left px-4 py-3 text-slate-500 text-xs font-medium uppercase tracking-wider bg-surface-card">
@@ -1040,7 +1087,9 @@ export default function SubscriptionsPage() {
                         : <span className="tabular-nums">{daysLeftLabel(days)}</span>}
                     </span>
                   </td>
-                  <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
+                  {showPrices && (
+                    <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
+                  )}
                   <td className="px-4 py-3">
                     {isSuperAdmin ? (
                       <button onClick={() => {
@@ -1139,7 +1188,7 @@ export default function SubscriptionsPage() {
                       )
                     })()}
                   </td>
-                  {isSuperAdmin && (
+                  {canEditSubs && (
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {/* Activating an UNPAID subscription is allowed, on a clock
@@ -1147,7 +1196,7 @@ export default function SubscriptionsPage() {
                             somebody in without payment is a decision, and the
                             clock is what keeps it from becoming permanent.
                             Switching a row off, or paying it, clears the clock. */}
-                        <button onClick={() => {
+                        {isSuperAdmin && <button onClick={() => {
                           if (r.is_active) { patch(r, { is_active: false, grace_started_on: null, grace_granted_by: null,
                                                         credit_granted_at: null, credit_granted_by: null }); return }
                           if (r.is_paid)   { patch(r, { is_active: true }); return }
@@ -1163,18 +1212,20 @@ export default function SubscriptionsPage() {
                           className={`btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed ${
                             r.is_active ? 'text-green-400 hover:text-red-400' : 'text-slate-400 hover:text-green-400'}`}>
                           {r.is_active ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
-                        </button>
+                        </button>}
                         {!isSupplierContact(r.contact) && (
                           <button onClick={() => renewPartner(r)}
-                            title={`Renew — one year at ${SEATS.partner.extraRate} ${RATE_CURRENCY}, invoiced to 3asari3`}
+                            title={`Renew — one year, from the minimum ${fmtPerPeriod(floors.partner)}, invoiced to 3asari3`}
                             className="btn-ghost p-1.5 text-slate-400 hover:text-brand-300">
                             <RefreshCw className="w-4 h-4" />
                           </button>
                         )}
                         <button onClick={() => openEdit(r)} title="Edit"
                           className="btn-ghost p-1.5 text-slate-400 hover:text-slate-100"><Pencil className="w-4 h-4" /></button>
-                        <button onClick={() => setConfirmDelete(r)} title="Delete"
-                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
+                        {isSuperAdmin && (
+                          <button onClick={() => setConfirmDelete(r)} title="Delete"
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
+                        )}
                       </div>
                     </td>
                   )}
@@ -1281,19 +1332,30 @@ export default function SubscriptionsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Amount</label>
-                  <input type="number" min="0" step="0.01" className="input" value={form.amount}
-                    onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0.00" />
+                  <label className="label">Price *</label>
+                  <input type="number" min={isSuperAdmin ? 0 : formMinimum || 0} step="0.01" className="input" value={form.amount}
+                    onChange={e => { setForm(f => ({ ...f, amount: e.target.value })); setFormErr('') }}
+                    placeholder={formMinimum ? formMinimum.toFixed(2) : '0.00'} />
+                  {formRole && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Minimum {fmtFloor(formMinimum, floors[formRole].currency)} for these dates
+                      ({fmtPerPeriod(floors[formRole])}, set by the super admin)
+                      {isSuperAdmin ? ' — you may go below it.' : '.'}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="label">Currency</label>
-                  <select className="input" value={form.currency}
+                  {/* The minimum is in one currency and is never converted, so an
+                      admin prices in it; only the super admin may choose another. */}
+                  <select className="input" value={form.currency} disabled={!isSuperAdmin}
                     onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}>
                     {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
 
+              {isSuperAdmin ? (
               <div className="rounded-lg border border-surface-border p-3 space-y-3">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
                   <input type="checkbox" className="w-4 h-4 accent-emerald-500" checked={form.is_paid}
@@ -1314,6 +1376,12 @@ export default function SubscriptionsPage() {
                   A 2nd party can only sign in while a subscription is paid, activated and inside its dates.
                 </p>
               </div>
+              ) : (
+                <p className="text-[11px] text-slate-500 rounded-lg border border-surface-border p-3">
+                  The super admin records the payment and switches the subscription on. Until then the
+                  supplier or partner cannot sign in with it.
+                </p>
+              )}
 
               {formErr && (
                 <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">

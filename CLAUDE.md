@@ -96,6 +96,18 @@ What that means when building:
   its password (`contact_login_set`); once saved, only the super admin may
   change the username or remove the login (`contact_login_clear`).
   The old unchecked `admin_set/clear_contact_credentials` are revoked.
+- **Subscription prices (fix169).** The super admin sets a minimum per kind
+  (partner per year, supplier per month) in App Settings —
+  `subscription_price_floors`, written only by `super_admin_set_subscription_floor`.
+  Admins add and price subscriptions at or above it; the trigger
+  `trg_subscriptions_price_floor` refuses less, except free seats, trials and a
+  price the super admin saved (`priced_by`). Read and check prices through
+  `lib/subscriptionPrices` — never `SEATS.partner.extraRate` or a plan constant.
+  When a contact BECOMES a partner with no current partner subscription, an
+  admin or Senior Call Center user must accept the charge before saving
+  (admin sees and may raise the price; senior sees none); it opens a one-year
+  unpaid row on the contact. Prices are shown to admin and super admin only —
+  and to the portal user, about their own subscription.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against

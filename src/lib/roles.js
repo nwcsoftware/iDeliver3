@@ -82,11 +82,13 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
                     who may sign in, the public site and what work gets paid
                     for are not this rank's to set.
 
-     Subscriptions  readable, not writable. Knowing whether a partner is paid
-                    up is part of dealing with them; issuing, pricing and
-                    activating one is not. (Every control there is already
-                    super-admin only, so the rule is enforced on the writing
-                    functions rather than on buttons that do not exist.)
+     Subscriptions  readable, not writable, and without prices. Knowing whether
+                    a partner is paid up is part of dealing with them; issuing,
+                    pricing and activating one is not. (Admins add and price
+                    them, at or above the super admin's minimum — fix169; the
+                    payment, switching on/off and deleting stay super admin.)
+                    The rank does accept the charge when it makes a contact a
+                    partner — the prompt shows it no price.
 
      Admin powers   on pages the rank still uses daily: deactivating a contact,
      on shared      driver administration, editing the company, reactivating a

@@ -6,7 +6,9 @@ import {
   fetchLoginsForContact, ensureLoginSubscription, rowsForLogin, freeSeatMap,
   subscriptionStatus, STATUS_STYLES, TRIAL_DAYS, RATE_CURRENCY, PARTNER_FREE_LIMIT,
 } from '../../lib/subscriptions'
-import { SEATS, SUPPLIER_SUBSCRIPTION } from '../../lib/billing'
+import { SUPPLIER_SUBSCRIPTION } from '../../lib/billing'
+import { isStrictAdmin } from '../../lib/roles'
+import { fetchPriceFloors, planPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../../lib/subscriptionPrices'
 
 /* A PARTNER'S OR SUPPLIER'S LOGINS, managed from its own profile (fix160).
 
@@ -81,6 +83,12 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
   const [err,     setErr]     = useState('')
   // Credentials shown ONCE, right after they are set, to hand over.
   const [issued,  setIssued]  = useState(null)   // { username, password, note }
+  /* Prices are for administrators (fix169): a Senior Call Center user adds
+     logins here, but is told what happens, not what it costs. The amounts come
+     from the minimum the super admin set. */
+  const showPrices = isStrictAdmin(currentUser?.role)
+  const [floors, setFloors] = useState(DEFAULT_FLOORS)
+  useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
 
   const load = useCallback(async () => {
     if (!contact?.id) return
@@ -147,7 +155,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
         : sub.attached
           ? 'The subscription already placed for this partner is now this login’s. It is unpaid: they can sign in once the super admin activates it or records the payment.'
           : payable
-            ? `A payable subscription of ${RATE_CURRENCY} ${sub.row.amount} is opened for this login, unpaid. `
+            ? `A payable subscription${showPrices ? ` of ${fmtFloor(sub.row.amount, sub.row.currency || RATE_CURRENCY)}` : ''} is opened for this login, unpaid. `
               + 'They can sign in once the super admin activates it or records the payment.'
             : sub.created
               ? `A free ${TRIAL_DAYS}-day subscription starts today. They can sign in now.`
@@ -235,7 +243,9 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
               ? <>Holds a free partner seat until <span className="font-medium">{seat.end}</span> — its partner logins are free.</>
               : seat
                 ? <>Holds a free seat until {seat.end}, but it is switched off — partner logins are refused.</>
-                : <>No free seat — each partner login pays {RATE_CURRENCY} {SEATS.partner.extraRate} a year.</>}
+                : showPrices
+                  ? <>No free seat — each partner login pays at least {fmtPerPeriod(floors.partner)}.</>
+                  : <>No free seat — each partner login has its own paid subscription.</>}
           </span>
           {seatsInUse != null && (
             <span className="text-[10px] text-slate-500">{seatsInUse} of {PARTNER_FREE_LIMIT} seats in use</span>
@@ -321,9 +331,9 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
             {form.role === 'partner'
               ? (freeSeat
                   ? `This partner holds a free seat until ${seat.end}, so the login is free until then.`
-                  : `A payable seat of ${RATE_CURRENCY} ${SEATS.partner.extraRate} a year opens with it, unpaid — sign-in waits for the super admin to activate it.`)
+                  : `A payable seat${showPrices ? ` of ${fmtPerPeriod(floors.partner)}` : ''} opens with it, unpaid — sign-in waits for the super admin to activate it.`)
               : (isPartner
-                  ? `A partner adding supplier access pays for it: a ${SUPPLIER_SUBSCRIPTION.plans[0].name} plan of ${RATE_CURRENCY} ${SUPPLIER_SUBSCRIPTION.plans[0].price} a month opens with it, unpaid — the free partner seat does not cover it.`
+                  ? `A partner adding supplier access pays for it: a ${SUPPLIER_SUBSCRIPTION.plans[0].name} plan${showPrices ? ` of ${fmtFloor(planPrice(SUPPLIER_SUBSCRIPTION.plans[0], floors), floors.supplier.currency)} a month` : ''} opens with it, unpaid — the free partner seat does not cover it.`
                   : `A supplier login starts with a free ${TRIAL_DAYS}-day subscription.`)}
             {' '}The holder must change the password at the first sign-in.
           </p>

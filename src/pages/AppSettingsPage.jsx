@@ -1,10 +1,11 @@
-import React, { useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange, BadgeDollarSign } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
+import { fetchPriceFloors, setPriceFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
@@ -59,6 +60,31 @@ export default function AppSettingsPage() {
     String(appSettings.ordersWindowDays ?? 90)
   )
   const [ordersWindowSavedMsg, setOrdersWindowSavedMsg] = useState('')
+
+  /* SUBSCRIPTION MINIMUMS (fix169). The super admin sets them; an admin reads
+     them here, since every subscription an admin prices is held to them. They
+     live in their own table, written only through a super-admin function — not
+     in the shared settings row, which every client can write. */
+  const [floors, setFloors]         = useState(DEFAULT_FLOORS)
+  const [floorsReady, setFloorsReady] = useState(true)
+  const [floorDraft, setFloorDraft] = useState({})            // { partner: '12' }
+  const [floorMsg, setFloorMsg]     = useState({})            // { partner: { ok, text } }
+  useEffect(() => {
+    if (!canSetLimits) return
+    fetchPriceFloors().then(r => { setFloors(r.floors); setFloorsReady(r.installed) })
+  }, [canSetLimits])
+
+  async function saveFloor(role) {
+    const raw = floorDraft[role]
+    const amount = Math.round((Number(raw) || 0) * 100) / 100
+    if (!(amount > 0)) { setFloorMsg(m => ({ ...m, [role]: { ok: false, text: 'Enter a price above 0.' } })); return }
+    const { row, error } = await setPriceFloor(currentUser?.user_id, role, amount)
+    if (error) { setFloorMsg(m => ({ ...m, [role]: { ok: false, text: error } })); return }
+    setFloors(f => ({ ...f, [role]: { ...f[role], ...(row || {}), amount: Number(row?.amount ?? amount) } }))
+    setFloorDraft(d => { const x = { ...d }; delete x[role]; return x })
+    setFloorMsg(m => ({ ...m, [role]: { ok: true, text: 'Saved' } }))
+    setTimeout(() => setFloorMsg(m => { const x = { ...m }; delete x[role]; return x }), 2000)
+  }
 
   const reminderDirty =
     String(appSettings.orderConfirmReminderMinutes ?? 15) !== reminderMins.trim()
@@ -335,6 +361,74 @@ export default function AppSettingsPage() {
               Only the super admin can change this. It is a company-wide policy — it applies to
               <span className="text-slate-400"> every signed-in user on any device or location</span>,
               and takes effect immediately.
+            </p>
+          </div>
+        )}
+
+        {/* Subscription minimums (super admin sets; admin reads) — fix169 */}
+        {canSetLimits && (
+          <div className="card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/30 flex items-center justify-center flex-shrink-0">
+                <BadgeDollarSign className="w-4 h-4 text-fuchsia-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Subscription prices — the minimums</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  The least a partner or supplier subscription may cost. An administrator prices each subscription
+                  by hand and may charge more, but never less, never 0 and never empty. A new partner starts at the
+                  partner minimum. Free partner seats and a supplier&rsquo;s free trial are not affected.
+                </p>
+              </div>
+            </div>
+
+            {!floorsReady && (
+              <p className="text-[11px] text-amber-300">
+                Not installed yet — run supabase-fix169.sql. Until then today&rsquo;s prices apply:
+                partner {fmtPerPeriod(DEFAULT_FLOORS.partner)}, supplier {fmtPerPeriod(DEFAULT_FLOORS.supplier)}.
+              </p>
+            )}
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              {['partner', 'supplier'].map(role => {
+                const f = floors[role]
+                const draft = floorDraft[role]
+                const dirty = draft !== undefined && Number(draft) !== Number(f.amount)
+                const msg = floorMsg[role]
+                return (
+                  <div key={role} className="rounded-lg border border-surface-border p-3 space-y-2">
+                    <p className="text-xs font-medium text-slate-200 capitalize">{role} — per {f.period}</p>
+                    {isSuperAdmin ? (
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input type="number" min="0.01" step="0.01" className="input pr-14 text-sm"
+                            disabled={!floorsReady} aria-label={`${role} minimum`}
+                            value={draft ?? String(f.amount)}
+                            onChange={e => setFloorDraft(d => ({ ...d, [role]: e.target.value }))} />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{f.currency}</span>
+                        </div>
+                        <button type="button" onClick={() => saveFloor(role)} disabled={!dirty || !floorsReady}
+                          className="btn-primary px-3 py-2 text-xs disabled:opacity-40">
+                          <Save className="w-3.5 h-3.5" /> Save
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-100 tabular-nums">{fmtPerPeriod(f)}</p>
+                    )}
+                    {msg && (
+                      <p className={`text-[11px] flex items-center gap-1 ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>
+                        {msg.ok && <CheckCircle2 className="w-3 h-3" />}{msg.text}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              {isSuperAdmin
+                ? 'Only you can change these. The database holds every price an administrator sets to them; your own prices may go below.'
+                : 'Set by the super admin. Every subscription you price is held to these.'}
             </p>
           </div>
         )}

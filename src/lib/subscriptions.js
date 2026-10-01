@@ -3,6 +3,7 @@ import {
   SEATS, SUPPLIER_SUBSCRIPTION, rateFor, perMonth, CURRENCY, UNPAID_GRACE_DAYS,
   DAYS_PER_MONTH, RATE_TOLERANCE,
 } from './billing'
+import { fetchPriceFloors, planPrice, explainPriceError } from './subscriptionPrices'
 
 /* Supplier / partner subscriptions (supabase-fix110.sql).
 
@@ -489,7 +490,9 @@ export function accessDeniedMessage(reason, row, extra = null) {
     case 'expired':
       return `Your subscription expired on ${dmy(row.end_date)}.\n${detail}\nPlease contact the administrator to renew it.`
     case 'unpaid':
-      return `Your subscription is awaiting payment confirmation.\n${detail}\nIt will be activated once the administrator confirms the payment.`
+      return `Your subscription is awaiting payment confirmation.\n${detail}\n`
+        + (Number(row.amount) > 0 ? `Amount due: ${money(row.amount, row.currency)}.\n` : '')
+        + 'It will be activated once the administrator confirms the payment.'
     case 'scheduled':
       return `Your subscription starts on ${dmy(row.start_date)}.\n${detail}\nYou can sign in from that date.`
     case 'deactivated':
@@ -525,16 +528,25 @@ export async function saveSubscription(row, { companyId = null, userId = null } 
                    'payment_method', 'payment_reference', 'paid_recorded_by']) {
     if (row[k] !== undefined) payload[k] = row[k] === '' ? null : row[k]
   }
-  if (row.id) {
-    const { error } = await supabase.from('subscriptions').update(payload).eq('id', row.id)
-    return error ? error.message : null
+  /* WHO SAVED IT (fix169). The database holds every price to the minimum the
+     super admin set — except one the super admin saved himself, his own
+     exceptions. It can only tell them apart if the save says who made it.
+     A database without fix169 has no such column; the save is retried
+     without it rather than failing. */
+  if (userId) payload.priced_by = userId
+  const write = (p) => (row.id
+    ? supabase.from('subscriptions').update(p).eq('id', row.id)
+    : supabase.from('subscriptions').insert([{
+        ...p,
+        ...(companyId ? { company_id: companyId } : {}),
+        created_by: userId,
+      }]))
+  let { error } = await write(payload)
+  if (error && /priced_by/i.test(error.message) && /column|schema cache/i.test(error.message)) {
+    delete payload.priced_by
+    ;({ error } = await write(payload))
   }
-  const { error } = await supabase.from('subscriptions').insert([{
-    ...payload,
-    ...(companyId ? { company_id: companyId } : {}),
-    created_by: userId,
-  }])
-  return error ? error.message : null
+  return error ? explainPriceError(error.message) : null
 }
 
 export async function deleteSubscription(id) {
@@ -748,6 +760,44 @@ export async function fetchLoginsForContact(contactId) {
   }
 }
 
+/* Does this contact hold a PARTNER subscription that is current or still to
+   come (fix169)? A free seat counts. One that has ended does not: a contact
+   made a partner again needs a new one. */
+export async function holdsPartnerSubscription(contactId) {
+  if (!contactId) return false
+  const today = todayStr()
+  const [{ data: rows }, logins] = await Promise.all([
+    supabase.from('subscriptions').select('*').eq('contact_id', contactId),
+    fetchLoginsForContact(contactId),
+  ])
+  const roleOf = new Map(logins.map(l => [l.id, l.role]))
+  return (rows ?? []).some(r => (!r.end_date || String(r.end_date) >= today) && (
+    r.is_free_seat === true
+    || r.subscription_role === 'partner'
+    || roleOf.get(r.user_account_id) === 'partner'
+    || (!r.subscription_role && !r.user_account_id && /partner/i.test(r.description || ''))))
+}
+
+/* The partner subscription a contact is given when it becomes a partner and an
+   admin or a Senior Call Center user accepts the charge (fix169): one year from
+   today, at the price chosen (never under the minimum — the database refuses
+   that), unpaid and switched off. It waits on the contact and goes to the first
+   partner login made for it (ensureLoginSubscription). Assigning one of the
+   free seats later cancels it (assign_free_partner_seat). */
+export async function openPartnerSubscription({ contactId, price, currency = 'USD', acceptedBy = '', companyId = null, userId = null }) {
+  const start = todayStr()
+  const { error } = await supabase.from('subscriptions').insert([{
+    contact_id: contactId, user_account_id: null,
+    description: `Annual partner subscription — ${start.slice(0, 4)} — awaiting payment`,
+    start_date: start, end_date: addDays(start, 364),
+    amount: Number(price), currency, is_paid: false, paid_at: null, is_active: false,
+    paid_by_note: `Accepted by ${acceptedBy || 'the office'} when the contact became a partner`,
+    created_by: userId,
+    ...(companyId ? { company_id: companyId } : {}),
+  }])
+  return error ? explainPriceError(error.message) : null
+}
+
 /* The first login of a contact. Kept for callers that only ask "does it have
    one"; it no longer breaks when there are several — maybeSingle() did, and
    answered "none" for a partner with two logins. */
@@ -774,6 +824,8 @@ export async function ensureLoginSubscription(contactId, loginId, role, { compan
     return { created: false, row: null, error: null }
   }
   try {
+    // The minimum price the super admin set (fix169); today's prices without it.
+    const { floors } = await fetchPriceFloors()
     const { data: rows, error: readErr } = await supabase
       .from('subscriptions').select('*').eq('contact_id', contactId)
     if (readErr) {
@@ -806,7 +858,7 @@ export async function ensureLoginSubscription(contactId, loginId, role, { compan
         seed = {
           description:  `Annual partner seat — ${start.slice(0, 4)} — awaiting payment`,
           start_date:   start, end_date: addDays(start, 364),
-          amount: SEATS.partner.extraRate, is_paid: false, paid_at: null,
+          amount: floors.partner.amount, currency: floors.partner.currency, is_paid: false, paid_at: null,
           paid_by_note: 'Partner login without a free seat — payable before the portal opens', is_active: false,
         }
       }
@@ -822,7 +874,7 @@ export async function ensureLoginSubscription(contactId, loginId, role, { compan
         ? {
             description:  `Supplier ${plan.name} plan — awaiting payment`,
             start_date:   start, end_date: addDays(start, 29),
-            amount: plan.price, is_paid: false, paid_at: null,
+            amount: planPrice(plan, floors), currency: floors.supplier.currency, is_paid: false, paid_at: null,
             paid_by_note: 'A partner adding supplier access pays for it — the free partner seat does not cover it',
             is_active: false,
           }
@@ -840,7 +892,7 @@ export async function ensureLoginSubscription(contactId, loginId, role, { compan
       ...(companyId ? { company_id: companyId } : {}),
       created_by: userId,
     }]).select('*').single()
-    if (error) return { created: false, row: null, error: error.message }
+    if (error) return { created: false, row: null, error: explainPriceError(error.message) }
     return { created: true, row: data, exempt: !!seed.is_free_seat, error: null }
   } catch (e) {
     return { created: false, row: null, error: e?.message || 'Could not open the subscription.' }
