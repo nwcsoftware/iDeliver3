@@ -37,6 +37,8 @@ import { saveOrderPackages, buildTrackingNumber } from '../lib/orderPackages'
 import OrderServices, { EMPTY_SERVICE } from '../components/orders/OrderServices'
 import { saveOrderServices } from '../lib/orderServices'
 import { syncOrderStock } from '../lib/productStock'
+import ProductPickerModal from '../components/orders/ProductPickerModal'
+import { itemOptions, legacyVariantFields } from '../lib/shopOptions'
 import { canReopenClosedOrder, isStrictAdmin } from '../lib/roles'
 import TagLocationField from '../components/orders/TagLocationField'
 import ContactCombobox from '../components/orders/ContactCombobox'
@@ -534,7 +536,9 @@ function adjustTime(t, deltaMinutes) {
   return `${fmt2(Math.floor(total / 60))}:${fmt2(total % 60)}`
 }
 
-const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0 }
+const EMPTY_ITEM = { product_id: '', quantity: 1, unit_price: 0, currency: 'USD', discount: 0,
+  // The options chosen in the picker, and how they read: "44 · Black + Cheese".
+  picks: null, variant_label: '', variant_color: null, variant_size: null }
 // A row in the Ads subform (Story orders). start_at/end_at are 'YYYY-MM-DDTHH:mm'
 // strings from datetime-local inputs; converted to ISO on save.
 const EMPTY_AD = { platform: '', start_at: '', end_at: '', price: 0, currency: 'USD', notes: '' }
@@ -1152,6 +1156,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   const [mapOpen,   setMapOpen]   = useState(false)   // delivery-address map picker
   const [form,      setForm]      = useState(BASE_FORM)
   const [items,     setItems]     = useState([])
+  // The 3asari3 item picker: null, { mode: 'add' }, or { mode: 'edit', index }.
+  const [picker,    setPicker]    = useState(null)
   const [ads,       setAds]       = useState([])             // ads rows (Story orders)
   const [origAdIds, setOrigAdIds] = useState([])            // ad ids loaded on edit (to diff on save)
   const [customerItems, setCustomerItems] = useState([])    // order_items with item_type='external_request' (customer app)
@@ -1331,7 +1337,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         .select('id,first_name,last_name,mobile,company_name,contact_type,contact_types,entity_type,code,account_number,is_active')
         .order('first_name')
         .order('id')),
-      supabase.from('products').select('id,name,code,unit_price,currency').eq('is_active', true),
+      // Every column: the picker shows the photos and offers the options.
+      supabase.from('products').select('*').eq('is_active', true).order('name'),
       typesQ,
       // Package providers — contacts categorised as "Online".
       supabase.from('contacts')
@@ -2224,14 +2231,26 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
       // The 3asari3 grid manages staff-added product/service lines only. Customer-app
       // lines (item_type 'external_request') are shown elsewhere and preserved on save.
       .neq('item_type', 'external_request')
-    setItems((data ?? []).map(it => ({
-      _id:        it.id,
-      product_id: it.product_id ?? '',
-      quantity:   it.quantity,
-      unit_price: it.unit_price,
-      currency:   it.currency ?? 'USD',
-      discount:   it.discount ?? 0,
-    })))
+    setItems((data ?? []).map(it => {
+      /* The options were saved as "Name (44 · Black)" — read them back so the
+         line still shows them, and saving again keeps them. */
+      const name = it.product?.name || ''
+      const pd = String(it.parcel_description || '')
+      const variant = name && pd.startsWith(`${name} (`) && pd.endsWith(')') ? pd.slice(name.length + 2, -1) : ''
+      return {
+        _id:        it.id,
+        product_id: it.product_id ?? '',
+        _name:      name,
+        quantity:   it.quantity,
+        unit_price: it.unit_price,
+        currency:   it.currency ?? 'USD',
+        discount:   it.discount ?? 0,
+        picks:      null,
+        variant_label: variant,
+        variant_color: it.variant_color ?? null,
+        variant_size:  it.variant_size ?? null,
+      }
+    }))
     // Customer-app requested items (external_request) — shown in their own section
     // for orders placed from the customer application.
     const { data: ciData } = await supabase
@@ -2539,8 +2558,56 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
   /* ── items helpers ───────────────────────────────────────── */
 
-  function addItem() { setItems(p => [...p, { ...EMPTY_ITEM, _key: Date.now() }]) }
-  function removeItem(i) { setItems(p => p.filter((_, idx) => idx !== i)) }
+  function removeItem(i) {
+    swapDetailsLine(itemNote(items[i]), '')
+    setItems(p => p.filter((_, idx) => idx !== i))
+  }
+
+  /* THE PICKER'S RESULT. The line takes the item, its options and its price —
+     the item's own plus whatever extras were chosen, per unit, as the customer
+     app prices them. The options are also written into Order Details, where
+     the driver and whoever packs the order already look. */
+  const itemName = (it) => products.find(p => p.id === it?.product_id)?.name || it?._name || ''
+  const itemNote = (it) => (it?.variant_label ? `${itemName(it)} — ${it.variant_label}` : '')
+
+  /* One line of Order Details per item with options. Only a line this form
+     wrote is ever replaced or removed, matched exactly — anything typed there
+     by hand is left alone. */
+  function swapDetailsLine(oldLine, newLine) {
+    if (!oldLine && !newLine) return
+    setForm(f => {
+      const lines = String(f.order_details_text || '').split('\n').filter((l, i, a) => l !== '' || i < a.length - 1)
+      const at = oldLine ? lines.indexOf(oldLine) : -1
+      if (at >= 0) { if (newLine) lines[at] = newLine; else lines.splice(at, 1) }
+      else if (newLine) lines.push(newLine)
+      return { ...f, order_details_text: lines.join('\n').replace(/^\n+/, '') }
+    })
+  }
+
+  function applyPick({ product, picks, variant, extras }) {
+    const target = picker
+    setPicker(null)
+    if (!product || !target) return
+    const legacy = legacyVariantFields(itemOptions(product), picks || {})
+    const line = {
+      product_id:    product.id,
+      _name:         product.name,
+      unit_price:    Math.round(((Number(product.unit_price) || 0) + (Number(extras) || 0)) * 100) / 100,
+      currency:      product.currency || 'USD',
+      picks:         picks || null,
+      variant_label: variant || '',
+      variant_color: legacy.color,
+      variant_size:  legacy.size,
+    }
+    if (target.mode === 'edit') {
+      const before = items[target.index]
+      setItems(p => p.map((it, i) => (i === target.index ? { ...it, ...line } : it)))
+      swapDetailsLine(itemNote(before), itemNote({ ...before, ...line }))
+    } else {
+      setItems(p => [...p, { ...EMPTY_ITEM, ...line, _key: Date.now() }])
+      swapDetailsLine('', itemNote(line))
+    }
+  }
 
   function setItem(i, k, v) {
     setItems(p => {
@@ -2872,8 +2939,19 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
         currency:   it.currency,
         discount:   Number(it.discount) || 0,
         line_total: lineTotal(it),
+        // The chosen options, the way a customer-app line keeps them:
+        // "Name (44 · Black)", plus colour / size where the shop's own labels
+        // mean those (fix106).
+        parcel_description: it.variant_label ? `${itemName(it)} (${it.variant_label})` : null,
+        variant_color: it.variant_color || null,
+        variant_size:  it.variant_size  || null,
       }))
-      const { error: ie } = await supabase.from('order_items').insert(rows)
+      let { error: ie } = await supabase.from('order_items').insert(rows)
+      // variant_color / variant_size arrive with fix106 — save without them
+      // rather than losing the order where that has not run.
+      if (ie && /variant_(color|size)/.test(ie.message)) {
+        ({ error: ie } = await supabase.from('order_items').insert(rows.map(({ variant_color: _c, variant_size: _s, ...r }) => r)))
+      }
       if (ie) { setError(ie.message); setSaving(false); return }
     }
 
@@ -5447,7 +5525,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
               {!partyContactId && !isStory && !isCustomerApp && (
               <CollapsibleSection title={`3asari3 retails and services (${itemsQty})`} open={sectionsOpen.items} onToggle={v => toggleSection('items', v)}
                 right={
-                  <button type="button" onClick={() => { openSection('items'); addItem() }}
+                  <button type="button" onClick={() => { openSection('items'); setPicker({ mode: 'add' }) }}
                     className="btn-ghost py-1 px-2 text-xs text-brand-400 hover:text-brand-300">
                     <Plus className="w-3 h-3" /> Add Item
                   </button>
@@ -5468,15 +5546,30 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
                     </thead>
                     <tbody>
                       {items.length === 0 ? (
-                        <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">No items — click "Add Item"</td></tr>
+                        <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-600">
+                          <button type="button" onClick={() => setPicker({ mode: 'add' })}
+                            className="text-brand-400 hover:text-brand-300">No items — click to add one</button>
+                        </td></tr>
                       ) : items.map((it, idx) => (
                         <tr key={it._id ?? it._key ?? idx} className="border-t border-surface-border/50">
                           <td className="px-3 py-2">
-                            <select className="input py-1.5 text-xs" value={it.product_id}
-                              onChange={e => setItem(idx, 'product_id', e.target.value)}>
-                              <option value="">— Select —</option>
-                              {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code})</option>)}
-                            </select>
+                            {(() => {
+                              const prod = products.find(p => p.id === it.product_id)
+                              const img = (Array.isArray(prod?.images) && prod.images.find(Boolean)) || prod?.image_url || null
+                              return (
+                                <button type="button" onClick={() => setPicker({ mode: 'edit', index: idx })}
+                                  title={itemName(it) ? 'Change the item or its options' : 'Choose an item'}
+                                  className="w-full flex items-center gap-2 text-left rounded-lg border border-surface-border px-2 py-1 hover:bg-surface-hover transition-colors">
+                                  {img
+                                    ? <img src={img} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" />
+                                    : <span className="w-7 h-7 rounded bg-surface-hover flex items-center justify-center flex-shrink-0"><Package className="w-3.5 h-3.5 text-slate-500" /></span>}
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-slate-100">{itemName(it) || '— Select —'}</span>
+                                    {it.variant_label && <span className="block truncate text-[10px] text-brand-300">{it.variant_label}</span>}
+                                  </span>
+                                </button>
+                              )
+                            })()}
                           </td>
                           <td className="px-3 py-2">
                             <input type="number" min="0.01" step="0.01" className="input py-1.5 text-xs" value={it.quantity}
@@ -6799,7 +6892,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
 
               {(detail.order_details_text || detail.special_instructions) && (
                 <DetailSection title="Notes">
-                  {detail.order_details_text && <p className="text-slate-300 text-xs">{detail.order_details_text}</p>}
+                  {detail.order_details_text && <p className="text-slate-300 text-xs whitespace-pre-line">{detail.order_details_text}</p>}
                   {detail.special_instructions && (
                     <p className="text-slate-500 text-xs"><span className="text-slate-600">Note: </span>{detail.special_instructions}</p>
                   )}
@@ -6809,6 +6902,18 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
           </div>
         </>,
         document.body)}
+
+      {/* The 3asari3 item picker — cards with photos, then the options, then OK. */}
+      {picker && (
+        <ProductPickerModal
+          products={products}
+          initial={picker.mode === 'edit'
+            ? { product_id: items[picker.index]?.product_id, picks: items[picker.index]?.picks }
+            : null}
+          onPick={applyPick}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </div>
   )
 }
