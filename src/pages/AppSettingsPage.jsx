@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange, BadgeDollarSign } from 'lucide-react'
+import { Settings, Bell, Save, CheckCircle2, Clock, Database, Lock, ArrowRightLeft, CalendarRange, BadgeDollarSign, FileDown, Loader } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
@@ -9,6 +9,8 @@ import { fetchPriceFloors, setPriceFloor, setSalePrice, salePrice, planPrice, fm
 import { fetchSeatSettings, setSeat } from '../lib/seatSettings'
 import { SEATS, SUPPLIER_SUBSCRIPTION } from '../lib/billing'
 import { TRIAL_DAYS } from '../lib/subscriptions'
+import { loadSubscriptionReport } from '../lib/subscriptionReport'
+import { downloadSubscriptionReportPdf } from '../lib/subscriptionReportPdf'
 import { fetchSoftwareSubscriptions, saveSoftwareSubscription, paymentSummary } from '../lib/softwareSubscriptions'
 
 /* General application settings. Currently holds the order-confirmation reminder
@@ -103,6 +105,26 @@ export default function AppSettingsPage() {
   const edit = (row, key, v) => {
     setDraft(d => ({ ...d, [key]: v }))
     setRowMsg(m => { const y = { ...m }; delete y[row]; return y })
+  }
+
+  /* THE STATUS REPORT (super admin): every subscription, from the super
+     admin's side, as a PDF. Refused rather than printed when any record could
+     not be read in full — a report that is missing rows is not the final one. */
+  const [reportBusy, setReportBusy] = useState(false)
+  const [reportMsg, setReportMsg]   = useState('')
+  async function exportReport() {
+    setReportBusy(true); setReportMsg('')
+    try {
+      const { report, users, error, partial } = await loadSubscriptionReport({ companyId: COMPANY_ID })
+      if (error || partial) { setReportMsg(`The report was not made: ${error || 'some records could not be read in full'}. Try again.`); return }
+      const names = new Map(users.map(u => [u.id, u.username]))
+      const who = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
+      await downloadSubscriptionReportPdf(report, { generatedBy: who, loginName: r => names.get(r.user_account_id) || '' })
+    } catch (e) {
+      setReportMsg(`The report was not made: ${e?.message || e}`)
+    } finally {
+      setReportBusy(false)
+    }
   }
 
   /* One row's changes, saved together — each through its own guarded function. */
@@ -492,7 +514,17 @@ export default function AppSettingsPage() {
                   <BadgeDollarSign className="w-4 h-4 text-fuchsia-300" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Subscription settings</h2>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h2 className="text-sm font-semibold text-slate-100">Subscription settings</h2>
+                    {isSuperAdmin && (
+                      <button type="button" onClick={exportReport} disabled={reportBusy}
+                        title="Every subscription — totals, paid, pending, free seats and trials — as a PDF"
+                        className="btn-primary px-3 py-1.5 text-xs ml-auto disabled:opacity-50">
+                        {reportBusy ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Status report (PDF)
+                      </button>
+                    )}
+                  </div>
+                  {reportMsg && <p className="text-[11px] text-rose-300 mt-1">{reportMsg}</p>}
                   <p className="text-xs text-slate-500 mt-0.5">
                     Every subscription price in one place. The <span className="text-slate-300">super admin&rsquo;s price</span> is
                     what the office owes the super admin; for partners, the <span className="text-slate-300">selling price</span> is

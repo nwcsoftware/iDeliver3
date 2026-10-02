@@ -96,6 +96,10 @@ What that means when building:
   recorded as an unpaid row: on the login for office seats, on the driver
   contact for driver seats. The yearly software fee is the Software
   Subscriptions record itself, shown and priced in the same section.
+  The super admin's **Status report (PDF)** in that section is every
+  subscription from the super admin's side — owed, paid, pending, free —
+  built by `lib/subscriptionReport` (one calculation; the PDF only draws it)
+  and refused when any record cannot be read in full.
 - **Subscriptions & seats (fix163)** — a subscription belongs to a LOGIN, and the
   login's ROLE decides it: partner logins need a partner seat, supplier logins a
   supplier plan (a partner adding supplier pays; a free partner seat never covers
