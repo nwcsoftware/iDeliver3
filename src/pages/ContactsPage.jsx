@@ -25,7 +25,6 @@ import {
   Trash2,
   CalendarCheck,
   Smartphone,
-  Receipt,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
@@ -33,12 +32,10 @@ import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import PartyLogins from '../components/contacts/PartyLogins'
 import { canManagePartyLogins, canManageCustomerLogin, canRenameCustomerLogin } from '../lib/roles'
-import { isStrictAdmin, roleIsExactly } from '../lib/roles'
-import { fetchPriceFloors, priceProblem, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
+import { isStrictAdmin } from '../lib/roles'
+import { fetchPriceFloors, fmtFloor, salePrice, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
 import { generateAccountNumber, ensureUniqueAccountNumber, insertContactWithUniqueCode, formatAccountNumber } from '../lib/accountNumber'
-import {
-  TRIAL_DAYS, holdsPartnerSubscription, openPartnerSubscription, todayStr, addDays,
-} from '../lib/subscriptions'
+import { TRIAL_DAYS } from '../lib/subscriptions'
 import { formatMobile } from '../lib/phone'
 import ContactFormFields, { ACCOUNT_NUMBER_TYPES, CONTACT_ROLES, normalizeOptions } from '../components/contacts/ContactFormFields'
 import { CONTACT_EXTRA_FIELDS } from '../lib/contactFields'
@@ -156,12 +153,9 @@ export default function ContactsPage({ type }) {
   const { COMPANY_ID, orders, loadFullOrderHistory, refreshInactiveContacts } = useApp()
   const { currentUser, hasRole } = useAuth()
   const isAdmin = isStrictAdmin(currentUser?.role)
-  /* Who must accept the charge when a contact becomes a partner (fix169): an
-     admin, who also sees and may raise the price, and a Senior Call Center
-     user, who sees no price. The super admin manages subscriptions directly. */
-  const asksPartnerCharge = roleIsExactly(currentUser?.role, 'admin', 'senior_call_center')
-  const [partnerPrompt, setPartnerPrompt] = useState(null)   // { floors, price, agreed }
-  // The minimum partner price, for the note on the Add form — administrators only.
+  /* Saving a partner no longer charges anything (fix172): the subscription is
+     opened with each portal login, and accepted there (PartyLogins). */
+  // The admin's partner price, for the note on the Add form — administrators only.
   const [floors, setFloors] = useState(DEFAULT_FLOORS)
   useEffect(() => { if (isAdmin) fetchPriceFloors().then(r => setFloors(r.floors)) }, [isAdmin])
   const isSuperAdmin = hasRole('super_admin')   // only the super admin may hard-delete a contact
@@ -519,9 +513,7 @@ export default function ContactsPage({ type }) {
     }
   }
 
-  async function handleSave(opts) {
-    // The button passes its click event; only the partner prompt passes this.
-    const accepted = opts?.partnerAccepted ? opts : null
+  async function handleSave() {
     const isCompany = form.entity_type === 'company'
     if (isCompany && !form.company_name.trim()) return setError('Company name is required.')
     if (!form.first_name.trim()) return setError(`${isCompany ? 'Contact first' : 'First'} name is required.`)
@@ -541,24 +533,6 @@ export default function ContactsPage({ type }) {
     const selectedTypes = (Array.isArray(form.contact_types) && form.contact_types.length)
       ? [...new Set(form.contact_types)]
       : [cfg.contactType]
-    /* A NEW PARTNER IS A NEW CHARGE (fix169). Becoming a partner — added as one,
-       or a customer or supplier made one — puts a partner subscription on the
-       invoice, unless the contact already holds a current one (a free seat
-       counts). The save stops here until the charge is accepted, and nothing
-       has been written yet, so Cancel leaves everything as it was. */
-    const wasTypes = modal !== 'add'
-      ? ((Array.isArray(modal.contact_types) && modal.contact_types.length) ? modal.contact_types : [modal.contact_type])
-      : []
-    if (asksPartnerCharge && !accepted && selectedTypes.includes('partner') && !wasTypes.includes('partner')) {
-      const holds = modal !== 'add' && await holdsPartnerSubscription(modal.id)
-      if (!holds) {
-        const { floors } = await fetchPriceFloors()
-        setPartnerPrompt({ floors, price: String(floors.partner.amount), agreed: false })
-        setSaving(false)
-        return
-      }
-    }
-
     /* Adding or removing the partner / supplier type no longer touches any login
        or subscription (fix163): each portal login keeps the role it was made
        with and the subscription that goes with it. Adding "supplier" gives
@@ -669,21 +643,6 @@ export default function ContactsPage({ type }) {
        and at this point nobody can: the login is created separately, and that
        is where the free period now begins (fix136). */
 
-    /* The accepted charge, now that the contact exists to carry it. A failure
-       is said plainly: the contact is saved, and the subscription can be added
-       from the Subscriptions page. */
-    let chargeNote = ''
-    if (accepted) {
-      const who = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
-      const subErr = await openPartnerSubscription({
-        contactId, price: accepted.price, currency: accepted.currency, acceptedBy: who,
-        companyId: COMPANY_ID, userId: currentUser?.user_id || null,
-      })
-      chargeNote = subErr
-        ? `The contact is saved, but its partner subscription could not be added: ${subErr}`
-        : 'A partner subscription for one year was added, unpaid — the partner\u2019s portal opens once the super admin records the payment and activates it.'
-    }
-
     /* Say what a type change means, since nothing happens to the logins. */
     const before = modal !== 'add' ? (modal.contact_types || []) : []
     const dropped = ['partner', 'supplier'].filter(t => before.includes(t) && !selectedTypes.includes(t))
@@ -695,7 +654,6 @@ export default function ContactsPage({ type }) {
       added.includes('supplier') && before.includes('partner')
         ? 'Supplier access needs its own supplier login, added under Portal logins, with its own paid supplier plan — the partner seat does not cover it.'
         : '',
-      chargeNote,
     ].filter(Boolean).join(' '))
 
     // Saved successfully → close immediately, then refresh the list in the background.
@@ -1166,10 +1124,10 @@ export default function ContactsPage({ type }) {
                       <span className="text-green-300 font-medium">10 free partner seats</span>{' '}
                       come with the annual package. A seat is assigned to a partner for one year, and all that
                       partner's portal logins are free for the year; when it ends, the seat can be assigned again.
-                      A partner without a free seat pays for each portal login
-                      {isAdmin ? ` — at least ${fmtPerPeriod(floors.partner)} —` : ''} and it cannot sign in until the
-                      super admin activates it or records the payment
-                      under <span className="text-slate-300">Settings → Subscriptions</span>.
+                      Otherwise each portal login you add opens its own one-year subscription
+                      {isAdmin ? ` at ${fmtFloor(salePrice('partner', floors), floors.partner.currency)}` : ''}, switched on at once so
+                      the partner can sign in, with the payment due until it is recorded
+                      under <span className="text-slate-300">Settings → Subscription Accounts</span>.
                     </>
                   ) : (
                     <>
@@ -1328,86 +1286,6 @@ export default function ContactsPage({ type }) {
           </div>
         </div>
       )}
-
-      {/* ── A new partner is a new charge (fix169) ────────────────────────
-          Accepted, or the contact is not saved. An admin sees the price and may
-          raise it, never below the super admin's minimum; a Senior Call Center
-          user sees no price at all. */}
-      {partnerPrompt && (() => {
-        const floor = partnerPrompt.floors.partner
-        const start = todayStr()
-        const end   = addDays(start, 364)
-        const name  = (form.entity_type === 'company' && form.company_name?.trim())
-          || `${form.first_name ?? ''} ${form.last_name ?? ''}`.trim() || 'This contact'
-        const problem = isAdmin
-          ? priceProblem({ role: 'partner', amount: partnerPrompt.price, currency: floor.currency, start, end }, partnerPrompt.floors)
-          : ''
-        const accept = () => {
-          const p = partnerPrompt
-          setPartnerPrompt(null)
-          handleSave({
-            partnerAccepted: true,
-            price: isAdmin ? Number(p.price) : p.floors.partner.amount,
-            currency: p.floors.partner.currency,
-          })
-        }
-        return (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[90] p-4">
-            <div className="card w-full max-w-md p-5 space-y-4" role="dialog" aria-label="New partner subscription">
-              <div className="flex items-start gap-3">
-                <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-fuchsia-500/10 border border-fuchsia-500/30">
-                  <Receipt className="w-4 h-4 text-fuchsia-300" />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-semibold text-slate-100">A new partner subscription</h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    <span className="text-slate-200 font-medium">{name}</span> is becoming a partner. A partner
-                    subscription will be added to your invoice for one year, {start} to {end}.
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-[11px] text-slate-500">
-                It starts unpaid and switched off: the partner&rsquo;s portal opens once the super admin records the
-                payment and activates it. If an administrator later gives this partner one of the free seats, the
-                charge is cancelled.
-              </p>
-
-              {isAdmin ? (
-                <div>
-                  <label className="label">Price *</label>
-                  <div className="relative">
-                    <input type="number" min={floor.amount} step="0.01" className="input pr-24" value={partnerPrompt.price}
-                      onChange={e => setPartnerPrompt(p => ({ ...p, price: e.target.value }))} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{floor.currency} / year</span>
-                  </div>
-                  <p className={`text-[11px] mt-1 ${problem ? 'text-rose-300' : 'text-slate-500'}`}>
-                    {problem || `The minimum is ${fmtPerPeriod(floor)}, set by the super admin. You may charge more.`}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-[11px] text-slate-400">The price is set by an administrator.</p>
-              )}
-
-              <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                <input type="checkbox" className="w-4 h-4 accent-fuchsia-500 mt-0.5" checked={partnerPrompt.agreed}
-                  onChange={e => setPartnerPrompt(p => ({ ...p, agreed: e.target.checked }))} />
-                <span className="text-sm text-slate-200">I understand, and agree to this subscription being added to the invoice.</span>
-              </label>
-
-              <div className="flex justify-end gap-2">
-                <button className="btn-ghost px-4 py-2 text-sm border border-surface-border" onClick={() => setPartnerPrompt(null)}>
-                  Cancel
-                </button>
-                <button className="btn-primary px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={!partnerPrompt.agreed || !!problem} onClick={accept}>
-                  <Check className="w-4 h-4" /> Accept and save
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* ── Deactivating a contact ──────────────────────────────────────
           Refused while anything is outstanding: a retired contact disappears

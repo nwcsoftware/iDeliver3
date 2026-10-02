@@ -123,6 +123,8 @@ export const navGroups = [
       { to: '/settings/front-page',             icon: Globe,        label: 'Front Page', strictAdminOnly: true },
       { to: '/settings/users',                  icon: UserCog,      label: 'User Accounts', strictAdminOnly: true },
       { to: '/settings/subscriptions',          icon: CreditCard,   label: 'Subscriptions' },
+      // Who paid the office, and what the office owes the super admin (fix172).
+      { to: '/settings/subscription-accounts',  icon: Scale,        label: 'Subscription Accounts', strictAdminOnly: true },
       { to: '/settings/software-subscriptions', icon: AppWindow,    label: 'Software Subscriptions', strictAdminOnly: true },
       { to: '/settings/change-requests',        icon: ClipboardPen, label: 'Change Requests', strictAdminOnly: true },
       /* Moved here from Super Admin: an administrator may delete an order.

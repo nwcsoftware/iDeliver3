@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
-import { fetchPriceFloors, setPriceFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
+import { fetchPriceFloors, setPriceFloor, setSalePrice, salePrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
@@ -73,6 +73,24 @@ export default function AppSettingsPage() {
     if (!canSetLimits) return
     fetchPriceFloors().then(r => { setFloors(r.floors); setFloorsReady(r.installed) })
   }, [canSetLimits])
+
+  /* THE ADMIN'S PARTNER PRICE (fix172) — what every new partner login's
+     one-year subscription is sold at. Admin and super admin set it, never under
+     the minimum; the database refuses less. */
+  const [saleDraft, setSaleDraft] = useState(undefined)
+  const [saleMsg, setSaleMsg]     = useState(null)            // { ok, text }
+  async function saveSale() {
+    const amount = Math.round((Number(saleDraft) || 0) * 100) / 100
+    const floor = Number(floors.partner.amount) || 0
+    if (!(amount > 0)) { setSaleMsg({ ok: false, text: 'Enter a price.' }); return }
+    if (amount < floor) { setSaleMsg({ ok: false, text: `It cannot be under the minimum of ${fmtPerPeriod(floors.partner)}.` }); return }
+    const { row, error } = await setSalePrice(currentUser?.user_id, 'partner', amount)
+    if (error) { setSaleMsg({ ok: false, text: error }); return }
+    setFloors(f => ({ ...f, partner: { ...f.partner, ...(row || {}), sale_amount: Number(row?.sale_amount ?? amount) } }))
+    setSaleDraft(undefined)
+    setSaleMsg({ ok: true, text: 'Saved' })
+    setTimeout(() => setSaleMsg(null), 2000)
+  }
 
   async function saveFloor(role) {
     const raw = floorDraft[role]
@@ -430,6 +448,67 @@ export default function AppSettingsPage() {
                 ? 'Only you can change these. The database holds every price an administrator sets to them; your own prices may go below.'
                 : 'Set by the super admin. Every subscription you price is held to these.'}
             </p>
+          </div>
+        )}
+
+        {/* The admin's own partner price (fix172) */}
+        {canSetLimits && (
+          <div className="card p-5 space-y-4" data-section="partner-price">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
+                <BadgeDollarSign className="w-4 h-4 text-brand-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Partner subscription — your price</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  What a partner pays you for a year. Every portal login opened for a partner gets a one-year
+                  subscription at this price, switched on at once. For each one the super admin is owed the
+                  minimum ({fmtPerPeriod(floors.partner)}); anything above it is yours. It cannot be lower than the minimum.
+                </p>
+              </div>
+            </div>
+            {(() => {
+              const floor = Number(floors.partner.amount) || 0
+              const set = Number(floors.partner.sale_amount) || 0
+              const value = saleDraft ?? String(set || floor)
+              const dirty = saleDraft !== undefined && Number(saleDraft) !== (set || floor)
+              const margin = Math.round(((Number(value) || 0) - floor) * 100) / 100
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 max-w-md">
+                    <div className="relative flex-1">
+                      <input type="number" min={floor} step="0.01" className="input pr-24 text-sm" aria-label="Your partner price"
+                        disabled={!floorsReady} value={value}
+                        onChange={e => { setSaleDraft(e.target.value); setSaleMsg(null) }} />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{floors.partner.currency} / year</span>
+                    </div>
+                    <button type="button" onClick={saveSale} disabled={!dirty || !floorsReady}
+                      className="btn-primary px-3 py-2 text-xs disabled:opacity-40">
+                      <Save className="w-3.5 h-3.5" /> Save
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {Number(value) >= floor
+                      ? <>The super admin gets {fmtFloor(floor, floors.partner.currency)} of it; you keep <span className="text-slate-300">{fmtFloor(margin, floors.partner.currency)}</span> per subscription.</>
+                      : <span className="text-rose-300">Below the minimum of {fmtPerPeriod(floors.partner)}.</span>}
+                  </p>
+                  {set > 0 && set < floor && (
+                    <p className="text-[11px] text-amber-300">
+                      The super admin has raised the minimum above your price — new subscriptions are charged the
+                      minimum, {fmtFloor(salePrice('partner', floors), floors.partner.currency)}, until you set a new price.
+                    </p>
+                  )}
+                  {!set && floorsReady && (
+                    <p className="text-[11px] text-slate-500">Not set yet — new subscriptions are charged the minimum.</p>
+                  )}
+                  {saleMsg && (
+                    <p className={`text-[11px] flex items-center gap-1 ${saleMsg.ok ? 'text-green-400' : 'text-rose-300'}`}>
+                      {saleMsg.ok && <CheckCircle2 className="w-3 h-3" />}{saleMsg.text}
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 

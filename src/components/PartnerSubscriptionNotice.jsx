@@ -1,19 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, CalendarClock } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Receipt } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import {
-  fetchSubscriptionsForContact, subscriptionNotice, SUBSCRIPTION_NOTICE_DAYS,
+  fetchSubscriptionsForContact, subscriptionNotice, rowsForLogin, SUBSCRIPTION_NOTICE_DAYS,
 } from '../lib/subscriptions'
 
 /* The subscription bar in the supplier / partner portal header.
 
    Same idea as LicenseNotice, but the data is the signed-in 2nd party's own
-   rows in `subscriptions`, found through their linked contact. It appears a
-   month before their cover ends and stays until they hold a subscription that
-   is paid, activated and dated past that point — the same condition that lets
-   them sign in at all, so the bar clears exactly when their access is safe. */
+   rows in `subscriptions` — THIS LOGIN's, not its colleagues': a partner with
+   two logins holds two subscriptions, and reading both told one person about
+   the other's renewal, or kept quiet while their own ran out.
+
+   It appears a month before their cover ends, and — for a partner, whose
+   subscription runs from the day the login is made (fix172) — while the one in
+   force is still unpaid, with the amount they were sold it at. */
 const REFRESH_MS = 10 * 60 * 1000
+
+const money = (v, c) => `${(Number(v) || 0).toFixed(2)} ${c || 'USD'}`
 
 export default function PartnerSubscriptionNotice() {
   const { currentUser, hasRole } = useAuth()
@@ -21,14 +26,15 @@ export default function PartnerSubscriptionNotice() {
 
   const isParty   = hasRole('partner', 'supplier')
   const contactId = currentUser?.contact_id || null
+  const userId    = currentUser?.user_id || null
 
   const [notice, setNotice] = useState(null)
 
   const check = useCallback(async () => {
     if (!contactId) return
     const { rows } = await fetchSubscriptionsForContact(contactId)
-    setNotice(subscriptionNotice(rows))
-  }, [contactId])
+    setNotice(subscriptionNotice(rowsForLogin(rows, userId)))
+  }, [contactId, userId])
 
   useEffect(() => {
     if (!isParty || !contactId) return
@@ -40,25 +46,30 @@ export default function PartnerSubscriptionNotice() {
 
   if (!isParty || !notice) return null
 
-  const { row, days, expired, pendingRenewal, none } = notice
+  const { row, days, expired, pendingRenewal, none, due, soon } = notice
+  // Running out soon (or gone) says so first; otherwise an unpaid one says what is owed.
+  const owing = !!due && !none && !expired && !soon
 
   const headline = none
     ? 'No active subscription'
-    : expired
-      ? `Subscription expired ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago`
-      : days === 0
-        ? 'Subscription expires today'
-        : `Subscription ends in ${days} day${days === 1 ? '' : 's'}`
+    : owing
+      ? `Payment due — ${money(due.amount, due.currency)}`
+      : expired
+        ? `Subscription expired ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago`
+        : days === 0
+          ? 'Subscription expires today'
+          : `Subscription ends in ${days} day${days === 1 ? '' : 's'}`
 
   const title = [
-    none ? 'You have no paid, activated subscription.' : `Your subscription runs to ${row.end_date}.`,
+    none ? 'You have no active subscription.' : `Your subscription runs to ${row.end_date}.`,
+    due ? `${money(due.amount, due.currency)} is due for it — please settle it with the office.` : '',
     pendingRenewal
-      ? 'A renewal has been recorded and is waiting for payment confirmation.'
-      : 'Contact the office to renew — access stops when it expires.',
+      ? 'A renewal has been recorded and is waiting to be switched on.'
+      : owing ? '' : 'Contact the office to renew — access stops when it expires.',
     'Click to open My Subscription.',
-  ].join(' ')
+  ].filter(Boolean).join(' ')
 
-  const Icon = expired || none ? AlertTriangle : CalendarClock
+  const Icon = expired || none ? AlertTriangle : owing ? Receipt : CalendarClock
   const tone = expired || none
     ? 'bg-red-500/15 border-red-500/40 text-red-200 hover:bg-red-500/25'
     : 'bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25'

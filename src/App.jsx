@@ -41,6 +41,7 @@ import ShopCategoriesPage     from './pages/ShopCategoriesPage'
 import HeaderBackgroundPage   from './pages/HeaderBackgroundPage'
 import CustomerThemePage     from './pages/CustomerThemePage'
 import SubscriptionsPage      from './pages/SubscriptionsPage'
+import SubscriptionAccountsPage from './pages/SubscriptionAccountsPage'
 import PartyStatementPage     from './pages/PartyStatementPage'
 import CurrencyCheckPage      from './pages/CurrencyCheckPage'
 import { OrderQuickViewProvider } from './components/orders/OrderQuickView'
@@ -252,6 +253,7 @@ function AppShell() {
                 <Route path="/settings/front-page-background" element={<LandingBackgroundPage />} />
                 <Route path="/settings/customer-theme"    element={<CustomerThemePage />} />
                 <Route path="/settings/subscriptions" element={<SubscriptionsPage />} />
+                <Route path="/settings/subscription-accounts" element={<StrictAdminRoute what="Subscription Accounts"><SubscriptionAccountsPage /></StrictAdminRoute>} />
                 <Route path="/settings/software-subscriptions" element={<StrictAdminRoute what="Software Subscriptions"><SoftwareSubscriptionsPage /></StrictAdminRoute>} />
                 <Route path="/settings/change-requests" element={<StrictAdminRoute what="Change Requests"><ChangeRequestsPage /></StrictAdminRoute>} />
                 <Route path="/settings/delete-order" element={<StrictAdminRoute what="Delete Order"><DeleteOrderPage /></StrictAdminRoute>} />

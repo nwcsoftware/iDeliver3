@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { KeyRound, UserPlus, Loader, Copy, Check, AlertCircle, RefreshCw, ExternalLink, MonitorSmartphone, Gift } from 'lucide-react'
+import { KeyRound, UserPlus, Loader, Copy, Check, AlertCircle, RefreshCw, ExternalLink, MonitorSmartphone, Gift, Receipt } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import {
-  fetchLoginsForContact, ensureLoginSubscription, rowsForLogin, freeSeatMap,
-  subscriptionStatus, STATUS_STYLES, TRIAL_DAYS, RATE_CURRENCY, PARTNER_FREE_LIMIT,
+  fetchLoginsForContact, ensureLoginSubscription, rowsForLogin, freeSeatMap, isFreeSeatRow,
+  subscriptionStatus, STATUS_STYLES, TRIAL_DAYS, RATE_CURRENCY, PARTNER_FREE_LIMIT, todayStr, addDays,
 } from '../../lib/subscriptions'
 import { SUPPLIER_SUBSCRIPTION } from '../../lib/billing'
-import { isStrictAdmin } from '../../lib/roles'
-import { fetchPriceFloors, planPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../../lib/subscriptionPrices'
+import { isStrictAdmin, roleIsExactly } from '../../lib/roles'
+import { fetchPriceFloors, planPrice, fmtFloor, salePrice, DEFAULT_FLOORS } from '../../lib/subscriptionPrices'
 
 /* A PARTNER'S OR SUPPLIER'S LOGINS, managed from its own profile (fix160).
 
@@ -20,9 +20,9 @@ import { fetchPriceFloors, planPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } f
    the super admin's, on User Accounts.
 
    Each login carries its own subscription, opened the moment it is created:
-   nothing for a partner inside the free ten, a payable seat for a partner
-   beyond it (unpaid and switched off until the super admin activates it or
-   records the payment), the free trial for a supplier. */
+   nothing for a partner holding a free seat; otherwise a one-year subscription
+   at the admin's price, switched on at once with the payment due (fix172), so
+   the partner signs in straight away; the free trial for a supplier. */
 
 const PW_MIN = 8
 
@@ -87,6 +87,13 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
      logins here, but is told what happens, not what it costs. The amounts come
      from the minimum the super admin set. */
   const showPrices = isStrictAdmin(currentUser?.role)
+  /* A NEW PARTNER LOGIN IS A NEW CHARGE (fix172). An admin or a Senior Call
+     Center user accepts it before the login is made — the admin sees the price,
+     the senior rank does not. The super admin manages subscriptions directly
+     and is not asked. */
+  const asksCharge = roleIsExactly(currentUser?.role, 'admin', 'senior_call_center')
+  const [chargePrompt, setChargePrompt] = useState(null)      // { agreed }
+  const myName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
   const [floors, setFloors] = useState(DEFAULT_FLOORS)
   useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
 
@@ -128,10 +135,13 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
     setErr(''); setIssued(null); setAdding(true)
   }
 
-  async function createLogin() {
+  async function createLogin(opts) {
     if (form.username.trim().length < 3) { setErr('The username must be at least 3 characters.'); return }
     if (!form.mobile.trim())              { setErr('Enter a mobile number.'); return }
     if (form.password.length < PW_MIN)    { setErr(`The password must be at least ${PW_MIN} characters.`); return }
+    // Nothing is written until the charge is accepted, so Cancel leaves no trace.
+    if (asksCharge && opensCharge && opts?.chargeAccepted !== true) { setChargePrompt({ agreed: false }); return }
+    setChargePrompt(null)
     setBusy(true); setErr('')
     const { data: loginId, error } = await supabase.rpc('admin_create_party_login', {
       p_actor_id:   currentUser?.user_id,
@@ -145,7 +155,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
     if (error) { setBusy(false); setErr(friendly(error.message)); return }
 
     const sub = await ensureLoginSubscription(contact.id, loginId, form.role, {
-      companyId, userId: currentUser?.user_id || null, contactTypes,
+      companyId, userId: currentUser?.user_id || null, userName: myName, contactTypes,
     })
     const payable = Number(sub.row?.amount) > 0
     const note = sub.error
@@ -153,7 +163,10 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
       : sub.exempt
         ? `This partner holds a free seat, so the login is free until ${sub.row?.end_date}. They can sign in now.`
         : sub.attached
-          ? 'The subscription already placed for this partner is now this login’s. It is unpaid: they can sign in once the super admin activates it or records the payment.'
+          ? 'The subscription already placed for this partner is now this login’s, and it is switched on — they can sign in now. It shows as payment due until the partner’s payment is recorded.'
+          : payable && form.role === 'partner'
+            ? `A one-year subscription${showPrices ? ` of ${fmtFloor(sub.row.amount, sub.row.currency || RATE_CURRENCY)}` : ''} is opened for this login and switched on — they can sign in now. `
+              + 'It shows as payment due until the partner’s payment is recorded.'
           : payable
             ? `A payable subscription${showPrices ? ` of ${fmtFloor(sub.row.amount, sub.row.currency || RATE_CURRENCY)}` : ''} is opened for this login, unpaid. `
               + 'They can sign in once the super admin activates it or records the payment.'
@@ -206,6 +219,12 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
   const seatsLeft  = seatsInUse == null ? null : Math.max(0, PARTNER_FREE_LIMIT - seatsInUse)
   const isPartner  = roles.includes('partner')
   const roleName   = roles.length > 1 ? 'partner and supplier' : (roles[0] || role)
+  /* Will this login open a NEW charge? A partner login without a free seat
+     does — unless a subscription already waits on the contact, which it takes. */
+  const waitingRow = subs.find(r => !r.user_account_id && !isFreeSeatRow(r)
+    && (r.subscription_role == null || r.subscription_role === 'partner'))
+  const opensCharge = form.role === 'partner' && !freeSeat && !waitingRow
+  const partnerPrice = fmtFloor(salePrice('partner', floors), floors.partner.currency)
 
   return (
     <div className="border border-surface-border rounded-lg p-3 bg-surface-hover/30 space-y-3">
@@ -244,8 +263,8 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
               : seat
                 ? <>Holds a free seat until {seat.end}, but it is switched off — partner logins are refused.</>
                 : showPrices
-                  ? <>No free seat — each partner login pays at least {fmtPerPeriod(floors.partner)}.</>
-                  : <>No free seat — each partner login has its own paid subscription.</>}
+                  ? <>No free seat — each partner login opens a one-year subscription at {partnerPrice}.</>
+                  : <>No free seat — each partner login opens its own one-year subscription.</>}
           </span>
           {seatsInUse != null && (
             <span className="text-[10px] text-slate-500">{seatsInUse} of {PARTNER_FREE_LIMIT} seats in use</span>
@@ -331,7 +350,9 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
             {form.role === 'partner'
               ? (freeSeat
                   ? `This partner holds a free seat until ${seat.end}, so the login is free until then.`
-                  : `A payable seat${showPrices ? ` of ${fmtPerPeriod(floors.partner)}` : ''} opens with it, unpaid — sign-in waits for the super admin to activate it.`)
+                  : waitingRow
+                    ? 'The subscription already placed for this partner goes to this login, switched on.'
+                    : `A one-year subscription${showPrices ? ` of ${partnerPrice}` : ''} opens with it, switched on at once — payment due until the partner’s payment is recorded.`)
               : (isPartner
                   ? `A partner adding supplier access pays for it: a ${SUPPLIER_SUBSCRIPTION.plans[0].name} plan${showPrices ? ` of ${fmtFloor(planPrice(SUPPLIER_SUBSCRIPTION.plans[0], floors), floors.supplier.currency)} a month` : ''} opens with it, unpaid — the free partner seat does not cover it.`
                   : `A supplier login starts with a free ${TRIAL_DAYS}-day subscription.`)}
@@ -345,6 +366,49 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
           </div>
         </div>
       )}
+
+      {chargePrompt && (() => {
+        const start = todayStr(), end = addDays(start, 364)
+        const name = contact?.company_name?.trim() || `${contact?.first_name ?? ''} ${contact?.last_name ?? ''}`.trim() || 'This partner'
+        return (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[90] p-4">
+            <div className="card w-full max-w-md p-5 space-y-4" role="dialog" aria-label="New partner subscription">
+              <div className="flex items-start gap-3">
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-fuchsia-500/10 border border-fuchsia-500/30">
+                  <Receipt className="w-4 h-4 text-fuchsia-300" />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-slate-100">A new partner subscription</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    <span className="text-slate-200 font-medium">{name}</span> is getting the portal login{' '}
+                    <span className="font-mono text-slate-200">{form.username.trim()}</span>. A partner subscription will be
+                    added to your invoice for one year, {start} to {end}{showPrices ? <>, at <span className="text-slate-200 font-medium">{partnerPrice}</span></> : null}.
+                  </p>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                It is switched on at once, so the partner can sign in straight away, and shows as payment due until
+                the partner&rsquo;s payment is recorded.{showPrices ? ' The price is the one set in App Settings.' : ' The price is set by an administrator.'}
+                {' '}If an administrator later gives this partner one of the free seats, the charge is cancelled.
+              </p>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" className="w-4 h-4 accent-fuchsia-500 mt-0.5" checked={chargePrompt.agreed}
+                  onChange={e => setChargePrompt(p => ({ ...p, agreed: e.target.checked }))} />
+                <span className="text-sm text-slate-200">I understand, and agree to this subscription being added to the invoice.</span>
+              </label>
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost px-4 py-2 text-sm border border-surface-border" onClick={() => setChargePrompt(null)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn-primary px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!chargePrompt.agreed || busy} onClick={() => createLogin({ chargeAccepted: true })}>
+                  <Check className="w-4 h-4" /> Accept and create login
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {loading ? (
         <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader className="w-3.5 h-3.5 animate-spin" /> Loading…</p>

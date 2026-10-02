@@ -40,8 +40,9 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import {
-  fetchPriceFloors, priceProblem, minimumPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS,
+  fetchPriceFloors, priceProblem, minimumPrice, fmtFloor, fmtPerPeriod, salePrice, DEFAULT_FLOORS,
 } from '../lib/subscriptionPrices'
+import { isPartnerSubscription } from '../lib/subscriptionAccounts'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
@@ -144,6 +145,11 @@ export default function SubscriptionsPage() {
      An admin prices a subscription by hand; the super admin also records the
      payment, switches it on and off, and may delete it. */
   const showPrices   = canEditSubs
+  /* A PARTNER's subscription is the admin's own business (fix172): the partner
+     pays the office, so an admin records that payment and may switch a
+     non-payer off and on again. Suppliers stay the super admin's. Deleting any
+     row stays the super admin's. */
+  const canHandle = (r) => isSuperAdmin || (canEditSubs && isPartnerSubscription(r))
   // The minimum price the super admin set (fix169); today's prices without it.
   const [floors, setFloors] = useState(DEFAULT_FLOORS)
   useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
@@ -552,10 +558,10 @@ export default function SubscriptionsPage() {
       description: `Annual partner seat — ${from.slice(0, 4)}`,
       start_date: from,
       end_date: addDays(from, 364),
-      amount: String(floors.partner.amount),
+      amount: String(salePrice('partner', floors)),
       currency: floors.partner.currency,
       is_paid: false,
-      paid_by_note: 'Invoiced to 3asari3 with the annual package',
+      paid_by_note: 'Renewal — the partner pays the office',
       is_active: false,
     })
     setFormErr(''); setModal('add')
@@ -617,8 +623,14 @@ export default function SubscriptionsPage() {
       if (problem) { setFormErr(problem); return }
     }
     setSaving(true); setFormErr('')
+    /* A partner subscription an admin adds runs from the start, like the ones
+       opened with a login (fix172): switched on, the payment due to the office.
+       The super admin sets these himself on the form. */
+    const opensOn = modal === 'add' && !isSuperAdmin && formRole === 'partner'
     const err = await saveSubscription(
-      { ...form, id: modal === 'add' ? null : modal.id, paid_at: modal === 'add' ? null : modal.paid_at },
+      { ...form, id: modal === 'add' ? null : modal.id, paid_at: modal === 'add' ? null : modal.paid_at,
+        ...(opensOn ? { is_active: true, credit_granted_at: new Date().toISOString(),
+                        credit_granted_by: `${currentUserName || 'the office'} — added by hand` } : {}) },
       { companyId: COMPANY_ID, userId: currentUser?.user_id ?? null })
     setSaving(false)
     if (err) {
@@ -879,7 +891,9 @@ export default function SubscriptionsPage() {
           <span className="px-2.5 py-1 rounded-lg border bg-red-500/10 text-red-300 border-red-500/30">
             {summary.expired} expired
           </span>
-          <span className="ml-auto text-[11px] text-slate-500">View only — subscriptions are managed by the super admin.</span>
+          {!canEditSubs && (
+            <span className="ml-auto text-[11px] text-slate-500">View only — subscriptions are managed by the administrators.</span>
+          )}
         </div>
       )}
 
@@ -1091,14 +1105,21 @@ export default function SubscriptionsPage() {
                     <td className={`px-4 py-3 tabular-nums whitespace-nowrap ${lapsed ? strike : 'text-slate-200'}`}>{fmtMoney(r.amount, r.currency)}</td>
                   )}
                   <td className="px-4 py-3">
-                    {isSuperAdmin ? (
+                    {canHandle(r) ? (
                       <button onClick={() => {
                           if (!r.is_paid) { openPay(r); return }
-                          if (!window.confirm('Mark this subscription UNPAID again? The recorded payment details are '
-                            + 'cleared and access closes until it is paid.')) return
-                          patch(r, { is_paid: false, is_active: false, grace_started_on: null, grace_granted_by: null,
-                                     credit_granted_at: null, credit_granted_by: null,
-                                     payment_method: null, payment_reference: null, paid_recorded_by: null })
+                          /* A partner's subscription stays on, back to "payment due";
+                             a supplier's closes until it is paid, as before. */
+                          const keepsOn = isPartnerSubscription(r) && r.is_active
+                          if (!window.confirm('Mark this subscription UNPAID again? The recorded payment details are cleared'
+                            + (keepsOn ? ' — it stays switched on, with the payment due.' : ' and access closes until it is paid.'))) return
+                          patch(r, keepsOn
+                            ? { is_paid: false, credit_granted_at: r.credit_granted_at || new Date().toISOString(),
+                                credit_granted_by: r.credit_granted_by || currentUserName,
+                                payment_method: null, payment_reference: null, paid_recorded_by: null }
+                            : { is_paid: false, is_active: false, grace_started_on: null, grace_granted_by: null,
+                                credit_granted_at: null, credit_granted_by: null,
+                                payment_method: null, payment_reference: null, paid_recorded_by: null })
                         }}
                         disabled={busyId === r.id}
                         title={r.is_paid
@@ -1196,7 +1217,7 @@ export default function SubscriptionsPage() {
                             somebody in without payment is a decision, and the
                             clock is what keeps it from becoming permanent.
                             Switching a row off, or paying it, clears the clock. */}
-                        {isSuperAdmin && <button onClick={() => {
+                        {canHandle(r) && <button onClick={() => {
                           if (r.is_active) { patch(r, { is_active: false, grace_started_on: null, grace_granted_by: null,
                                                         credit_granted_at: null, credit_granted_by: null }); return }
                           if (r.is_paid)   { patch(r, { is_active: true }); return }
@@ -1215,7 +1236,7 @@ export default function SubscriptionsPage() {
                         </button>}
                         {!isSupplierContact(r.contact) && (
                           <button onClick={() => renewPartner(r)}
-                            title={`Renew — one year, from the minimum ${fmtPerPeriod(floors.partner)}, invoiced to 3asari3`}
+                            title={`Renew — one year, at your price of ${fmtFloor(salePrice('partner', floors), floors.partner.currency)}`}
                             className="btn-ghost p-1.5 text-slate-400 hover:text-brand-300">
                             <RefreshCw className="w-4 h-4" />
                           </button>
@@ -1274,7 +1295,10 @@ export default function SubscriptionsPage() {
                   onSelect={c => {
                     const own = c?.id ? loginsOf(c.id) : []
                     // One login: it is that login's. Several: the super admin picks.
-                    setForm(f => ({ ...f, contact_id: c?.id || '', user_account_id: own.length === 1 ? own[0].id : '' }))
+                    // A partner starts at the admin's own price (fix172).
+                    const onlyPartner = (c?.contact_types || []).includes('partner') && !(c?.contact_types || []).includes('supplier')
+                    setForm(f => ({ ...f, contact_id: c?.id || '', user_account_id: own.length === 1 ? own[0].id : '',
+                                    ...(onlyPartner && !f.amount ? { amount: String(salePrice('partner', floors)), currency: floors.partner.currency } : {}) }))
                     setFormErr('')
                   }}
                   placeholder="Type a name, contact code or mobile…"
@@ -1378,8 +1402,9 @@ export default function SubscriptionsPage() {
               </div>
               ) : (
                 <p className="text-[11px] text-slate-500 rounded-lg border border-surface-border p-3">
-                  The super admin records the payment and switches the subscription on. Until then the
-                  supplier or partner cannot sign in with it.
+                  {formRole === 'partner'
+                    ? 'It is switched on at once, with the payment due — record the partner’s payment from the list when it arrives.'
+                    : 'The super admin records the payment and switches the subscription on. Until then the supplier cannot sign in with it.'}
                 </p>
               )}
 

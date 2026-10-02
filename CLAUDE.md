@@ -104,11 +104,25 @@ What that means when building:
   `trg_subscriptions_price_floor` refuses less, except free seats, trials and a
   price the super admin saved (`priced_by`). Read and check prices through
   `lib/subscriptionPrices` — never `SEATS.partner.extraRate` or a plan constant.
-  When a contact BECOMES a partner with no current partner subscription, an
-  admin or Senior Call Center user must accept the charge before saving
-  (admin sees and may raise the price; senior sees none); it opens a one-year
-  unpaid row on the contact. Prices are shown to admin and super admin only —
-  and to the portal user, about their own subscription.
+  Prices are shown to admin and super admin only — and to the portal user,
+  about their own subscription.
+- **Partner subscriptions run from the login (fix172).** The admin sets their
+  own partner price in App Settings (`sale_amount`, via
+  `admin_set_subscription_price`, never under the minimum; read it with
+  `salePrice()`). Every new partner PORTAL LOGIN opens a one-year subscription
+  at that price, **switched on at once with the payment due** (the `credit`
+  state: `is_active`, unpaid, `credit_granted_at`) — the partner signs in
+  straight away. Admin and Senior Call Center accept the charge in a prompt on
+  Create login (senior sees no price); saving a partner charges nothing. Two
+  accounts per row: partner → office (`is_paid`, recorded by admin or super
+  admin) and office → super admin (`vendor_amount` = the minimum when priced,
+  filled by the trigger; `vendor_settled_at` written only by
+  `super_admin_settle_subscriptions` — the trigger refuses any other write).
+  Admin may switch a partner's subscription on/off; suppliers stay the super
+  admin's. Monitor and report on **Subscription Accounts**
+  (`/settings/subscription-accounts`, admin + super admin; `lib/subscriptionAccounts`
+  is the one calculation for the page and its PDF). Partners only — suppliers
+  are unchanged.
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against

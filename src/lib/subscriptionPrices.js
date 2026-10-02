@@ -75,6 +75,33 @@ export const fmtPerPeriod = (f) => `${fmtFloor(f.amount, f.currency)} a ${f.peri
 export const planPrice = (plan, floors = DEFAULT_FLOORS) =>
   Math.max(Number(plan?.price) || 0, Number(floors?.supplier?.amount) || 0)
 
+/* THE ADMIN'S PRICE (fix172) — what a partner is charged for a year, set by an
+   administrator in App Settings and used for every subscription opened with a
+   new partner login. The super admin is owed the minimum for each; the rest is
+   the office's. Never under the minimum: if the super admin raises it past the
+   admin's price, the minimum is charged until the admin sets a new one. */
+export function salePrice(role, floors = DEFAULT_FLOORS) {
+  const f = floors?.[role]
+  if (!f) return 0
+  return Math.max(Number(f.amount) || 0, Number(f.sale_amount) || 0)
+}
+/* The admin has set a price, and it is still at or above the minimum. */
+export const salePriceSet = (role, floors = DEFAULT_FLOORS) =>
+  Number(floors?.[role]?.sale_amount) >= (Number(floors?.[role]?.amount) || 0) && Number(floors?.[role]?.sale_amount) > 0
+
+export async function setSalePrice(actorId, role, amount) {
+  const { data, error } = await supabase.rpc('admin_set_subscription_price', {
+    p_actor_id: actorId, p_role: role, p_amount: Number(amount),
+  })
+  if (error) {
+    const m = error.message || ''
+    if (/admin_set_subscription_price/i.test(m) && /not exist|schema cache/i.test(m)) return { error: 'Your own price needs supabase-fix172.sql.' }
+    if (/NOT_AUTHORIZED/.test(m)) return { error: 'Only an administrator can set the partner price.' }
+    return { error: explainPriceError(m) }
+  }
+  return { row: data, error: null }
+}
+
 /* The super admin sets a minimum. */
 export async function setPriceFloor(actorId, role, amount) {
   const { data, error } = await supabase.rpc('super_admin_set_subscription_floor', {
@@ -93,5 +120,6 @@ export function explainPriceError(msg = '') {
   const m = String(msg)
   if (/PRICE_BELOW_MINIMUM/.test(m)) return m.replace(/^.*PRICE_BELOW_MINIMUM:\s*/, 'Below the minimum price: ')
   if (/SUBSCRIPTION_CURRENCY/.test(m)) return m.replace(/^.*SUBSCRIPTION_CURRENCY:\s*/, 'Wrong currency: ')
+  if (/VENDOR_LOCKED/.test(m)) return 'What is owed to the super admin can only be changed by the super admin.'
   return m
 }

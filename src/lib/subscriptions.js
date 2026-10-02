@@ -3,7 +3,7 @@ import {
   SEATS, SUPPLIER_SUBSCRIPTION, rateFor, perMonth, CURRENCY, UNPAID_GRACE_DAYS,
   DAYS_PER_MONTH, RATE_TOLERANCE,
 } from './billing'
-import { fetchPriceFloors, planPrice, explainPriceError } from './subscriptionPrices'
+import { fetchPriceFloors, planPrice, salePrice, explainPriceError } from './subscriptionPrices'
 
 /* Supplier / partner subscriptions (supabase-fix110.sql).
 
@@ -174,11 +174,16 @@ export const RATE_CURRENCY = CURRENCY
 
    `planKey` is the plan the supplier accepted; without one the entry plan is
    assumed, which is the least the software may ask for. */
-export function rateForScope(scope, { planKey = null } = {}) {
+export function rateForScope(scope, { planKey = null, floors = null } = {}) {
   if (!scope?.subject) return { amount: 0, period: 'month', monthly: 0, yearly: 0 }
-  return scope.scope === SCOPE.supplier
-    ? rateFor('supplier', { planKey })
-    : rateFor('partner')
+  if (scope.scope === SCOPE.supplier) return rateFor('supplier', { planKey })
+  /* A partner is held to the super admin's minimum (fix169), not the old
+     constant: measured against 10 a year, a partner sold at a lowered minimum
+     of 8 would be refused at sign-in as "underpaying". */
+  const f = floors?.partner
+  if (!f) return rateFor('partner')
+  return { amount: f.amount, period: f.period, monthly: perMonth(f.amount, f.period),
+           yearly: f.period === 'year' ? f.amount : round2(f.amount * 12), article: null }
 }
 
 /* Everything downstream compares monthly figures, because a subscription row
@@ -418,7 +423,8 @@ export async function checkSubscriptionAccess(contactId, role = null, userId = n
       /* The row is live — but is it the right row for who they are TODAY? A
          partner promoted to supplier keeps a subscription that no longer buys
          what they now have access to. */
-      const short = subscriptionShortfall(active, scope)
+      const { floors } = await fetchPriceFloors()
+      const short = subscriptionShortfall(active, scope, todayStr(), { floors })
       if (!short.ok) {
         return { allowed: false, reason: 'upgrade-required', row: active, scope: scope.scope, shortfall: short }
       }
@@ -574,29 +580,37 @@ export function daysUntilDate(dateStr, today = todayStr()) {
   return Math.round((b - a) / 86400000)
 }
 
-/* What a 2nd party should be warned about, from their own subscription rows.
+/* What a 2nd party should be warned about, from THIS LOGIN's rows (pass them
+   through rowsForLogin — a colleague's subscription is not their cover).
 
-   Only a subscription that is PAID and ACTIVE counts as cover, so the notice
-   follows the same rule that lets them sign in. The furthest such end date is
-   their real expiry — a renewal already paid and activated therefore clears the
-   notice by itself. A later row that is not yet paid/activated does not count
-   as cover, but is reported as a pending renewal so the wording can say so.
+   Cover is what lets them sign in: paid and switched on, or switched on with
+   the payment due (fix172 — a partner's subscription runs from the day the
+   login is made, and is paid to the office after). The furthest such end date
+   is their real expiry, so a renewal already switched on clears the notice by
+   itself. A later row not yet switched on is reported as a pending renewal.
+
+   `due` is the subscription in force today, while it is still unpaid — what
+   they owe, at the price they were sold, whatever the expiry.
 
    Returns null when there is nothing to say. */
+const covers = (r) => !!r?.end_date && !!r.is_active && (!!r.is_paid || !!r.credit_granted_at)
 export function subscriptionNotice(rows, today = todayStr(), withinDays = SUBSCRIPTION_NOTICE_DAYS) {
   const list = rows ?? []
-  const covering = list.filter(r => r.is_paid && r.is_active && r.end_date)
-  const current  = covering.sort((a, b) => String(a.end_date).localeCompare(String(b.end_date))).pop() || null
+  const covering = list.filter(covers)
+  const current  = covering.slice().sort((a, b) => String(a.end_date).localeCompare(String(b.end_date))).pop() || null
 
-  // Anything dated past the cover that hasn't been paid/activated yet.
+  // Anything dated past the cover that is not switched on yet.
   const pendingRenewal = list.some(r =>
-    r.end_date && (!current || r.end_date > current.end_date) && !(r.is_paid && r.is_active))
+    r.end_date && (!current || r.end_date > current.end_date) && !covers(r))
 
-  if (!current) return { row: null, days: null, expired: true, pendingRenewal, none: true }
+  if (!current) return { row: null, days: null, expired: true, pendingRenewal, none: true, due: null }
 
+  const inForce = covering.find(r => subscriptionStatus(r, today) === 'credit') || null
+  const due = inForce && Number(inForce.amount) > 0 ? inForce : null
   const days = daysUntilDate(current.end_date, today)
-  if (days == null || days > withinDays) return null
-  return { row: current, days, expired: days < 0, pendingRenewal, none: false }
+  if ((days == null || days > withinDays) && !due) return null
+  return { row: current, days, expired: days != null && days < 0, pendingRenewal, none: false, due,
+           soon: days != null && days <= withinDays }
 }
 
 /* ── renewal stage (the four steps shown in the Subscriptions list) ────────
@@ -760,44 +774,6 @@ export async function fetchLoginsForContact(contactId) {
   }
 }
 
-/* Does this contact hold a PARTNER subscription that is current or still to
-   come (fix169)? A free seat counts. One that has ended does not: a contact
-   made a partner again needs a new one. */
-export async function holdsPartnerSubscription(contactId) {
-  if (!contactId) return false
-  const today = todayStr()
-  const [{ data: rows }, logins] = await Promise.all([
-    supabase.from('subscriptions').select('*').eq('contact_id', contactId),
-    fetchLoginsForContact(contactId),
-  ])
-  const roleOf = new Map(logins.map(l => [l.id, l.role]))
-  return (rows ?? []).some(r => (!r.end_date || String(r.end_date) >= today) && (
-    r.is_free_seat === true
-    || r.subscription_role === 'partner'
-    || roleOf.get(r.user_account_id) === 'partner'
-    || (!r.subscription_role && !r.user_account_id && /partner/i.test(r.description || ''))))
-}
-
-/* The partner subscription a contact is given when it becomes a partner and an
-   admin or a Senior Call Center user accepts the charge (fix169): one year from
-   today, at the price chosen (never under the minimum — the database refuses
-   that), unpaid and switched off. It waits on the contact and goes to the first
-   partner login made for it (ensureLoginSubscription). Assigning one of the
-   free seats later cancels it (assign_free_partner_seat). */
-export async function openPartnerSubscription({ contactId, price, currency = 'USD', acceptedBy = '', companyId = null, userId = null }) {
-  const start = todayStr()
-  const { error } = await supabase.from('subscriptions').insert([{
-    contact_id: contactId, user_account_id: null,
-    description: `Annual partner subscription — ${start.slice(0, 4)} — awaiting payment`,
-    start_date: start, end_date: addDays(start, 364),
-    amount: Number(price), currency, is_paid: false, paid_at: null, is_active: false,
-    paid_by_note: `Accepted by ${acceptedBy || 'the office'} when the contact became a partner`,
-    created_by: userId,
-    ...(companyId ? { company_id: companyId } : {}),
-  }])
-  return error ? explainPriceError(error.message) : null
-}
-
 /* The first login of a contact. Kept for callers that only ask "does it have
    one"; it no longer breaks when there are several — maybeSingle() did, and
    answered "none" for a partner with two logins. */
@@ -810,16 +786,19 @@ export async function fetchLoginForContact(contactId) {
 
      partner login   its partner holds an in-date free seat → a free row for the
                      same year (the seat is the partner's, so all its logins are
-                     free). Otherwise a payable partner seat, unpaid and switched
-                     off, until the super admin activates it or records payment.
-                     A row placed on the contact before any login existed is
-                     given to this login instead of raising a second charge.
+                     free). Otherwise a one-year subscription at the ADMIN'S
+                     price (fix172), SWITCHED ON AT ONCE with the payment due:
+                     the partner signs in straight away and pays the office
+                     afterwards; the database works out what the super admin is
+                     owed for it. A row placed on the contact before any login
+                     existed is given to this login — and switched on the same
+                     way — instead of raising a second charge.
      supplier login  a supplier that is ALSO a partner pays for supplier access
                      from the first day — a free partner seat never buys it.
                      A supplier and nothing else gets the free trial, as before.
 
    Returns { created, attached, exempt, row, error }. */
-export async function ensureLoginSubscription(contactId, loginId, role, { companyId = null, userId = null, contactTypes = null } = {}) {
+export async function ensureLoginSubscription(contactId, loginId, role, { companyId = null, userId = null, userName = '', contactTypes = null } = {}) {
   if (!contactId || !loginId || !['partner', 'supplier'].includes(role)) {
     return { created: false, row: null, error: null }
   }
@@ -848,18 +827,25 @@ export async function ensureLoginSubscription(contactId, loginId, role, { compan
           paid_by_note: 'Free partner seat held by this partner', is_active: !!seat.active, is_free_seat: true,
         }
       } else {
+        /* Switched on with the payment due — the "credit" state the sign-in
+           check already admits — signed with who made the login. */
+        const onCredit = { is_active: true, credit_granted_at: new Date().toISOString(),
+                           credit_granted_by: `${userName || 'the office'} — with the login` }
         // A row waiting on the contact (placed before any login) becomes this login's.
-        const waiting = all.find(r => !r.user_account_id && !isFreeSeatRow(r))
+        const waiting = all.find(r => !r.user_account_id && !isFreeSeatRow(r)
+          && (r.subscription_role == null || r.subscription_role === 'partner'))
         if (waiting) {
           const { error: attErr } = await supabase.from('subscriptions')
-            .update({ user_account_id: loginId, updated_at: new Date().toISOString() }).eq('id', waiting.id)
+            .update({ user_account_id: loginId, updated_at: new Date().toISOString(),
+                      ...(waiting.is_active || waiting.is_paid ? {} : onCredit) }).eq('id', waiting.id)
           return { created: false, attached: !attErr, row: waiting, error: attErr ? attErr.message : null }
         }
         seed = {
-          description:  `Annual partner seat — ${start.slice(0, 4)} — awaiting payment`,
+          description:  `Annual partner subscription — ${start.slice(0, 4)}`,
           start_date:   start, end_date: addDays(start, 364),
-          amount: floors.partner.amount, currency: floors.partner.currency, is_paid: false, paid_at: null,
-          paid_by_note: 'Partner login without a free seat — payable before the portal opens', is_active: false,
+          amount: salePrice('partner', floors), currency: floors.partner.currency, is_paid: false, paid_at: null,
+          paid_by_note: 'Opened with the portal login — the partner pays the office',
+          ...onCredit,
         }
       }
     } else {
