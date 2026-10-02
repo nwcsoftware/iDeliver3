@@ -43,6 +43,16 @@ export async function fetchInactiveContactIds(companyId = null) {
       return q
     })
     if (error) return { ids: new Set(), error: error.message }
+    /* HIDDEN contacts (fix176) — test accounts the super admin keeps out of
+       sight — leave every page the same way a retired one does, for everyone
+       but the super admin, who is never filtered by this set. Read apart, so a
+       database without fix176 still loads the retired ones. */
+    const hid = await fetchAllRows(() => {
+      let q = supabase.from('contacts').select('id').eq('is_hidden', true)
+      if (companyId) q = q.eq('company_id', companyId)
+      return q
+    })
+    if (!hid.error) return { ids: new Set([...(data ?? []), ...(hid.data ?? [])].map(r => r.id)), error: null }
     return { ids: new Set((data ?? []).map(r => r.id)), error: null }
   } catch (e) {
     return { ids: new Set(), error: e?.message || '' }

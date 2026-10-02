@@ -73,6 +73,7 @@ export function accountTotals(rows = [], today = todayStr()) {
   const t = {}
   const bag = (c) => (t[c] ||= blank())
   for (const r of rows) {
+    if (r?.is_hidden) continue                   // a hidden (test) row counts nowhere (fix176)
     const a = accountOf(r, today)
     if (a.free) continue                         // nothing either way
     const c = bag(a.currency)

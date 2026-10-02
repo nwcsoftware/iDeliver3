@@ -54,8 +54,9 @@ export function seatPosition({ users = [], role, excludeId = null, seats = SEATS
      Counted over the seat FAMILY, not the exact role: a senior call centre
      login draws an administrator seat (SEAT_BY_ROLE), so counting only its own
      rank let admins and seniors each believe they had all four. */
+  // A hidden (test) login holds no seat (fix176).
   const used = users.filter(u =>
-    SEAT_BY_ROLE[u.role] === family && u.status === 'active' && u.id !== excludeId).length
+    SEAT_BY_ROLE[u.role] === family && u.status === 'active' && !u.is_hidden && u.id !== excludeId).length
   const next = used + 1
 
   return {
@@ -83,7 +84,7 @@ export function seatPosition({ users = [], role, excludeId = null, seats = SEATS
 export function driverSeatPosition({ drivers = [], excludeId = null, seats = SEATS }) {
   const seat = (seats || SEATS).driver
   if (!seat) return null
-  const used = drivers.filter(d => d.is_active !== false && d.id !== excludeId).length
+  const used = drivers.filter(d => d.is_active !== false && !d.is_hidden && d.id !== excludeId).length
   const next = used + 1
   return {
     role: 'driver', family: 'driver', label: 'Driver seats', included: seat.included, used, next,
@@ -169,6 +170,7 @@ const inDate = (r, today) => !!r && isSubscriptionActive(r, today)
  */
 export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(), users = [], seats = SEATS, today = new Date().toISOString().slice(0, 10) } = {}) {
   const role = user?.role
+  if (user?.is_hidden) return { ...SEAT_STATUS.na, label: 'Hidden', note: 'Hidden — holds no seat, counted nowhere', row: null }
   if (!SEAT_BY_ROLE[role] && role !== 'supplier') return { ...SEAT_STATUS.na, row: null }
 
   const fromRows = (rows) => {
@@ -199,7 +201,7 @@ export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Ma
      so the people who were here first hold the included seats. */
   const family = SEAT_BY_ROLE[role]
   const peers = users
-    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active')
+    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active' && !u.is_hidden)
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
   const idx = peers.findIndex(u => u.id === user.id)
   const position = idx === -1 ? peers.length + 1 : idx + 1
@@ -283,7 +285,7 @@ export function accountLevel(user, { freeSeats = new Map(), subsByContact = new 
   if (user.status !== 'active') return { level: rank, detail: 'Inactive — holds no seat' }
 
   const peers = users
-    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active')
+    .filter(u => SEAT_BY_ROLE[u.role] === family && u.status === 'active' && !u.is_hidden)
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
   const idx = peers.findIndex(u => u.id === user.id)
   const pos = idx === -1 ? peers.length + 1 : idx + 1

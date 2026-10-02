@@ -28,6 +28,7 @@ import { generateAccountNumber, formatAccountNumber, insertContactWithUniqueCode
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 import SearchField from '../components/ui/SearchField'
+import HiddenToggle from '../components/ui/HiddenToggle'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 
@@ -624,6 +625,7 @@ export default function DriversPage() {
                 </td>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-2 justify-end">
+                    <HiddenToggle kind="contact" id={driver.id} hidden={!!driver.is_hidden} onDone={fetchDrivers} size="w-4 h-4" />
                     <button onClick={() => openEdit(driver)} className="btn-ghost p-1.5 text-slate-500"><Edit2 className="w-4 h-4" /></button>
                     <button
                       onClick={() => toggleActive(driver)}

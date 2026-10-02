@@ -93,7 +93,12 @@ function addMoney(bag, l) {
 
 /* Everything the report shows, from the raw records. Pure: the PDF and the
    tests both read it. */
-export function buildSubscriptionReport({ subs = [], users = [], drivers = [], seats, software = [], today = todayStr() }) {
+export function buildSubscriptionReport({ subs: allSubs = [], users: allUsers = [], drivers: allDrivers = [], seats, software = [], today = todayStr() }) {
+  // Hidden (test) logins, contacts and subscriptions are not in the report (fix176).
+  const hiddenContacts = new Set([...allDrivers.filter(d => d.is_hidden).map(d => d.id)])
+  const subs = allSubs.filter(r => !r.is_hidden && !r.contact?.is_hidden && !hiddenContacts.has(r.contact_id))
+  const users = allUsers.filter(u => !u.is_hidden)
+  const drivers = allDrivers.filter(d => !d.is_hidden)
   const loginById = new Map(users.map(u => [u.id, u]))
   const lines = subs.map(r => lineOf(r, kindOf(r, loginById), today))
   const kinds = {}
@@ -166,19 +171,23 @@ export function buildSubscriptionReport({ subs = [], users = [], drivers = [], s
   return { today, kinds, software: { lines: sw, money: swMoney }, seatUse, driverUse, total }
 }
 
+// Never '*' on user_accounts: it also holds the password hashes.
+const LOGIN_COLS = 'id, username, role, status, contact_id, created_at'
+
 /* Read every record the report needs, whole (paged past PostgREST's 1000). */
 export async function loadSubscriptionReport({ companyId = null } = {}) {
   const [subsQ, usersQ, driversQ, seatsQ, floorsQ, swQ] = await Promise.all([
     fetchAllRows(() => {
       let q = supabase.from('subscriptions')
-        .select('*, contact:contacts!contact_id(id,first_name,last_name,company_name,code,contact_type,contact_types)')
+        .select('*, contact:contacts!contact_id(*)')
         .order('id')
       if (companyId) q = q.eq('company_id', companyId)
       return q
     }),
-    // Never select('*') on user_accounts: it also holds the password hashes.
-    fetchAllRows(() => supabase.from('user_accounts').select('id, username, role, status, contact_id, created_at').order('id')),
-    fetchAllRows(() => supabase.from('contacts').select('id, first_name, last_name, code, is_active, created_at').eq('contact_type', 'driver').order('id')),
+    fetchAllRows(() => supabase.from('user_accounts').select(LOGIN_COLS + ', is_hidden').order('id'))
+      // Before fix176 there is no is_hidden column: read without it.
+      .then(r => (r.error ? fetchAllRows(() => supabase.from('user_accounts').select(LOGIN_COLS).order('id')) : r)),
+    fetchAllRows(() => supabase.from('contacts').select('*').eq('contact_type', 'driver').order('id')),
     fetchSeatSettings(),
     fetchPriceFloors(),
     fetchSoftwareSubscriptions(companyId),

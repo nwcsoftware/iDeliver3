@@ -8,6 +8,7 @@ import {
 } from '../../lib/subscriptions'
 import { SUPPLIER_SUBSCRIPTION } from '../../lib/billing'
 import { isStrictAdmin, roleIsExactly } from '../../lib/roles'
+import HiddenToggle from '../ui/HiddenToggle'
 import { fetchPriceFloors, planPrice, fmtFloor, salePrice, DEFAULT_FLOORS } from '../../lib/subscriptionPrices'
 import { fetchSeatSettings } from '../../lib/seatSettings'
 
@@ -110,7 +111,11 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
       supabase.from('subscriptions').select('contact_id, start_date, end_date, is_active, is_free_seat, amount, description')
         .eq('is_free_seat', true),
     ])
-    setLogins(ls); setSubs(rows ?? []); setSeatRows(seatQ.error ? null : (seatQ.data ?? []))
+    // Hidden (test) logins and subscriptions (fix176): the super admin's view only.
+    const seeAll = currentUser?.role === 'super_admin'
+    setLogins(seeAll ? ls : ls.filter(l => !l.is_hidden))
+    setSubs(seeAll ? (rows ?? []) : (rows ?? []).filter(r => !r.is_hidden))
+    setSeatRows(seatQ.error ? null : (seatQ.data ?? []))
     setLoading(false)
   }, [contact?.id])
 
@@ -427,6 +432,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
             return (
               <div key={l.id} className="flex items-center gap-3 py-2 flex-wrap">
                 <span className="font-mono text-xs text-slate-100">{l.username}</span>
+                <HiddenToggle kind="login" id={l.id} hidden={!!l.is_hidden} onDone={load} />
                 <span className="text-[10px] px-1.5 py-0.5 rounded border border-surface-border text-slate-400 capitalize">{l.role}</span>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded border ${l.status === 'active'
                   ? 'border-green-500/30 bg-green-500/10 text-green-300'

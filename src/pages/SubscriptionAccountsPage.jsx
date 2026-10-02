@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import SearchField from '../components/ui/SearchField'
+import HiddenToggle from '../components/ui/HiddenToggle'
 import {
   fetchSubscriptions, saveSubscription, contactLabel, todayStr, PAYMENT_METHODS,
 } from '../lib/subscriptions'
@@ -96,6 +97,7 @@ export default function SubscriptionAccountsPage() {
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
+      if (r.is_hidden && !isSuperAdmin) return false          // hidden (test) rows: the super admin's list only (fix176)
       const a = accountOf(r, today)
       if (a.free && !showFree) return false
       if (year !== 'all' && String(r.start_date || '').slice(0, 4) !== year) return false
@@ -176,7 +178,8 @@ export default function SubscriptionAccountsPage() {
   async function exportPdf() {
     const note = [year !== 'all' ? `started in ${year}` : '', payF !== 'all' ? `partner payment ${payF}` : '',
       settleF !== 'all' ? `settlement ${settleF}` : '', search.trim() ? `matching "${search.trim()}"` : ''].filter(Boolean).join(', ')
-    await downloadSubscriptionAccountsPdf(shown, { loginName, filterNote: note, generatedBy: myName, today })
+    // A hidden (test) row is never in a PDF, the super admin's included (fix176).
+    await downloadSubscriptionAccountsPdf(shown.filter(r => !r.is_hidden), { loginName, filterNote: note, generatedBy: myName, today })
   }
 
   const currencies = Object.keys(totals)
@@ -306,7 +309,8 @@ export default function SubscriptionAccountsPage() {
                       </td>
                     )}
                     <td className="px-4 py-3">
-                      <p className="text-slate-100 font-medium">{contactLabel(r.contact)}</p>
+                      <p className="text-slate-100 font-medium flex items-center gap-1">{contactLabel(r.contact)}
+                        <HiddenToggle kind="subscription" id={r.id} hidden={!!r.is_hidden} onDone={load} /></p>
                       {loginName(r) && <p className="text-[11px] font-mono text-slate-500">@{loginName(r)}</p>}
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{r.start_date}<br />to {r.end_date}</td>

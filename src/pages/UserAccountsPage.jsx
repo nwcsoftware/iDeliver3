@@ -46,6 +46,7 @@ import { downloadUserAccountsPdf } from '../lib/userAccountsPdf'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
 import SearchField from '../components/ui/SearchField'
+import HiddenToggle from '../components/ui/HiddenToggle'
 
 const PW_MIN = 8
 
@@ -253,9 +254,10 @@ export default function UserAccountsPage() {
       return q.order('created_at', { ascending: true })
     }
 
-    let { data, error: e } = await load(BASE_COLS + DEVICE_COLS)
-    // The device columns arrive with supabase-fix101.sql; until it's applied,
-    // fall back so the page still works (live devices come from presence).
+    // is_hidden arrives with fix176, the device columns with fix101; until each
+    // is applied, fall back so the page still works.
+    let { data, error: e } = await load(BASE_COLS + DEVICE_COLS + ',is_hidden')
+    if (e) ({ data, error: e } = await load(BASE_COLS + DEVICE_COLS))
     if (e) ({ data, error: e } = await load(BASE_COLS))
 
     if (e) setError(friendlyError(e.message))
@@ -343,9 +345,10 @@ export default function UserAccountsPage() {
          them back on the screen.
        · a plain admin sees only active accounts; the super admin sees every
          account of every role, and can reactivate any of them. */
+  /* Hidden (test) accounts (fix176) are listed for the super admin only. */
   const visibleUsers = isSuperAdmin
     ? users
-    : users.filter(u => u.role !== 'super_admin' && u.status === 'active')
+    : users.filter(u => u.role !== 'super_admin' && u.status === 'active' && !u.is_hidden)
 
   const q = search.trim().toLowerCase()
   const searched = visibleUsers.filter(u =>
@@ -414,7 +417,8 @@ export default function UserAccountsPage() {
         search.trim()          && `Search: “${search.trim()}”`,
         sort.key && sort.dir   && `Sorted by ${SORT_NAMES[sort.key] || sort.key} (${sort.dir === 'asc' ? 'A–Z / oldest first' : 'Z–A / newest first'})`,
       ].filter(Boolean)
-      const rows = filtered.map(u => {
+      // Never in a PDF, for anyone (fix176).
+      const rows = filtered.filter(u => !u.is_hidden).map(u => {
         const st = seatStatus(u, seatLookups)
         const lv = accountLevel(u, seatLookups)
         return {
@@ -909,6 +913,9 @@ export default function UserAccountsPage() {
                 <tr key={u.id} className={`border-b border-surface-border/50 hover:bg-surface-hover/40 transition-colors ${u.status === 'inactive' ? 'opacity-60' : ''}`}>
                   <td className="px-4 py-3">
                     <span className="text-slate-100 font-medium">{u.username}</span>
+                    {u.role !== 'super_admin' && (
+                      <span className="ml-1.5"><HiddenToggle kind="login" id={u.id} hidden={!!u.is_hidden} onDone={fetchUsers} /></span>
+                    )}
                     {u.must_change_password && (
                       <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
                         Must reset

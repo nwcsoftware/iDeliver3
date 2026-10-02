@@ -765,11 +765,10 @@ export const isTrialSubscription = (row) =>
 export async function fetchLoginsForContact(contactId) {
   if (!contactId) return []
   try {
-    const { data, error } = await supabase
-      .from('user_accounts')
-      .select('id, username, role, status, mobile, email, last_login_at, created_at, must_change_password')
-      .eq('contact_id', contactId)
-      .order('created_at')
+    const cols = 'id, username, role, status, mobile, email, last_login_at, created_at, must_change_password'
+    const read = (c) => supabase.from('user_accounts').select(c).eq('contact_id', contactId).order('created_at')
+    let { data, error } = await read(cols + ', is_hidden')
+    if (error) ({ data, error } = await read(cols))          // before fix176
     return error ? [] : (data ?? [])
   } catch {
     return []

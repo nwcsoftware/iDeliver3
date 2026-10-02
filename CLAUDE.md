@@ -144,6 +144,13 @@ What that means when building:
   (`/settings/subscription-accounts`, admin + super admin; `lib/subscriptionAccounts`
   is the one calculation for the page and its PDF). Partners only — suppliers
   are unchanged.
+- **Hidden test accounts (fix176).** `is_hidden` on user_accounts, contacts and
+  subscriptions, set only through `super_admin_set_hidden` (a login takes its
+  contact and subs; a contact takes its logins and subs). Everyone but the super
+  admin never sees a hidden record; the super admin sees it marked, but it is
+  left out of every seat, total, due and PDF — for everyone. A hidden login still
+  signs in. Any new list, count or report must skip `is_hidden` the same way
+  (`lib/hidden`, `fetchInactiveContactIds` already includes hidden contacts).
 - Gate on the **route**, not inside the page — a hidden menu entry is not a
   restriction while the address still opens.
 - Say plainly when a restriction is client-side only. Users sign in against

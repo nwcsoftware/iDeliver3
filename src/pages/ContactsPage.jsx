@@ -31,6 +31,7 @@ import { useApp } from '../context/AppContext'
 import { contactSettlement } from '../lib/contactVisibility'
 import { useAuth } from '../context/AuthContext'
 import PartyLogins from '../components/contacts/PartyLogins'
+import HiddenToggle from '../components/ui/HiddenToggle'
 import { canManagePartyLogins, canManageCustomerLogin, canRenameCustomerLogin } from '../lib/roles'
 import { isStrictAdmin } from '../lib/roles'
 import { fetchPriceFloors, fmtFloor, salePrice, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
@@ -358,10 +359,10 @@ export default function ContactsPage({ type }) {
       `${c.first_name ?? ''} ${c.last_name ?? ''}`,
       c.company_name, c.mobile, c.email, c.code, c.account_number,
     ].some(v => String(v ?? '').toLowerCase().includes(q))
-    const matchFilter =
+    const matchFilter = (isSuperAdmin || !c.is_hidden) && (     // hidden (test) contacts: the super admin's list only (fix176)
       effFilter === 'all'      ? true :
       effFilter === 'active'   ? c.is_active :
-      !c.is_active
+      !c.is_active)
     /* Cash / credit is asked of the ACCOUNTS, so a contact holding both kinds
        answers YES to both filters — they are a credit customer for the orders
        they put on the credit account and a cash one for the rest. */
@@ -966,6 +967,7 @@ export default function ContactsPage({ type }) {
                 {/* Actions */}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
+                    <HiddenToggle kind="contact" id={c.id} hidden={!!c.is_hidden} onDone={() => { fetchContacts(); refreshInactiveContacts?.() }} size="w-4 h-4" />
                     <button onClick={() => openEdit(c)} className="btn-ghost p-1.5 text-slate-500" title="Edit">
                       <Edit2 className="w-4 h-4" />
                     </button>

@@ -61,6 +61,7 @@ import { UNPAID_GRACE_DAYS } from '../lib/billing'
 import { fetchAgreementMap, AGREEMENT_STATUS } from '../lib/subscriptionAgreement'
 import { downloadAgreementPdf } from '../lib/subscriptionAgreementPdf'
 import SearchField from '../components/ui/SearchField'
+import HiddenToggle from '../components/ui/HiddenToggle'
 
 const CURRENCIES = ['USD', 'LBP', 'EUR']
 const STATUS_FILTERS = [
@@ -308,6 +309,8 @@ export default function SubscriptionsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
+      // Hidden (test) subscriptions (fix176): the super admin's list only.
+      if (r.is_hidden && !isSuperAdmin) return false
       const st = subscriptionStatus(r, today)
       if (statusFilter !== 'all' && st !== statusFilter) return false
       if (partyFilter !== 'all' && !(r.contact?.contact_types ?? []).includes(partyFilter)) return false
@@ -356,7 +359,8 @@ export default function SubscriptionsPage() {
 
   // Headline figures over the whole list (not the filtered view) — counts, money
   // per currency, and how many renewals are coming up.
-  const summary = useMemo(() => subscriptionsSummary(rows, today), [rows, today])
+  // Totals never count a hidden (test) subscription (fix176).
+  const summary = useMemo(() => subscriptionsSummary(rows.filter(r => !r.is_hidden), today), [rows, today])
 
   /* Agreements are counted per CONTACT, not per subscription row: one party
      with three periods has answered once, and counting the rows would say
@@ -521,7 +525,7 @@ export default function SubscriptionsPage() {
 
    Declared AFTER scopeOf on purpose: useMemo runs during render, and calling
    a const declared further down blanked the whole page. */
-  const dueRows = useMemo(() => rows
+  const dueRows = useMemo(() => rows.filter(r => !r.is_hidden)
     .filter(r => isAmountDue(r) && scopeOf(r.contact, r).scope !== SCOPE.partnerFree)
     .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))),
   [rows, scopeOf])
@@ -1056,6 +1060,7 @@ export default function SubscriptionsPage() {
                     <div className="flex items-center gap-2">
                       <Icon className="w-4 h-4 text-slate-500 flex-shrink-0" />
                       <span className={`font-medium ${lapsed ? strike : 'text-slate-100'}`}>{contactLabel(r.contact)}</span>
+                      <HiddenToggle kind="subscription" id={r.id} hidden={!!r.is_hidden} onDone={load} />
                       {r.user_account_id && loginById.get(r.user_account_id) && (
                         <span title="The login this subscription lets in"
                           className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-surface-border text-slate-400 whitespace-nowrap flex-shrink-0">

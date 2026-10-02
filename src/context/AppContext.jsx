@@ -419,7 +419,10 @@ export function AppProvider({ children }) {
     if (COMPANY_ID) q = q.eq('company_id', COMPANY_ID)
     const { data, error } = await q
     if (!error && data) {
-      setDrivers(data.map(d => {
+      /* A hidden (test) driver (fix176) is in nobody's list, picker or count
+         but the super admin's — and the seat count leaves it out even there. */
+      const seen = currentUser?.role === 'super_admin' ? data : data.filter(d => !d.is_hidden)
+      setDrivers(seen.map(d => {
         // Get the latest assigned vehicle (if any)
         const latestAssignment = d.assigned_vehicle?.sort((a, b) => 
           new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0)
@@ -431,7 +434,7 @@ export function AppProvider({ children }) {
       }))
     }
     setLoading(l => ({ ...l, drivers: false }))
-  }, [])
+  }, [currentUser?.role])
 
   // Paged — the order table is well past PostgREST's 1000-row response cap, and a
   // plain select would silently drop the oldest orders from every page that reads
