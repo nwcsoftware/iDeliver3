@@ -86,7 +86,7 @@ export default function DriversPage() {
   //  - Available: on duty but nothing active or upcoming.
   function dutyStatus(d) {
     if (!d.driver_on_duty) {
-      return { label: 'Out of duty', cls: 'bg-red-500/15 text-red-400 border-red-500/30' }
+      return { key: 'off_duty', label: 'Out of Duty', cls: 'bg-red-500/15 text-red-400 border-red-500/30' }
     }
 
     const now = new Date()
@@ -104,7 +104,7 @@ export default function DriversPage() {
       if (!from || !to) return false
       return nowHM >= from && nowHM <= to && ['Picked Up', 'In Transit'].includes(o.delivery_status)
     })
-    if (active) return { label: 'On Duty', cls: 'bg-brand-500/15 text-brand-400 border-brand-500/30' }
+    if (active) return { key: 'on_duty', label: 'On Duty', cls: 'bg-brand-500/15 text-brand-400 border-brand-500/30' }
 
     const future = assigned
       .filter(o => {
@@ -115,9 +115,9 @@ export default function DriversPage() {
       })
       .sort((a, b) =>
         (a.scheduled_date + (a.scheduled_time_from || '')).localeCompare(b.scheduled_date + (b.scheduled_time_from || '')))[0]
-    if (future) return { label: 'Scheduled', sub: fmtDutyDate(future.scheduled_date, future.scheduled_time_from), cls: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' }
+    if (future) return { key: 'scheduled', label: 'Scheduled', sub: fmtDutyDate(future.scheduled_date, future.scheduled_time_from), cls: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' }
 
-    return { label: 'Available', cls: 'bg-green-500/15 text-green-400 border-green-500/30' }
+    return { key: 'available', label: 'Available', cls: 'bg-green-500/15 text-green-400 border-green-500/30' }
   }
 
   const [search,   setSearch]   = useState('')
@@ -197,7 +197,15 @@ export default function DriversPage() {
       })
   }, [drivers])
 
-  const statusFilters = ['all', 'available', 'on_duty', 'off_duty', 'inactive']
+  /* The filters ask the SAME question the Status column answers (dutyStatus:
+     attendance and the orders in hand), in the same words. They used to test
+     the stored driver_status field, which the column never reads — so "On
+     Duty" listed drivers the column called "Out of duty". */
+  const statusFilters = [
+    { key: 'all', label: 'All' }, { key: 'available', label: 'Available' }, { key: 'scheduled', label: 'Scheduled' },
+    { key: 'on_duty', label: 'On Duty' }, { key: 'off_duty', label: 'Out of Duty' }, { key: 'inactive', label: 'Inactive' },
+  ]
+  const statusKey = (d) => (d.is_active === false ? 'inactive' : dutyStatus(d).key)
 
   const filtered = drivers.filter(d => {
     const matchSearch = (
@@ -206,7 +214,7 @@ export default function DriversPage() {
       d.mobile?.includes(search) ||
       d.driver_license?.toLowerCase().includes(search.toLowerCase())
     )
-    const matchStatus = filter === 'all' || d.driver_status === filter
+    const matchStatus = filter === 'all' || statusKey(d) === filter
     return matchSearch && matchStatus
   })
 
@@ -521,13 +529,14 @@ export default function DriversPage() {
         <div className="flex items-center gap-1">
           {statusFilters.map(s => (
             <button
-              key={s}
-              onClick={() => setFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
-                filter === s ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
+              key={s.key}
+              onClick={() => setFilter(s.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                filter === s.key ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-surface-hover'
               }`}
             >
-              {s === 'on_duty' ? 'On Duty' : s === 'off_duty' ? 'Out of duty' : s}
+              {s.label}
+              {s.key !== 'all' && <span className="ml-1 opacity-60 tabular-nums">{drivers.filter(d => statusKey(d) === s.key).length}</span>}
             </button>
           ))}
         </div>
