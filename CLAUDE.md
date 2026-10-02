@@ -115,8 +115,10 @@ What that means when building:
   straight away. Admin and Senior Call Center accept the charge in a prompt on
   Create login (senior sees no price); saving a partner charges nothing. Two
   accounts per row: partner → office (`is_paid`, recorded by admin or super
-  admin) and office → super admin (`vendor_amount` = the minimum when priced,
-  filled by the trigger; `vendor_settled_at` written only by
+  admin) and office → super admin (`vendor_amount` = the minimum in force when
+  the subscription was OPENED, filled by the trigger and never recalculated
+  after (fix173) — changing the rates touches only new subscriptions; the
+  super admin may correct one row; `vendor_settled_at` written only by
   `super_admin_settle_subscriptions` — the trigger refuses any other write).
   Admin may switch a partner's subscription on/off; suppliers stay the super
   admin's. Monitor and report on **Subscription Accounts**
