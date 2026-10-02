@@ -100,8 +100,9 @@ export const roleIsExactly = (role, ...asked) => asked.includes(role)
      Products       readable, not editable (canEditProducts). Unlike Call
                     Center, the rank still sees what a product costs.
 
-     Empties        refilling gas / water and correcting the empty count on
-                    Inventory (canManageEmpties).
+     Empties        correcting the empty count on Inventory (canManageEmpties).
+                    Refilling them the rank MAY do (canRefillEmpties) — it is
+                    the everyday counterpart of a stock in.
 
    WHAT IS LEFT OF THE INHERITANCE, now that the list is this long: seeing the
    Administration menu (which holds one readable page for this rank) and
@@ -151,10 +152,18 @@ export const canEditProducts = (role) => isStrictAdmin(role)
 export const canSeeProductCosts = (role) =>
   roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 
-/* The EMPTIES of a refillable (gas, water) on the Inventory page: recording a
-   refill and correcting the empty count. Administrators only — Senior Call
-   Center and Call Center see the empty count but not the buttons. Stock in,
-   stock out and adjustments are a separate, wider rule on that page. */
+/* The EMPTIES of a refillable (gas, water) on the Inventory page.
+
+     canRefillEmpties   recording a refill — empties sent out and back full.
+                        Administrators and Senior Call Center (granted 2 Oct):
+                        it is the everyday work of keeping gas and water in
+                        stock, like a stock in.
+     canManageEmpties   correcting the empty COUNT — a count overrides the
+                        record, so it stays with the administrators.
+
+   Call Center sees the empty count but neither button. Stock in, stock out and
+   adjustments are a separate, wider rule on that page. */
+export const canRefillEmpties = (role) => roleIsExactly(role, 'super_admin', 'admin', 'senior_call_center')
 export const canManageEmpties = (role) => isStrictAdmin(role)
 
 /* Display names. `user_role` stores snake_case; nothing should be shown to a

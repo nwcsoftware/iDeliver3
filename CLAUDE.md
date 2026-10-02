@@ -63,8 +63,9 @@ What that means when building:
   settlements, backdating, setting status by hand, bypassing the
   payment/invoice locks — the pages stay open, the powers do not.
   Products are read-only below admin (`canEditProducts`); the senior rank still
-  sees costs, Call Center does not (`canSeeProductCosts`). Refilling and
-  counting empties on Inventory is admin only (`canManageEmpties`); stock
+  sees costs, Call Center does not (`canSeeProductCosts`). Refilling empties
+  on Inventory is admin and Senior Call Center (`canRefillEmpties`);
+  correcting the empty COUNT is admin only (`canManageEmpties`); stock
   in / out stays open to call centre.
 - **Not** excluded: closing an order, and seeing the licence and expiry notices.
   An ordinary call-centre user does both, and this rank is an upgrade of that

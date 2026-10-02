@@ -30,7 +30,7 @@ import {
   movementDeleteRight, isRefillable, handMovementTypes, stockFigures,
   updateProductMovement, movementFollowsOrder, isFutureMoment,
 } from '../lib/productStock'
-import { isStrictAdmin, canEditProducts, canManageEmpties } from '../lib/roles'
+import { isStrictAdmin, canEditProducts, canManageEmpties, canRefillEmpties } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -110,7 +110,8 @@ export default function ProductInventoryPage() {
   const { COMPANY_ID } = useApp()
   const canPost = hasRole('super_admin', 'admin', 'call_center')
   // Refilling and counting empties: administrators only (lib/roles).
-  const canEmpties = canManageEmpties(currentUser?.role)
+  const canEmpties = canManageEmpties(currentUser?.role)    // correct the empty count: administrators
+  const canRefill  = canRefillEmpties(currentUser?.role)    // refill: administrators and Senior Call Center
   /* Deleting a movement: an administrator may remove a hand-typed one, a super
      admin may remove any, and a Senior Call Center user may remove none. The
      column itself only appears for somebody who could delete something. */
@@ -297,8 +298,11 @@ export default function ProductInventoryPage() {
   const filledNow = emptyFor ? (byId.get(emptyFor.id)?.onHand || 0) : 0
   const countDiff = Math.round((num(emptyDraft.counted) - emptyNow) * 100) / 100
 
+  // Who may open which side of the empties form (lib/roles).
+  const mayEmpties = (mode) => (mode === 'count' ? canEmpties : canRefill)
+
   function openEmpties(product, mode = 'refill') {
-    if (!canEmpties) return
+    if (!mayEmpties(mode)) return
     // Nothing to refill: the refill button is greyed out, and this refuses too.
     if (mode === 'refill' && (byId.get(product.id)?.empty || 0) <= 0) return
     setEmptyDraft(newEmptiesDraft(mode))
@@ -307,7 +311,7 @@ export default function ProductInventoryPage() {
   }
 
   async function postEmpties() {
-    if (!canEmpties) return
+    if (!mayEmpties(emptyDraft.mode)) return
     if (isFutureMoment(emptyDraft.moved_at)) {
       setFormErr(`That date is in the future (${fmtWhen(emptyDraft.moved_at)}). Enter when it actually happened.`); return
     }
@@ -508,19 +512,19 @@ export default function ProductInventoryPage() {
                               below. The COUNT button is never off: an empty
                               count of 0 (or less) is exactly when somebody has
                               to be able to say "there are 12 in the back". */}
+                          {canRefill && (
+                            <button onClick={() => openEmpties(p, 'refill')} disabled={p.stock.empty <= 0}
+                              title={p.stock.empty > 0 ? 'Refill empty bottles' : 'Nothing to refill — no empty bottles on record'}
+                              className="btn-ghost p-1 text-cyan-400 hover:text-cyan-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-cyan-400">
+                              <RefreshCcw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           {canEmpties && (
-                            <>
-                              <button onClick={() => openEmpties(p, 'refill')} disabled={p.stock.empty <= 0}
-                                title={p.stock.empty > 0 ? 'Refill empty bottles' : 'Nothing to refill — no empty bottles on record'}
-                                className="btn-ghost p-1 text-cyan-400 hover:text-cyan-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-cyan-400">
-                                <RefreshCcw className="w-3.5 h-3.5" />
-                              </button>
-                              <button onClick={() => openEmpties(p, 'count')}
-                                title="Correct the empty count — enter how many empties you counted"
-                                className="btn-ghost p-1 text-slate-500 hover:text-cyan-200">
-                                <ClipboardCheck className="w-3.5 h-3.5" />
-                              </button>
-                            </>
+                            <button onClick={() => openEmpties(p, 'count')}
+                              title="Correct the empty count — enter how many empties you counted"
+                              className="btn-ghost p-1 text-slate-500 hover:text-cyan-200">
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </span>
                       ) : <span className="text-slate-700 text-xs">—</span>}
@@ -761,7 +765,7 @@ export default function ProductInventoryPage() {
                 {isRefillable(moveFor) && draft.movement_type === 'in' && (
                   <p className="text-[11px] text-cyan-300/90 mt-1.5">
                     Stock in is for bottles bought new, full.{' '}
-                    {canEmpties
+                    {canRefill
                       ? <>Refilling your own empties is the
                           <RefreshCcw className="inline w-3 h-3 mx-1 align-[-2px]" />button in the Empty column.</>
                       : <>Refilling your own empties is recorded by an administrator, from the Empty column.</>}
@@ -885,7 +889,8 @@ export default function ProductInventoryPage() {
             </div>
 
             <div className="p-5 space-y-3">
-              <div className="grid grid-cols-2 gap-1.5">
+              {/* Only the sides this user may use; with one, no tab bar at all. */}
+              {canRefill && canEmpties && <div className="grid grid-cols-2 gap-1.5">
                 {[
                   { v: 'refill', label: 'Refill empties', Icon: RefreshCcw },
                   { v: 'count',  label: 'Correct empty count', Icon: ClipboardCheck },
@@ -900,7 +905,7 @@ export default function ProductInventoryPage() {
                     <Icon className="w-3.5 h-3.5 flex-shrink-0" /> {label}
                   </button>
                 ))}
-              </div>
+              </div>}
 
               {refill ? (
                 <>
