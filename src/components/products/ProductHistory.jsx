@@ -4,7 +4,7 @@ import {
 } from 'recharts'
 import { Loader2, TrendingUp, ShoppingCart, Truck, AlertCircle, Boxes } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { movementLabel, movementEffect, fetchProductMovements, isRefillable } from '../../lib/productStock'
+import { movementLabel, movementEffect, fetchProductMovements, isRefillable, summarise, stockFigures } from '../../lib/productStock'
 
 /* What this item has cost and what it has sold for.
  *
@@ -144,9 +144,11 @@ export default function ProductHistory({ product }) {
   /* On hand from the ledger — the same signs the Inventory page uses, so the
      two can never show different numbers for the same shelf. Not filtered by
      currency: a count is a count. */
-  const onHand = useMemo(() => Math.round(moves.reduce((n, m) => n + movementEffect(m).filled, 0) * 100) / 100, [moves])
   const empty  = useMemo(() => Math.round(moves.reduce((n, m) => n + movementEffect(m).empty,  0) * 100) / 100, [moves])
   const refillable = isRefillable(product)
+  // The Inventory sheet's own figures for this item (stockFigures): a
+  // returnable's On hand is what is owned, Available what is on the shelf.
+  const fig = useMemo(() => stockFigures(product, summarise(moves).get(product?.id)), [moves, product])
 
   const buys  = purchases.filter(p => p.currency === currency)
   const sells = sales.filter(s => s.currency === currency)
@@ -254,9 +256,15 @@ export default function ProductHistory({ product }) {
           <h3 className="text-xs font-semibold text-slate-200">Stock movements</h3>
           <span className="text-[11px] text-slate-500">{moves.length}</span>
           <span className="text-[11px] text-slate-400 ml-auto tabular-nums">
-            {refillable ? 'Available' : 'On hand'} <span className={onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{onHand}</span>
+            On hand <span className={fig.onHand < 0 ? 'text-rose-300 font-semibold' : 'text-slate-200 font-semibold'}>{fig.onHand}</span>
+            {fig.asset && (
+              <> · Available <span className={fig.available < 0 ? 'text-rose-300 font-semibold' : 'text-emerald-300 font-semibold'}>{fig.available}</span></>
+            )}
             {refillable && (
               <> · Empty <span className={empty < 0 ? 'text-rose-300 font-semibold' : 'text-cyan-300 font-semibold'}>{empty}</span></>
+            )}
+            {fig.asset && (
+              <> · With customers <span className="text-amber-300 font-semibold">{fig.withCustomers}</span></>
             )}
           </span>
         </div>

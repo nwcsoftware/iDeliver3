@@ -142,10 +142,14 @@ What that means when building:
   posted by `syncOrderStock`. The old `returnable_issuances` table is not used.
   **Refillables (fix166)** — gas, 20 L water — are held filled *or* empty: a
   return posts `returned_empty` (empties +1, not on hand), a `refill` moves
-  empties to filled. The filled count is `summarise().onHand` and is shown as
-  **Available** (what can be sold; low/out judge it); the Inventory "On hand"
-  column shows available + empty — every bottle in the shop. For every other
-  product Available is the same number as On hand. Each type's effect on both counts is in
+  empties to filled. **A returnable is an ASSET** (rule of 2 Oct): its On hand
+  is what is OWNED — in − out ± adjust ± empty count — and a sale or a return
+  never changes it; they move the item between Available (the shelf,
+  `summarise().onHand`) and the customer. With customers = On hand − Available
+  − Empty. Read all four through `stockFigures(product, bucket)` — never derive
+  them on a page. Retail is consumed when sold: On hand = Available. Switching
+  Refillable OFF re-posts the orders holding `returned_empty` rows (ProductsPage),
+  or those returns vanish from the shelf. Each type's effect on both counts is in
   `MOVEMENT_TYPES` (`sign`, `empty`); read them through `summarise()` /
   `movementEffect()`, never a hand-written sign table.
 - Prefer one shared calculation over two that agree today. Where two pages show

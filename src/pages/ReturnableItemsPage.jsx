@@ -3,7 +3,7 @@ import { X, Check, Truck, Circle, Package, ChevronDown, ChevronRight } from 'luc
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
-import { syncOrderStock, fetchProductMovements, summarise, isRefillable, returnMovementType } from '../lib/productStock'
+import { syncOrderStock, fetchProductMovements, summarise, isRefillable, returnMovementType, stockFigures } from '../lib/productStock'
 import SearchField from '../components/ui/SearchField'
 import { useTableSort, SortTh } from '../components/ui/SortableTable'
 
@@ -81,8 +81,12 @@ export default function ReturnableItemsPage() {
     const stock = summarise(moves)
     setProducts((prods ?? []).map(p => ({
       ...p,
-      available: stock.get(p.id)?.onHand || 0,
-      empty:     stock.get(p.id)?.empty  || 0,
+      ...(() => {
+        // The same figures as the Inventory sheet (stockFigures): owned, on
+        // the shelf, empty — so the two pages can never disagree.
+        const f = stockFigures(p, stock.get(p.id))
+        return { owned: f.onHand, available: f.available, empty: f.empty }
+      })(),
     })))
 
     /* An item that was sold outright and later made returnable (Gallon 20 L,
@@ -271,14 +275,11 @@ export default function ReturnableItemsPage() {
                 </div>
                 <div className="flex items-center gap-4 mt-1.5 text-xs">
                   <span className="text-amber-300">Out: <b>{fmtQty(outByProduct[p.id] || 0)}</b></span>
-                  {isRefillable(p) ? (
-                    <>
-                      <span className="text-green-400" title="Filled and ready to go out">Available: <b>{fmtQty(p.available)}</b></span>
-                      <span className="text-cyan-300" title="Back from customers, waiting to be refilled">Empty: <b>{fmtQty(p.empty)}</b></span>
-                    </>
-                  ) : (
-                    <span className="text-green-400">In store: <b>{fmtQty(p.available)}</b></span>
+                  <span className="text-green-400" title="On the shelf, ready to go out">Available: <b>{fmtQty(p.available)}</b></span>
+                  {isRefillable(p) && (
+                    <span className="text-cyan-300" title="Back from customers, waiting to be refilled">Empty: <b>{fmtQty(p.empty)}</b></span>
                   )}
+                  <span className="text-slate-300" title="Everything owned — on the shelf and with customers. Changes only with stock in, stock out and adjustments.">On hand: <b>{fmtQty(p.owned)}</b></span>
                   <span className="text-slate-500">{p.unit_of_measure}</span>
                 </div>
                 {untracked[p.id] > 0 && (

@@ -27,7 +27,15 @@ import { supabase, fetchAllRows } from './supabase'
      refill            +        −     empties refilled (gas bought, water swapped)
      empty_adjust               ±     the empties counted
 
-   `sign` is the effect on on-hand (filled); `empty` the effect on empties. */
+   `sign` is the effect on on-hand (filled); `empty` the effect on empties.
+
+   A RETURNABLE IS AN ASSET (the rule agreed 2 Oct). A shisha, a gas cylinder,
+   a water bottle belongs to the company whether it is on the shelf or at a
+   customer's, so its ON HAND is what is OWNED, moved only by Stock in, Stock
+   out and an Adjustment — and for gas/water by the empty count, since empties
+   are owned too. A sale and a return never change it; they move the item
+   between the shelf (AVAILABLE) and the customer. stockFigures() below is the
+   one place that turns a product's ledger into the figures the pages show. */
 
 export const MOVEMENT_TYPES = [
   { value: 'in',       label: 'Stock in',   sign: +1, empty: 0, hint: 'Goods received — a purchase or a transfer in' },
@@ -119,13 +127,44 @@ export function summarise(movements = []) {
   return map
 }
 
+/* THE FIGURES A PAGE SHOWS FOR ONE PRODUCT, from its summarise() bucket.
+
+     onHand         RETAIL: on the shelf (a sale consumes it).
+                    RETURNABLE: owned — in − out ± adjustments ± empty count.
+     available      on the shelf and ready to go out. For retail the same as
+                    onHand; for a refillable, the full ones only.
+     empty          gas / water back from a customer, waiting to be refilled.
+     withCustomers  a returnable out with customers and not back yet:
+                    onHand − available − empty. Always 0 for retail.
+
+   Every page reads these through here, so the Inventory sheet, Returnable
+   Items and a product's history can never disagree about the same shelf. */
+const NO_STOCK = { in: 0, out: 0, sold: 0, returned: 0, adjust: 0, returned_empty: 0, refill: 0, empty_adjust: 0, onHand: 0, empty: 0 }
+export function stockFigures(product, bucket) {
+  const b = bucket || NO_STOCK
+  if (!product?.is_returnable) {
+    return { onHand: b.onHand, available: b.onHand, empty: 0, withCustomers: 0, asset: false }
+  }
+  const owned = round2(num(b.in) - num(b.out) + num(b.adjust) + num(b.empty_adjust))
+  return {
+    onHand: owned,
+    available: b.onHand,
+    empty: isRefillable(product) ? b.empty : 0,
+    // A returnable switched off "refillable" keeps any empties it collected
+    // meanwhile; they are still on the shelf, so they are not with customers.
+    withCustomers: round2(owned - b.onHand - b.empty),
+    asset: true,
+  }
+}
+
 /* What the stock is worth, using each product's own unit_cost. Movements carry
    a cost too, but valuing on hand at today's cost is what the office expects on
    a stock sheet — and it never needs a costing method argument to explain. */
 export function stockValue(products = [], byId = new Map()) {
   const totals = {}
   for (const p of products) {
-    const onHand = byId.get(p.id)?.onHand || 0
+    // What is owned — for a returnable that includes what customers hold.
+    const onHand = stockFigures(p, byId.get(p.id)).onHand || 0
     const cost   = num(p.unit_cost)
     if (!onHand || !cost) continue
     const cur = p.currency || 'USD'

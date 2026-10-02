@@ -23,6 +23,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { syncOrderStock } from '../lib/productStock'
 import ProductHistory from '../components/products/ProductHistory'
 import { uploadShopImage, removeShopImage } from '../lib/shopMedia'
 import ItemOptionsEditor from '../components/shop/ItemOptionsEditor'
@@ -454,6 +455,24 @@ export default function ProductsPage() {
       setProgress({ state: 'error', text: hint })
       setSaving(false)
       return
+    }
+
+    /* REFILLABLE SWITCHED OFF. Returns taken while it was on went to the
+       empties — a pile an item that is not refillable never shows, so they
+       vanished from the shelf (the Arguile lost six this way, 29 Sep – 1 Oct).
+       Each order holding one is posted again; syncOrderStock now reads the item
+       as not refillable and puts those returns back on the shelf. */
+    if (hasRefillColumns && modal !== 'add' && modal.is_refillable && !(kind === 'returnable' && form.is_refillable)) {
+      setProgress({ state: 'busy', text: 'Putting the returns taken as empties back on the shelf…' })
+      const { data: emptied } = await supabase.from('product_movements')
+        .select('order_id').eq('product_id', modal.id).eq('movement_type', 'returned_empty').not('order_id', 'is', null)
+      for (const orderId of new Set((emptied ?? []).map(r => r.order_id))) {
+        const stockErr = await syncOrderStock(orderId, {
+          companyId: COMPANY_ID, userId: currentUser?.user_id || null,
+          userName: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || '',
+        })
+        if (stockErr) console.warn('Could not re-post stock for order', orderId, stockErr)
+      }
     }
 
     await fetchProducts()

@@ -4,7 +4,7 @@ import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
-import { fetchProductMovements, summarise } from '../lib/productStock'
+import { fetchProductMovements, summarise, stockFigures } from '../lib/productStock'
 import { productIsStocked } from '../lib/productCode'
 import SearchField from '../components/ui/SearchField'
 
@@ -52,7 +52,7 @@ export default function PriceListPage() {
       // Only Retail and Returnable carry stock. A service isn't stored and an
       // advert isn't goods, so they have no stock figure at all — null reads as
       // "not applicable" rather than a misleading 0.
-      qty_available: productIsStocked(p) ? (onHand.get(p.id)?.onHand ?? 0) : null,
+      qty_available: productIsStocked(p) ? stockFigures(p, onHand.get(p.id)).available : null,   // on the shelf, ready to sell
     }))
     setRows(mapped)
     setLoading(false)

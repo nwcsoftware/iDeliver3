@@ -26,7 +26,7 @@ import { useApp } from '../context/AppContext'
 import {
   MOVEMENT_TYPES, movementLabel, fetchProductMovements, summarise, stockValue,
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
-  movementDeleteRight, isRefillable, handMovementTypes,
+  movementDeleteRight, isRefillable, handMovementTypes, stockFigures,
 } from '../lib/productStock'
 import { isStrictAdmin, canEditProducts, canManageEmpties } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
@@ -45,9 +45,10 @@ const bagText = (bag) => {
 /* What each stock column means, on hover — "On hand" changes meaning for a
    refillable, and the header is where somebody looks when a number surprises. */
 const COLUMN_HINT = {
-  'On hand':  'Every unit in the shop. For gas and water: available + empty.',
-  Available:  'What can be sold now — the same as On hand, except gas and water (full ones only). Low and out are judged on this.',
+  'On hand':  'Everything owned. For a returnable (shisha, gas, water) that includes what customers hold — it changes only with stock in, stock out and adjustments, never with a sale or a return.',
+  Available:  'On the shelf and ready to go out now. A sale takes it, a return brings it back. Low and out are judged on this.',
   Empty:     'Back from customers, waiting to be refilled.',
+  'With customers': 'Returnables out with customers and not back yet: On hand − Available − Empty.',
 }
 
 function StockFlag({ zero, low }) {
@@ -125,6 +126,11 @@ export default function ProductInventoryPage() {
   const [busyId,    setBusyId]    = useState(null)
   const [moveTypeFilter, setMoveTypeFilter] = useState('')   // '' = every kind
   const [emptyFor,   setEmptyFor]   = useState(null)   // refillable whose empties are open
+  /* Returnables still out according to their ORDERS — closed, not failed, not
+     marked returned. Set beside the stock ledger's own figure: a difference is
+     a sale or a return that never reached the ledger (an order closed, or an
+     item marked returned, by a screen that did not post stock). */
+  const [ordersOut, setOrdersOut] = useState(() => new Map())
   const [emptyDraft, setEmptyDraft] = useState(newEmptiesDraft())
 
   const load = useCallback(async () => {
@@ -144,6 +150,20 @@ export default function ProductInventoryPage() {
     if (pe) { setError(pe.message); setLoading(false); return }
 
     const { rows, error: me } = await fetchProductMovements(COMPANY_ID)
+
+    const retIds = (data ?? []).filter(p => p.is_returnable).map(p => p.id)
+    const out = new Map()
+    if (retIds.length) {
+      const { data: lines } = await fetchAllRows(() => supabase.from('order_items')
+        .select('id, product_id, quantity, is_returned, order:delivery_orders(isclosed, status)')
+        .in('product_id', retIds).eq('is_deleted', false).order('id'))
+      for (const l of lines ?? []) {
+        const o = l.order
+        if (!o?.isclosed || ['cancelled', 'failed'].includes(o.status) || l.is_returned) continue
+        out.set(l.product_id, (out.get(l.product_id) || 0) + num(l.quantity))
+      }
+    }
+    setOrdersOut(out)
     setProducts(data ?? [])
     setMovements(rows)
     setError(isMissingLedger(me)
@@ -165,7 +185,10 @@ export default function ProductInventoryPage() {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return products
-      .map(p => ({ ...p, stock: byId.get(p.id) || { onHand: 0, empty: 0, in: 0, out: 0, sold: 0, returned: 0, refill: 0, moves: 0, lastMovedAt: null } }))
+      .map(p => {
+        const stock = byId.get(p.id) || { onHand: 0, empty: 0, in: 0, out: 0, sold: 0, returned: 0, refill: 0, adjust: 0, empty_adjust: 0, returned_empty: 0, moves: 0, lastMovedAt: null }
+        return { ...p, stock, fig: stockFigures(p, stock) }
+      })
       .filter(p => {
         if (onlyLow && !isLow(p, p.stock.onHand)) return false
         if (!q) return true
@@ -182,9 +205,10 @@ export default function ProductInventoryPage() {
       case 'code':      return (p.code || '').toLowerCase()
       case 'product':   return (p.name || '').toLowerCase()
       case 'category':  return p.category?.name ? p.category.name.toLowerCase() : null
-      case 'onHand':    return refill ? p.stock.onHand + p.stock.empty : p.stock.onHand
-      case 'available': return p.stock.onHand
-      case 'empty':     return refill ? p.stock.empty : null
+      case 'onHand':    return p.fig.onHand
+      case 'available': return p.fig.available
+      case 'empty':     return refill ? p.fig.empty : null
+      case 'withCustomers': return p.fig.asset ? p.fig.withCustomers : null
       case 'in':        return p.stock.in + p.stock.returned + p.stock.refill
       case 'out':       return p.stock.out
       case 'sold':      return p.stock.sold
@@ -200,8 +224,8 @@ export default function ProductInventoryPage() {
     const lowCount = products.filter(p => isLow(p, byId.get(p.id)?.onHand || 0)).length
     const outCount = products.filter(p => (byId.get(p.id)?.onHand || 0) <= 0).length
     const empties = products.filter(isRefillable).reduce((s, p) => s + num(byId.get(p.id)?.empty), 0)
-    // Same as the On hand column: a refillable's empties are on the shelf too.
-    const units = products.reduce((s, p) => s + num(byId.get(p.id)?.onHand), 0) + empties
+    // Same as the On hand column: what is owned, a returnable at a customer's too.
+    const units = products.reduce((s, p) => s + num(stockFigures(p, byId.get(p.id)).onHand), 0)
     return { lowCount, outCount, units, empties, value: stockValue(products, byId) }
   }, [products, byId])
 
@@ -383,6 +407,7 @@ export default function ProductInventoryPage() {
                 {[
                   ['Code', 'code'], ['Product', 'product'], ['Category', 'category'],
                   ['On hand', 'onHand'], ['Available', 'available'], ['Empty', 'empty'],
+                  ['With customers', 'withCustomers'],
                   ['In', 'in'], ['Out', 'out'], ['Sold', 'sold'],
                   ['Reorder at', 'reorder'], ['Last movement', 'last'], ['', null],
                 ].map(([label, key]) => (
@@ -394,9 +419,9 @@ export default function ProductInventoryPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
+                <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500 text-xs">Loading…</td></tr>
               ) : shown.length === 0 ? (
-                <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500 text-xs">
+                <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500 text-xs">
                   {onlyLow ? 'Nothing is below its reorder level.' : 'No products found.'}
                 </td></tr>
               ) : shown.map(p => {
@@ -419,23 +444,24 @@ export default function ProductInventoryPage() {
                     </td>
                     <td className="px-3 py-2 text-slate-100">{p.name}</td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{p.category?.name || '—'}</td>
-                    {/* ON HAND is every unit on the shelf; AVAILABLE is what can
-                        be sold. For most products they are the same number.
-                        For a refillable, On hand counts the empties too — a
-                        shelf of empty bottles is not stock anyone can sell —
-                        so the out / low flags always sit on Available, in the
-                        same column for every row. */}
+                    {/* ON HAND is what is owned; AVAILABLE is what can go out
+                        today. For most products they are the same number. A
+                        returnable is an asset: a sale moves it to the customer
+                        and a return brings it back, but it is owned all along,
+                        so only stock in, stock out and adjustments change On
+                        hand (stockFigures). The out / low flags always sit on
+                        Available, in the same column for every row. */}
                     <td className="px-3 py-2">
                       <span className="inline-flex items-center gap-1.5 tabular-nums font-semibold text-slate-100">
-                        {fmtQty(refillable ? p.stock.onHand + p.stock.empty : p.stock.onHand)}
+                        {fmtQty(p.fig.onHand)}
                         <span className="text-[10px] font-normal text-slate-500">{p.unit_of_measure || ''}</span>
                       </span>
-                      {refillable && <span className="block text-[10px] text-slate-500">available + empty</span>}
+                      {p.fig.asset && <span className="block text-[10px] text-slate-500">owned</span>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={`tabular-nums font-semibold ${
                         zero ? 'text-red-300' : low ? 'text-amber-300' : 'text-emerald-300'}`}>
-                        {fmtQty(p.stock.onHand)}
+                        {fmtQty(p.fig.available)}
                       </span>
                       <StockFlag zero={zero} low={low} />
                     </td>
@@ -466,6 +492,28 @@ export default function ProductInventoryPage() {
                           )}
                         </span>
                       ) : <span className="text-slate-700 text-xs">—</span>}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {p.fig.asset ? (() => {
+                        const byOrders = ordersOut.get(p.id) || 0
+                        const off = Math.round((p.fig.withCustomers - byOrders) * 100) / 100
+                        return (
+                          <span className="inline-flex items-center gap-1">
+                            <span className={`tabular-nums text-xs font-semibold ${
+                              p.fig.withCustomers < 0 ? 'text-rose-300' : p.fig.withCustomers > 0 ? 'text-amber-300' : 'text-slate-500'}`}>
+                              {fmtQty(p.fig.withCustomers)}
+                            </span>
+                            {off !== 0 && (
+                              <span className="inline-flex text-amber-400 cursor-help"
+                                title={`The orders say ${fmtQty(byOrders)} still out; the stock ledger says ${fmtQty(p.fig.withCustomers)} (${off > 0 ? '+' : ''}${fmtQty(off)}). `
+                                  + 'A sale or a return did not reach the stock ledger — an order closed, or an item marked returned, '
+                                  + 'without posting stock. Open the item\u2019s movements to compare.'}>
+                                <AlertCircle className="w-3.5 h-3.5" />
+                              </span>
+                            )}
+                          </span>
+                        )
+                      })() : <span className="text-slate-700 text-xs">—</span>}
                     </td>
                     <td className="px-3 py-2 text-green-300/80 tabular-nums text-xs">{fmtQty(p.stock.in + p.stock.returned + p.stock.refill)}</td>
                     <td className="px-3 py-2 text-amber-300/80 tabular-nums text-xs">{fmtQty(p.stock.out)}</td>
@@ -504,14 +552,18 @@ export default function ProductInventoryPage() {
               <span className="text-sm font-medium text-slate-100">{history.name}</span>
               <span className="font-mono text-[11px] text-slate-500">{history.code}</span>
               <span className="ml-auto text-xs text-slate-400 tabular-nums">
-                {isRefillable(history) ? (
-                  <>
-                    Available <b className="text-emerald-300">{fmtQty(byId.get(history.id)?.onHand || 0)}</b>
-                    {' · '}Empty <b className="text-cyan-300">{fmtQty(byId.get(history.id)?.empty || 0)}</b>
-                  </>
-                ) : (
-                  <>On hand <b className="text-slate-100">{fmtQty(byId.get(history.id)?.onHand || 0)}</b></>
-                )}
+                {(() => {
+                  const f = stockFigures(history, byId.get(history.id))
+                  if (!f.asset) return <>On hand <b className="text-slate-100">{fmtQty(f.onHand)}</b></>
+                  return (
+                    <>
+                      On hand <b className="text-slate-100">{fmtQty(f.onHand)}</b>
+                      {' · '}Available <b className="text-emerald-300">{fmtQty(f.available)}</b>
+                      {isRefillable(history) && <>{' · '}Empty <b className="text-cyan-300">{fmtQty(f.empty)}</b></>}
+                      {' · '}With customers <b className="text-amber-300">{fmtQty(f.withCustomers)}</b>
+                    </>
+                  )
+                })()}
               </span>
               {canPost && (
                 <button onClick={() => { setHistory(null); openMove(history, 'in') }}
@@ -612,9 +664,12 @@ export default function ProductInventoryPage() {
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-100 truncate">{moveFor.name}</h3>
                 <p className="text-[11px] text-slate-500">
-                  {isRefillable(moveFor)
-                    ? <>Available {fmtQty(byId.get(moveFor.id)?.onHand || 0)} · Empty {fmtQty(byId.get(moveFor.id)?.empty || 0)}</>
-                    : <>On hand {fmtQty(byId.get(moveFor.id)?.onHand || 0)}</>} {moveFor.unit_of_measure || ''}
+                  {(() => {
+                    const f = stockFigures(moveFor, byId.get(moveFor.id))
+                    return f.asset
+                      ? <>On hand {fmtQty(f.onHand)} · Available {fmtQty(f.available)}{isRefillable(moveFor) ? ` · Empty ${fmtQty(f.empty)}` : ''}</>
+                      : <>On hand {fmtQty(f.onHand)}</>
+                  })()} {moveFor.unit_of_measure || ''}
                 </p>
               </div>
               <button onClick={() => setMoveFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
@@ -669,16 +724,22 @@ export default function ProductInventoryPage() {
                       <span className="font-mono text-slate-300"> -2</span>.
                     </p>
                     <p className="text-[11px] text-slate-300 tabular-nums">
-                      {isRefillable(moveFor) ? 'Available' : 'On hand'} {fmtQty(adjustFrom)}
-                      {num(draft.quantity) ? (
-                        <>
-                          {' → '}
-                          <span className={adjustTo < 0 ? 'text-rose-300 font-semibold' : 'text-brand-300 font-semibold'}>
-                            {fmtQty(adjustTo)}
-                          </span>
-                          <span className="text-slate-500"> ({num(draft.quantity) > 0 ? '+' : ''}{fmtQty(num(draft.quantity))})</span>
-                        </>
-                      ) : <span className="text-slate-500"> — enter a difference to see where it lands</span>}
+                      {(() => {
+                        /* A returnable's count moves what is owned AND what is
+                           on the shelf: the one counted is the shelf. */
+                        const f = stockFigures(moveFor, byId.get(moveFor.id))
+                        const q = num(draft.quantity)
+                        if (!q) return <>{f.asset ? 'Available' : 'On hand'} {fmtQty(adjustFrom)}<span className="text-slate-500"> — enter a difference to see where it lands</span></>
+                        const land = (from) => (
+                          <>{fmtQty(from)}{' → '}<span className={from + q < 0 ? 'text-rose-300 font-semibold' : 'text-brand-300 font-semibold'}>{fmtQty(Math.round((from + q) * 100) / 100)}</span></>
+                        )
+                        return (
+                          <>
+                            {f.asset ? <>Available {land(f.available)} · On hand {land(f.onHand)}</> : <>On hand {land(adjustFrom)}</>}
+                            <span className="text-slate-500"> ({q > 0 ? '+' : ''}{fmtQty(q)})</span>
+                          </>
+                        )
+                      })()}
                     </p>
                     {adjustTo < 0 && num(draft.quantity) ? (
                       <p className="text-[11px] text-rose-300">
