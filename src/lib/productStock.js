@@ -247,6 +247,59 @@ export async function deleteProductMovement(id) {
   return error ? error.message : null
 }
 
+/* A movement an ORDER posted. Its type and quantity are the order's: the next
+   save of that order (syncOrderStock) recomputes them and would put back
+   whatever an edit changed, so an edit may touch its date, reference, cost and
+   notes only. */
+export const movementFollowsOrder = (m) => !!m?.order_id
+
+/* A date that has not happened yet. An hour of grace, because an office PC's
+   clock can run a few minutes fast; beyond that it is a typo — 30 Oct typed
+   for 1 Oct — and a stock movement cannot have happened in the future. */
+export const isFutureMoment = (iso, now = Date.now()) =>
+  !!iso && new Date(iso).getTime() > now + 60 * 60 * 1000
+
+/* EDITING A MOVEMENT IN PLACE — offered to the super admin only (the page
+   shows the button to nobody else; every client writes with the same key, so
+   that is the screen's rule, not the database's).
+
+   For everyone else a mistake is still corrected by posting another movement.
+   The super admin may fix one where it stands — a wrong date, a typo in a
+   quantity — and the row says so: what changed, from what, who changed it and
+   when, appended to its notes. An edit is never silent. Returns null when
+   nothing changed. */
+export async function updateProductMovement(before, row, { userName = '' } = {}) {
+  const locked = movementFollowsOrder(before)
+  const next = {
+    movement_type: locked ? before.movement_type : (row.movement_type || before.movement_type),
+    quantity:      locked ? num(before.quantity) : num(row.quantity),
+    unit_cost:     row.unit_cost === '' || row.unit_cost == null ? null : num(row.unit_cost),
+    reference:     row.reference?.trim() || null,
+    moved_at:      row.moved_at || before.moved_at,
+  }
+  const minute = (iso) => Math.floor(new Date(iso).getTime() / 60000)
+  const was = []
+  if (next.movement_type !== before.movement_type) was.push(`type ${movementLabel(before.movement_type)}`)
+  if (round2(next.quantity) !== round2(before.quantity)) was.push(`qty ${round2(before.quantity)}`)
+  if ((next.unit_cost ?? null) !== (before.unit_cost == null ? null : num(before.unit_cost))) was.push(`cost ${before.unit_cost ?? '—'}`)
+  if ((next.reference || '') !== (before.reference || '')) was.push(`ref ${before.reference || '—'}`)
+  if (minute(next.moved_at) !== minute(before.moved_at)) was.push(`dated ${String(before.moved_at).slice(0, 10)}`)
+  const ownNotes = row.notes?.trim() || ''
+  const notesChanged = ownNotes !== (before.notes || '').trim()
+  if (!was.length && !notesChanged) return null
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  const trail = `[Edited ${stamp} by ${userName || 'the super admin'}${was.length ? ` — was ${was.join(', ')}` : ' — notes'}]`
+  try {
+    const { error } = await supabase.from('product_movements')
+      .update({ ...next, notes: [ownNotes, trail].filter(Boolean).join(' '), updated_at: new Date().toISOString() })
+      .eq('id', before.id)
+    return error ? error.message : null
+  } catch (e) {
+    return e?.message || 'Could not save the change.'
+  }
+}
+
 /* ── an order's stock, kept in step with the order itself ─────────────────
  *
  * Selling used to move no stock at all: order_items was written and this ledger

@@ -18,6 +18,7 @@ import {
   Filter,
   RefreshCcw,
   ClipboardCheck,
+  Pencil,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import ProductMonthlySales from '../components/products/ProductMonthlySales'
@@ -27,6 +28,7 @@ import {
   MOVEMENT_TYPES, movementLabel, fetchProductMovements, summarise, stockValue,
   isLow, saveProductMovement, deleteProductMovement, isMissingLedger,
   movementDeleteRight, isRefillable, handMovementTypes, stockFigures,
+  updateProductMovement, movementFollowsOrder, isFutureMoment,
 } from '../lib/productStock'
 import { isStrictAdmin, canEditProducts, canManageEmpties } from '../lib/roles'
 import SearchField from '../components/ui/SearchField'
@@ -37,6 +39,14 @@ const fmtQty = n => Number(num(n).toFixed(2)).toLocaleString()
 const fmtMoney = (v, c) => `${num(v).toLocaleString(undefined, {
   minimumFractionDigits: c === 'LBP' ? 0 : 2, maximumFractionDigits: c === 'LBP' ? 0 : 2 })} ${c || 'USD'}`
 const fmtWhen = ts => (ts ? new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—')
+/* A stored moment as a date-and-time field shows it: in LOCAL time. Slicing
+   the ISO string showed UTC instead — a time picked as 10:00 came back as
+   07:00 in Beirut, and an edited movement opened three hours off. */
+const toLocalInput = (iso) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
 const bagText = (bag) => {
   const parts = Object.entries(bag || {}).filter(([, v]) => num(v) !== 0).map(([c, v]) => fmtMoney(v, c))
   return parts.length ? parts.join('  +  ') : '—'
@@ -120,6 +130,7 @@ export default function ProductInventoryPage() {
   const [onlyLow,   setOnlyLow]   = useState(false)
   const [history,   setHistory]   = useState(null)   // product whose ledger is open
   const [moveFor,   setMoveFor]   = useState(null)   // product being moved
+  const [editMove,  setEditMove]  = useState(null)   // the movement being edited (super admin), or null for a new one
   const [draft,     setDraft]     = useState(emptyMove())
   const [saving,    setSaving]    = useState(false)
   const [formErr,   setFormErr]   = useState('')
@@ -242,25 +253,43 @@ export default function ProductInventoryPage() {
   function openMove(product, type = 'in') {
     setDraft({ ...emptyMove(product), movement_type: type })
     setFormErr('')
+    setEditMove(null)
     setMoveTypeFilter('')      // a fresh ledger shows everything
     setMoveFor(product)
   }
 
+  /* The super admin opens a movement from its history in the same form, filled
+     in. The history stays open underneath, to come back to. */
+  function openEditMove(m) {
+    if (!isSuperAdmin || !history) return
+    setDraft({
+      product_id: m.product_id, movement_type: m.movement_type, quantity: String(m.quantity ?? ''),
+      unit_cost: m.unit_cost ?? '', currency: m.currency || history.currency || 'USD',
+      reference: m.reference || '', notes: m.notes || '', moved_at: m.moved_at || '',
+    })
+    setFormErr('')
+    setEditMove(m)
+    setMoveFor(history)
+  }
+  const closeMoveForm = () => { setMoveFor(null); setEditMove(null) }
+
   async function postMovement() {
     if (!num(draft.quantity)) { setFormErr('Enter a quantity.'); return }
-    if (draft.movement_type !== 'adjust' && num(draft.quantity) < 0) {
+    if (!['adjust', 'empty_adjust'].includes(draft.movement_type) && num(draft.quantity) < 0) {
       setFormErr('Only an adjustment may be negative — use Stock out to take goods away, '
         + 'or switch to Adjustment if you are correcting a count.'); return
     }
+    if (isFutureMoment(draft.moved_at)) {
+      setFormErr(`That date is in the future (${fmtWhen(draft.moved_at)}). Enter when it actually happened.`); return
+    }
     setSaving(true); setFormErr('')
-    const err = await saveProductMovement(draft, {
-      companyId: COMPANY_ID,
-      userId: currentUser?.user_id ?? null,
-      userName: `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || '',
-    })
+    const userName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
+    const err = editMove
+      ? (isSuperAdmin ? await updateProductMovement(editMove, draft, { userName }) : 'Only the super admin can edit a movement.')
+      : await saveProductMovement(draft, { companyId: COMPANY_ID, userId: currentUser?.user_id ?? null, userName })
     setSaving(false)
     if (err) { setFormErr(err); return }
-    setMoveFor(null); load()
+    closeMoveForm(); load()
   }
 
   /* ── empties: refill some, or correct the count ── */
@@ -279,6 +308,9 @@ export default function ProductInventoryPage() {
 
   async function postEmpties() {
     if (!canEmpties) return
+    if (isFutureMoment(emptyDraft.moved_at)) {
+      setFormErr(`That date is in the future (${fmtWhen(emptyDraft.moved_at)}). Enter when it actually happened.`); return
+    }
     const refill = emptyDraft.mode === 'refill'
     let quantity
     if (refill) {
@@ -605,7 +637,7 @@ export default function ProductInventoryPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-border sticky top-0 bg-surface-card">
-                    {['When', 'Type', 'Qty', 'Reference', 'By', 'Notes', ...(isSuperAdmin ? [''] : [])].map((h, i) => (
+                    {['When', 'Type', 'Qty', 'Reference', 'By', 'Notes', ...(canDeleteAny ? [''] : [])].map((h, i) => (
                       <th key={i} className="text-left px-4 py-2 text-slate-500 text-[11px] font-medium uppercase tracking-wider">{h}</th>
                     ))}
                   </tr>
@@ -626,11 +658,20 @@ export default function ProductInventoryPage() {
                       <td className="px-4 py-2 text-slate-100 tabular-nums text-xs">{fmtQty(m.quantity)}</td>
                       <td className="px-4 py-2 text-slate-400 text-xs">{m.reference || '—'}</td>
                       <td className="px-4 py-2 text-slate-500 text-xs">{m.created_by_name || '—'}</td>
-                      <td className="px-4 py-2 text-slate-400 text-xs max-w-[16rem] truncate">{m.notes || ''}</td>
+                      <td className="px-4 py-2 text-slate-400 text-xs max-w-[16rem] truncate" title={m.notes || undefined}>{m.notes || ''}</td>
                       {canDeleteAny && (() => {
                         const right = movementDeleteRight(m, { isSuperAdmin, isStrictAdmin: strictAdmin })
                         return (
-                          <td className="px-4 py-2">
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {isSuperAdmin && (
+                              <button onClick={() => openEditMove(m)}
+                                title={movementFollowsOrder(m)
+                                  ? 'Edit this movement — its date, reference, cost and notes (type and quantity follow the order)'
+                                  : 'Edit this movement'}
+                                className="btn-ghost p-1.5 text-slate-500 hover:text-brand-300">
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {right.allowed ? (
                               <button onClick={() => removeMovement(m)} disabled={busyId === m.id}
                                 title="Delete this movement (correcting by posting the opposite is usually better)"
@@ -662,7 +703,9 @@ export default function ProductInventoryPage() {
           <div className="card w-full max-w-md flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-surface-border">
               <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-slate-100 truncate">{moveFor.name}</h3>
+                <h3 className="text-sm font-semibold text-slate-100 truncate">
+                  {editMove ? `Edit movement — ${moveFor.name}` : moveFor.name}
+                </h3>
                 <p className="text-[11px] text-slate-500">
                   {(() => {
                     const f = stockFigures(moveFor, byId.get(moveFor.id))
@@ -672,15 +715,34 @@ export default function ProductInventoryPage() {
                   })()} {moveFor.unit_of_measure || ''}
                 </p>
               </div>
-              <button onClick={() => setMoveFor(null)} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
+              <button onClick={closeMoveForm} className="btn-ghost p-1.5"><X className="w-4 h-4" /></button>
             </div>
 
             <div className="p-5 space-y-3">
+              {editMove && movementFollowsOrder(editMove) && (
+                <p className="text-[11px] text-amber-200 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                  This movement came from order <span className="font-mono">{editMove.reference || '—'}</span>. Its type
+                  and quantity follow the order — amend the order to change them. The date, reference, cost and notes
+                  can be corrected here.
+                </p>
+              )}
               <div>
                 <label className="label">Movement</label>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {handMovementTypes(moveFor).map(t => (
-                    <button key={t.value} type="button"
+                  {(() => {
+                    /* The kinds on offer. A new entry: what a person posts. An
+                       edit: the same family as the row — an empties row stays
+                       an empties row — and never another kind for one an order
+                       made. The row's own kind is always there. */
+                    if (!editMove) return handMovementTypes(moveFor)
+                    if (movementFollowsOrder(editMove)) return MOVEMENT_TYPES.filter(t => t.value === editMove.movement_type)
+                    const own = MOVEMENT_TYPES.find(t => t.value === editMove.movement_type)
+                    const family = own?.refill
+                      ? MOVEMENT_TYPES.filter(t => t.value === 'refill' || t.value === 'empty_adjust')
+                      : handMovementTypes(moveFor)
+                    return family.some(t => t.value === own?.value) || !own ? family : [...family, own]
+                  })().map(t => (
+                    <button key={t.value} type="button" disabled={!!editMove && movementFollowsOrder(editMove)}
                       onClick={() => setDraft(d => ({ ...d, movement_type: t.value }))}
                       className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
                         draft.movement_type === t.value
@@ -723,7 +785,9 @@ export default function ProductInventoryPage() {
                       Counted <span className="text-rose-300 font-semibold">fewer</span>? Enter it negative —
                       <span className="font-mono text-slate-300"> -2</span>.
                     </p>
-                    <p className="text-[11px] text-slate-300 tabular-nums">
+                    {/* Where it lands is shown for a new entry only: an edited
+                        row is already inside the figure it would start from. */}
+                    {!editMove && <p className="text-[11px] text-slate-300 tabular-nums">
                       {(() => {
                         /* A returnable's count moves what is owned AND what is
                            on the shelf: the one counted is the shelf. */
@@ -740,8 +804,8 @@ export default function ProductInventoryPage() {
                           </>
                         )
                       })()}
-                    </p>
-                    {adjustTo < 0 && num(draft.quantity) ? (
+                    </p>}
+                    {!editMove && adjustTo < 0 && num(draft.quantity) ? (
                       <p className="text-[11px] text-rose-300">
                         That would leave the shelf below zero. Check the sign.
                       </p>
@@ -754,6 +818,7 @@ export default function ProductInventoryPage() {
                 <div>
                   <label className="label">Quantity *</label>
                   <input type="number" step="0.01" className="input" autoFocus value={draft.quantity}
+                    disabled={!!editMove && movementFollowsOrder(editMove)}
                     onChange={e => setDraft(d => ({ ...d, quantity: e.target.value }))} />
                 </div>
                 <div>
@@ -771,7 +836,7 @@ export default function ProductInventoryPage() {
                 </div>
                 <div>
                   <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Date</label>
-                  <input type="datetime-local" className="input" value={draft.moved_at ? draft.moved_at.slice(0, 16) : ''}
+                  <input type="datetime-local" className="input" value={toLocalInput(draft.moved_at)}
                     onChange={e => setDraft(d => ({ ...d, moved_at: e.target.value ? new Date(e.target.value).toISOString() : '' }))} />
                   <p className="text-[11px] text-slate-500 mt-1">Empty = now.</p>
                 </div>
@@ -792,9 +857,10 @@ export default function ProductInventoryPage() {
             </div>
 
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
-              <button onClick={() => setMoveFor(null)} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
+              <button onClick={closeMoveForm} className="btn-ghost px-4 py-2 text-sm border border-surface-border">Cancel</button>
               <button onClick={postMovement} disabled={saving} className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
-                {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Record
+                {saving ? <Loader className="w-4 h-4 animate-spin" /> : editMove ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                {editMove ? 'Save changes' : 'Record'}
               </button>
             </div>
           </div>
@@ -896,7 +962,7 @@ export default function ProductInventoryPage() {
                 </div>
                 <div>
                   <label className="label flex items-center gap-1"><Calendar className="w-3 h-3" /> Date</label>
-                  <input type="datetime-local" className="input" value={emptyDraft.moved_at ? emptyDraft.moved_at.slice(0, 16) : ''}
+                  <input type="datetime-local" className="input" value={toLocalInput(emptyDraft.moved_at)}
                     onChange={e => setEmptyDraft(d => ({ ...d, moved_at: e.target.value ? new Date(e.target.value).toISOString() : '' }))} />
                   <p className="text-[11px] text-slate-500 mt-1">Empty = now.</p>
                 </div>
