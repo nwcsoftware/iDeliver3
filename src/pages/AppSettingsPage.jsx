@@ -5,9 +5,10 @@ import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
-import { fetchPriceFloors, setPriceFloor, setSalePrice, salePrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
-import { fetchSeatSettings, setSeat, SEAT_FAMILIES } from '../lib/seatSettings'
-import { SEATS } from '../lib/billing'
+import { fetchPriceFloors, setPriceFloor, setSalePrice, salePrice, planPrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
+import { fetchSeatSettings, setSeat } from '../lib/seatSettings'
+import { SEATS, SUPPLIER_SUBSCRIPTION } from '../lib/billing'
+import { TRIAL_DAYS } from '../lib/subscriptions'
 import { fetchSoftwareSubscriptions, saveSoftwareSubscription, paymentSummary } from '../lib/softwareSubscriptions'
 
 /* General application settings. Currently holds the order-confirmation reminder
@@ -64,93 +65,113 @@ export default function AppSettingsPage() {
   )
   const [ordersWindowSavedMsg, setOrdersWindowSavedMsg] = useState('')
 
-  /* SUBSCRIPTION MINIMUMS (fix169). The super admin sets them; an admin reads
-     them here, since every subscription an admin prices is held to them. They
-     live in their own table, written only through a super-admin function — not
-     in the shared settings row, which every client can write. */
-  const [floors, setFloors]         = useState(DEFAULT_FLOORS)
+  /* SUBSCRIPTION SETTINGS — one section, one row per kind. Every figure is
+     stored once, so no two places can show a different price:
+
+       super admin's price  partners per year, suppliers per month — the
+                            minimum (subscription_price_floors, fix169);
+                            office seats and drivers per extra seat a year
+                            (seat_settings.extra_rate, fix174)
+       selling price        partners only — what the partner pays
+                            (subscription_price_floors.sale_amount, fix172)
+       free seats           seat_settings.included (fix174)
+       software fee         the Software Subscriptions record itself, so the
+                            licence reminder in the header reads the same one
+
+     The super admin edits all of it. An admin edits only the partner selling
+     price, never under the super admin's price; the database refuses less. */
+  const [floors, setFloors]           = useState(DEFAULT_FLOORS)
   const [floorsReady, setFloorsReady] = useState(true)
-  const [floorDraft, setFloorDraft] = useState({})            // { partner: '12' }
-  const [floorMsg, setFloorMsg]     = useState({})            // { partner: { ok, text } }
+  const [seats, setSeats]             = useState(SEATS)
+  const [seatsReady, setSeatsReady]   = useState(true)
+  const [software, setSoftware]       = useState([])
+  const [draft, setDraft]             = useState({})          // { 'partner.sale': '15', 'driver.rate': '20', 'sw.<id>': '650' }
+  const [rowMsg, setRowMsg]           = useState({})          // { partner: { ok, text } }
+  const [rowBusy, setRowBusy]         = useState('')
   useEffect(() => {
     if (!canSetLimits) return
     fetchPriceFloors().then(r => { setFloors(r.floors); setFloorsReady(r.installed) })
-  }, [canSetLimits])
-
-  /* THE ADMIN'S PARTNER PRICE (fix172) — what every new partner login's
-     one-year subscription is sold at. Admin and super admin set it, never under
-     the minimum; the database refuses less. */
-  const [saleDraft, setSaleDraft] = useState(undefined)
-  const [saleMsg, setSaleMsg]     = useState(null)            // { ok, text }
-  async function saveSale() {
-    const amount = Math.round((Number(saleDraft) || 0) * 100) / 100
-    const floor = Number(floors.partner.amount) || 0
-    if (!(amount > 0)) { setSaleMsg({ ok: false, text: 'Enter a price.' }); return }
-    if (amount < floor) { setSaleMsg({ ok: false, text: `It cannot be under the minimum of ${fmtPerPeriod(floors.partner)}.` }); return }
-    const { row, error } = await setSalePrice(currentUser?.user_id, 'partner', amount)
-    if (error) { setSaleMsg({ ok: false, text: error }); return }
-    setFloors(f => ({ ...f, partner: { ...f.partner, ...(row || {}), sale_amount: Number(row?.sale_amount ?? amount) } }))
-    setSaleDraft(undefined)
-    setSaleMsg({ ok: true, text: 'Saved' })
-    setTimeout(() => setSaleMsg(null), 2000)
-  }
-
-  /* SUBSCRIPTION SETTINGS (fix174) — the seats in the annual package (how many
-     come free, and what one more costs a year) and the yearly software fee.
-     The super admin sets them; an admin reads them. The software fee is the
-     Software Subscriptions record itself, so the licence reminder in the
-     header keeps reading the same figure. */
-  const [seats, setSeats]           = useState(SEATS)
-  const [seatsReady, setSeatsReady] = useState(true)
-  const [seatDraft, setSeatDraft]   = useState({})            // { driver: { included, rate } }
-  const [seatMsg, setSeatMsg]       = useState({})            // { driver: { ok, text } }
-  const [software, setSoftware]     = useState([])
-  const [feeDraft, setFeeDraft]     = useState({})            // { [id]: '600' }
-  const [feeMsg, setFeeMsg]         = useState({})
-  useEffect(() => {
-    if (!canSetLimits) return
     fetchSeatSettings().then(r => { setSeats(r.seats); setSeatsReady(r.installed) })
     fetchSoftwareSubscriptions(COMPANY_ID).then(r =>
       setSoftware((r.rows || []).filter(x => x.is_active !== false && x.billing_cycle === 'annual')))
   }, [canSetLimits, COMPANY_ID])
 
-  async function saveSeatRow(family) {
-    const cur = seats[family]
-    const d = seatDraft[family] || {}
-    const included = d.included ?? cur.included
-    const rate = d.rate ?? cur.extraRate
-    if (!(Number(included) >= 0) || String(included).trim() === '') { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: 'Enter the number of free seats.' } })); return }
-    if (family !== 'partner' && !(Number(rate) > 0)) { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: 'Enter a price above 0.' } })); return }
-    const { row, error } = await setSeat(currentUser?.user_id, family, Math.floor(Number(included)), Number(rate) || 0)
-    if (error) { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: error } })); return }
-    setSeats(sx => ({ ...sx, [family]: { ...sx[family], included: Number(row?.included ?? included),
-      extraRate: family === 'partner' ? sx[family].extraRate : Number(row?.extra_rate ?? rate) } }))
-    setSeatDraft(x => { const y = { ...x }; delete y[family]; return y })
-    setSeatMsg(m => ({ ...m, [family]: { ok: true, text: 'Saved' } }))
-    setTimeout(() => setSeatMsg(m => { const y = { ...m }; delete y[family]; return y }), 2000)
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100
+  const valueOf = (key, current) => draft[key] ?? String(current ?? '')
+  const changed = (key, current) => draft[key] !== undefined && String(draft[key]).trim() !== String(current ?? '')
+                                  && Number(draft[key]) !== Number(current)
+  const edit = (row, key, v) => {
+    setDraft(d => ({ ...d, [key]: v }))
+    setRowMsg(m => { const y = { ...m }; delete y[row]; return y })
   }
 
-  async function saveFee(row) {
-    const amount = Math.round((Number(feeDraft[row.id]) || 0) * 100) / 100
-    if (!(amount > 0)) { setFeeMsg(m => ({ ...m, [row.id]: { ok: false, text: 'Enter the yearly fee.' } })); return }
-    const err = await saveSoftwareSubscription({ ...row, amount }, { companyId: COMPANY_ID, userId: currentUser?.user_id ?? null })
-    if (err) { setFeeMsg(m => ({ ...m, [row.id]: { ok: false, text: err } })); return }
-    setSoftware(list => list.map(x => (x.id === row.id ? { ...x, amount } : x)))
-    setFeeDraft(x => { const y = { ...x }; delete y[row.id]; return y })
-    setFeeMsg(m => ({ ...m, [row.id]: { ok: true, text: 'Saved' } }))
-    setTimeout(() => setFeeMsg(m => { const y = { ...m }; delete y[row.id]; return y }), 2000)
-  }
+  /* One row's changes, saved together — each through its own guarded function. */
+  async function saveRow(row) {
+    const uid = currentUser?.user_id
+    const errs = []
+    setRowBusy(row)
+    let nextFloors = floors
 
-  async function saveFloor(role) {
-    const raw = floorDraft[role]
-    const amount = Math.round((Number(raw) || 0) * 100) / 100
-    if (!(amount > 0)) { setFloorMsg(m => ({ ...m, [role]: { ok: false, text: 'Enter a price above 0.' } })); return }
-    const { row, error } = await setPriceFloor(currentUser?.user_id, role, amount)
-    if (error) { setFloorMsg(m => ({ ...m, [role]: { ok: false, text: error } })); return }
-    setFloors(f => ({ ...f, [role]: { ...f[role], ...(row || {}), amount: Number(row?.amount ?? amount) } }))
-    setFloorDraft(d => { const x = { ...d }; delete x[role]; return x })
-    setFloorMsg(m => ({ ...m, [role]: { ok: true, text: 'Saved' } }))
-    setTimeout(() => setFloorMsg(m => { const x = { ...m }; delete x[role]; return x }), 2000)
+    // The super admin's price for partners (a year) or suppliers (a month).
+    if ((row === 'partner' || row === 'supplier') && isSuperAdmin && changed(`${row}.floor`, floors[row].amount)) {
+      const amount = r2(draft[`${row}.floor`])
+      if (!(amount > 0)) errs.push('Enter the super admin’s price.')
+      else {
+        const { row: saved, error } = await setPriceFloor(uid, row, amount)
+        if (error) errs.push(error)
+        else nextFloors = { ...nextFloors, [row]: { ...nextFloors[row], ...(saved || {}), amount: Number(saved?.amount ?? amount) } }
+      }
+    }
+    // The partner selling price — never under the super admin's price.
+    if (row === 'partner' && changed('partner.sale', salePrice('partner', floors))) {
+      const amount = r2(draft['partner.sale'])
+      const floor = Number(nextFloors.partner.amount) || 0
+      if (!(amount > 0)) errs.push('Enter the selling price.')
+      else if (amount < floor) errs.push(`The selling price cannot be under the super admin’s price of ${fmtPerPeriod(nextFloors.partner)}.`)
+      else {
+        const { row: saved, error } = await setSalePrice(uid, 'partner', amount)
+        if (error) errs.push(error)
+        else nextFloors = { ...nextFloors, partner: { ...nextFloors.partner, sale_amount: Number(saved?.sale_amount ?? amount) } }
+      }
+    }
+    setFloors(nextFloors)
+
+    // Free seats, and the price of each seat beyond them.
+    if (['partner', 'admin', 'call_center', 'driver'].includes(row) && isSuperAdmin) {
+      const cur = seats[row]
+      if (changed(`${row}.included`, cur.included) || (row !== 'partner' && changed(`${row}.rate`, cur.extraRate))) {
+        const included = draft[`${row}.included`] ?? cur.included
+        const rate = draft[`${row}.rate`] ?? cur.extraRate
+        if (String(included).trim() === '' || !(Number(included) >= 0)) errs.push('Enter the number of free seats.')
+        else if (row !== 'partner' && !(Number(rate) > 0)) errs.push('Enter the super admin’s price.')
+        else {
+          const { row: saved, error } = await setSeat(uid, row, Math.floor(Number(included)), Number(rate) || 0)
+          if (error) errs.push(error)
+          else setSeats(sx => ({ ...sx, [row]: { ...sx[row], included: Number(saved?.included ?? included),
+            extraRate: row === 'partner' ? sx[row].extraRate : Number(saved?.extra_rate ?? rate) } }))
+        }
+      }
+    }
+
+    // The yearly software fee, on its Software Subscriptions record.
+    if (row.startsWith('sw.') && isSuperAdmin) {
+      const rec = software.find(x => `sw.${x.id}` === row)
+      if (rec && changed(row, rec.amount)) {
+        const amount = r2(draft[row])
+        if (!(amount > 0)) errs.push('Enter the yearly fee.')
+        else {
+          const err = await saveSoftwareSubscription({ ...rec, amount }, { companyId: COMPANY_ID, userId: uid ?? null })
+          if (err) errs.push(err)
+          else setSoftware(list => list.map(x => (x.id === rec.id ? { ...x, amount } : x)))
+        }
+      }
+    }
+
+    setRowBusy('')
+    if (errs.length) { setRowMsg(m => ({ ...m, [row]: { ok: false, text: errs.join(' ') } })); return }
+    setDraft(d => Object.fromEntries(Object.entries(d).filter(([k]) => !(k === row || k.startsWith(row + '.')))))
+    setRowMsg(m => ({ ...m, [row]: { ok: true, text: 'Saved' } }))
+    setTimeout(() => setRowMsg(m => { const y = { ...m }; delete y[row]; return y }), 2000)
   }
 
   const reminderDirty =
@@ -432,262 +453,157 @@ export default function AppSettingsPage() {
           </div>
         )}
 
-        {/* Subscription minimums (super admin sets; admin reads) — fix169 */}
-        {canSetLimits && (
-          <div className="card p-5 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/30 flex items-center justify-center flex-shrink-0">
-                <BadgeDollarSign className="w-4 h-4 text-fuchsia-300" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-slate-100">Subscription prices — the minimums</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  The least a partner or supplier subscription may cost. An administrator prices each subscription
-                  by hand and may charge more, but never less, never 0 and never empty. A new partner starts at the
-                  partner minimum. Free partner seats and a supplier&rsquo;s free trial are not affected.
-                </p>
-              </div>
+        {/* Subscription settings — every price, free seat and the software fee,
+            one row per kind (fix169 / fix172 / fix174) */}
+        {canSetLimits && (() => {
+          const cur = (c) => c || 'USD'
+          const pFloor = Number(floors.partner.amount) || 0
+          const pSale  = Number(valueOf('partner.sale', salePrice('partner', floors))) || 0
+          const pFloorNow = Number(valueOf('partner.floor', floors.partner.amount)) || 0
+          const keeps = Math.round((pSale - pFloorNow) * 100) / 100
+          const numberIn = (key, current, label, { min = '0', step = '1', unit = '', width = 'w-14', disabled = false } = {}) => (
+            <div className={`relative ${width}`}>
+              <input type="number" min={min} step={step} aria-label={label} disabled={disabled}
+                className={`input py-1.5 px-2 text-sm ${unit ? 'pr-9' : ''}`} value={valueOf(key, current)}
+                onChange={e => edit(key.split('.')[0] === 'sw' ? key : key.split('.')[0], key, e.target.value)} />
+              {unit && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">{unit}</span>}
             </div>
-
-            {!floorsReady && (
-              <p className="text-[11px] text-amber-300">
-                Not installed yet — run supabase-fix169.sql. Until then today&rsquo;s prices apply:
-                partner {fmtPerPeriod(DEFAULT_FLOORS.partner)}, supplier {fmtPerPeriod(DEFAULT_FLOORS.supplier)}.
-              </p>
-            )}
-
-            <div className="grid sm:grid-cols-2 gap-3">
-              {['partner', 'supplier'].map(role => {
-                const f = floors[role]
-                const draft = floorDraft[role]
-                const dirty = draft !== undefined && Number(draft) !== Number(f.amount)
-                const msg = floorMsg[role]
-                return (
-                  <div key={role} className="rounded-lg border border-surface-border p-3 space-y-2">
-                    <p className="text-xs font-medium text-slate-200 capitalize">{role} — per {f.period}</p>
-                    {isSuperAdmin ? (
-                      <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                          <input type="number" min="0.01" step="0.01" className="input pr-14 text-sm"
-                            disabled={!floorsReady} aria-label={`${role} minimum`}
-                            value={draft ?? String(f.amount)}
-                            onChange={e => setFloorDraft(d => ({ ...d, [role]: e.target.value }))} />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{f.currency}</span>
-                        </div>
-                        <button type="button" onClick={() => saveFloor(role)} disabled={!dirty || !floorsReady}
-                          className="btn-primary px-3 py-2 text-xs disabled:opacity-40">
-                          <Save className="w-3.5 h-3.5" /> Save
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-100 tabular-nums">{fmtPerPeriod(f)}</p>
-                    )}
-                    {msg && (
-                      <p className={`text-[11px] flex items-center gap-1 ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>
-                        {msg.ok && <CheckCircle2 className="w-3 h-3" />}{msg.text}
-                      </p>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            <p className="text-[11px] text-slate-500">
-              {isSuperAdmin
-                ? 'Only you can change these. The database holds every price an administrator sets to them; your own prices may go below.'
-                : 'Set by the super admin. Every subscription you price is held to these.'}
-            </p>
-          </div>
-        )}
-
-        {/* The admin's own partner price (fix172) */}
-        {canSetLimits && (
-          <div className="card p-5 space-y-4" data-section="partner-price">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
-                <BadgeDollarSign className="w-4 h-4 text-brand-300" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-slate-100">Partner subscription — your price</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  What a partner pays you for a year. Every portal login opened for a partner gets a one-year
-                  subscription at this price, switched on at once. For each one the super admin is owed the
-                  minimum ({fmtPerPeriod(floors.partner)}); anything above it is yours. It cannot be lower than the minimum.
-                </p>
-              </div>
-            </div>
-            {(() => {
-              const floor = Number(floors.partner.amount) || 0
-              const set = Number(floors.partner.sale_amount) || 0
-              const value = saleDraft ?? String(set || floor)
-              const dirty = saleDraft !== undefined && Number(saleDraft) !== (set || floor)
-              const margin = Math.round(((Number(value) || 0) - floor) * 100) / 100
-              return (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 max-w-md">
-                    <div className="relative flex-1">
-                      <input type="number" min={floor} step="0.01" className="input pr-24 text-sm" aria-label="Your partner price"
-                        disabled={!floorsReady} value={value}
-                        onChange={e => { setSaleDraft(e.target.value); setSaleMsg(null) }} />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{floors.partner.currency} / year</span>
-                    </div>
-                    <button type="button" onClick={saveSale} disabled={!dirty || !floorsReady}
-                      className="btn-primary px-3 py-2 text-xs disabled:opacity-40">
-                      <Save className="w-3.5 h-3.5" /> Save
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    {Number(value) >= floor
-                      ? <>The super admin gets {fmtFloor(floor, floors.partner.currency)} of it; you keep <span className="text-slate-300">{fmtFloor(margin, floors.partner.currency)}</span> per subscription.</>
-                      : <span className="text-rose-300">Below the minimum of {fmtPerPeriod(floors.partner)}.</span>}
-                  </p>
-                  {set > 0 && set < floor && (
-                    <p className="text-[11px] text-amber-300">
-                      The super admin has raised the minimum above your price — new subscriptions are charged the
-                      minimum, {fmtFloor(salePrice('partner', floors), floors.partner.currency)}, until you set a new price.
-                    </p>
-                  )}
-                  {!set && floorsReady && (
-                    <p className="text-[11px] text-slate-500">Not set yet — new subscriptions are charged the minimum.</p>
-                  )}
-                  {saleMsg && (
-                    <p className={`text-[11px] flex items-center gap-1 ${saleMsg.ok ? 'text-green-400' : 'text-rose-300'}`}>
-                      {saleMsg.ok && <CheckCircle2 className="w-3 h-3" />}{saleMsg.text}
-                    </p>
-                  )}
+          )
+          const text = (v) => <span className="text-sm text-slate-100 tabular-nums whitespace-nowrap">{v}</span>
+          const none = <span className="text-slate-600">—</span>
+          const saveCell = (row, dirty) => (
+            <td className="px-2 py-2 text-right">
+              {rowMsg[row] && <span className={`block text-[11px] mb-1 ${rowMsg[row].ok ? 'text-green-400' : 'text-rose-300'}`}>{rowMsg[row].text}</span>}
+              <button type="button" onClick={() => saveRow(row)} disabled={!dirty || rowBusy === row} title="Save this row"
+                className="btn-primary p-2 text-xs disabled:opacity-40">
+                <Save className="w-3.5 h-3.5" /><span className="sr-only">Save</span>
+              </button>
+            </td>
+          )
+          const seatRows = [
+            { family: 'admin',       label: 'Administrators' },
+            { family: 'call_center', label: 'Call centre & Senior Call Center' },
+            { family: 'driver',      label: 'Drivers' },
+          ]
+          return (
+            <div className="card p-5 space-y-4" data-section="subscription-settings">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/30 flex items-center justify-center flex-shrink-0">
+                  <BadgeDollarSign className="w-4 h-4 text-fuchsia-300" />
                 </div>
-              )
-            })()}
-          </div>
-        )}
-
-        {/* Subscription settings: seats and the software fee (fix174) */}
-        {canSetLimits && (
-          <div className="card p-5 space-y-4" data-section="subscription-settings">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center flex-shrink-0">
-                <BadgeDollarSign className="w-4 h-4 text-sky-300" />
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Subscription settings</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Every subscription price in one place. The <span className="text-slate-300">super admin&rsquo;s price</span> is
+                    what the office owes the super admin; for partners, the <span className="text-slate-300">selling price</span> is
+                    what the partner pays, and the office keeps the difference. Seats beyond the free ones are charged when the
+                    account or driver is added. {isSuperAdmin
+                      ? 'You can change everything here.'
+                      : 'Set by the super admin — you set the partner selling price, never below the super admin’s price.'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-sm font-semibold text-slate-100">Subscription settings — seats and the software fee</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  How many seats of each kind come free with the annual package, and what each seat beyond them costs a
-                  year. A seat beyond the free ones is charged when the account or driver is added, at the price here.
-                  Senior Call Center accounts are call-centre seats, at the call-centre price.
+              {(!floorsReady || !seatsReady) && (
+                <p className="text-[11px] text-amber-300">
+                  {!floorsReady && 'Prices need supabase-fix169.sql. '}{!seatsReady && 'Seats need supabase-fix174.sql. '}
+                  Until then the package&rsquo;s figures apply.
                 </p>
-              </div>
-            </div>
-            {!seatsReady && (
-              <p className="text-[11px] text-amber-300">Not installed yet — run supabase-fix174.sql. Until then the package&rsquo;s figures apply.</p>
-            )}
-
-            <div className="rounded-lg border border-surface-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wider text-slate-500">
-                    <th className="px-3 py-2">Seats</th>
-                    <th className="px-3 py-2">Free seats</th>
-                    <th className="px-3 py-2">Price of each seat beyond, per year</th>
-                    {isSuperAdmin && <th className="px-3 py-2" />}
-                  </tr>
-                </thead>
-                <tbody>
-                  {SEAT_FAMILIES.map(({ family, label }) => {
-                    const cur = seats[family]
-                    const d = seatDraft[family] || {}
-                    const inc = d.included ?? String(cur.included)
-                    const rate = d.rate ?? String(cur.extraRate)
-                    const dirty = Number(inc) !== Number(cur.included) || (family !== 'partner' && Number(rate) !== Number(cur.extraRate))
-                    const msg = seatMsg[family]
-                    return (
-                      <tr key={family} className="border-b border-surface-border/50 last:border-0" data-seat={family}>
-                        <td className="px-3 py-2 text-slate-200 text-xs">{label}</td>
-                        <td className="px-3 py-2">
-                          {isSuperAdmin ? (
-                            <input type="number" min="0" step="1" className="input py-1.5 text-sm w-24" aria-label={`${label} free seats`}
-                              disabled={!seatsReady} value={inc}
-                              onChange={e => setSeatDraft(x => ({ ...x, [family]: { ...x[family], included: e.target.value } }))} />
-                          ) : <span className="text-sm text-slate-100 tabular-nums">{cur.included}</span>}
-                        </td>
-                        <td className="px-3 py-2">
-                          {family === 'partner' ? (
-                            <span className="text-[11px] text-slate-400">the partner minimum, {fmtPerPeriod(floors.partner)} — set above</span>
-                          ) : isSuperAdmin ? (
-                            <div className="relative w-32">
-                              <input type="number" min="0.01" step="0.01" className="input py-1.5 pr-12 text-sm" aria-label={`${label} price`}
-                                disabled={!seatsReady} value={rate}
-                                onChange={e => setSeatDraft(x => ({ ...x, [family]: { ...x[family], rate: e.target.value } }))} />
-                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{cur.currency || 'USD'}</span>
-                            </div>
-                          ) : <span className="text-sm text-slate-100 tabular-nums">{fmtFloor(cur.extraRate, cur.currency || 'USD')}</span>}
-                        </td>
-                        {isSuperAdmin && (
-                          <td className="px-3 py-2 text-right whitespace-nowrap">
-                            {msg && <span className={`text-[11px] mr-2 ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>{msg.text}</span>}
-                            <button type="button" onClick={() => saveSeatRow(family)} disabled={!dirty || !seatsReady}
-                              className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">
-                              <Save className="w-3.5 h-3.5" /> Save
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* The yearly software fee: the Software Subscriptions record itself. */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-slate-200">Software — yearly subscription fee</p>
-              {software.length === 0 && (
-                <p className="text-[11px] text-slate-500">No yearly software subscription is recorded — add it on Software Subscriptions.</p>
               )}
-              {software.map(row => {
-                const pay = paymentSummary(row)
-                const paidThrough = pay.coveredUntil
-                const covered = !!paidThrough && String(paidThrough) >= String(row.expiry_date || '')
-                const draft = feeDraft[row.id]
-                const msg = feeMsg[row.id]
-                return (
-                  <div key={row.id} className="rounded-lg border border-surface-border p-3 space-y-2" data-software={row.id}>
-                    <div className="flex items-start gap-3 flex-wrap">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-slate-100">{row.software_name}</p>
-                        <p className="text-[11px] text-slate-500">This year: {row.start_date} to {row.expiry_date}</p>
-                      </div>
-                      <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${covered
-                        ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
-                        {covered ? `Paid for the year — until ${paidThrough}` : paidThrough ? `Paid until ${paidThrough}` : 'Payment not recorded'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isSuperAdmin ? (
-                        <>
-                          <div className="relative w-40">
-                            <input type="number" min="0.01" step="0.01" className="input py-1.5 pr-20 text-sm" aria-label="Yearly software fee"
-                              value={draft ?? String(row.amount ?? '')} onChange={e => setFeeDraft(x => ({ ...x, [row.id]: e.target.value }))} />
-                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{row.currency || 'USD'} / year</span>
-                          </div>
-                          <button type="button" onClick={() => saveFee(row)} disabled={draft === undefined || Number(draft) === Number(row.amount)}
-                            className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">
-                            <Save className="w-3.5 h-3.5" /> Save
-                          </button>
-                          {msg && <span className={`text-[11px] ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>{msg.text}</span>}
-                        </>
-                      ) : (
-                        <span className="text-sm text-slate-100 tabular-nums">{fmtFloor(row.amount, row.currency || 'USD')} a year</span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+
+              <div className="rounded-lg border border-surface-border overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wider text-slate-500">
+                      <th className="px-2 py-2">Kind</th>
+                      <th className="px-2 py-2">Free</th>
+                      <th className="px-2 py-2">Super admin price</th>
+                      <th className="px-2 py-2">Selling price</th>
+                      <th className="px-2 py-2">Office keeps</th>
+                      <th className="px-2 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Partners: all three numbers, each in its own column. */}
+                    <tr className="border-b border-surface-border/50" data-row="partner">
+                      <td className="px-2 py-2 text-xs text-slate-200">Partners<p className="text-[10px] text-slate-500">per year</p></td>
+                      <td className="px-2 py-2">{isSuperAdmin ? numberIn('partner.included', seats.partner.included, 'Partners free seats', { disabled: !seatsReady }) : text(seats.partner.included)}</td>
+                      <td className="px-2 py-2">{isSuperAdmin
+                        ? numberIn('partner.floor', floors.partner.amount, 'Partners super admin price', { min: '0.01', step: '0.01', unit: cur(floors.partner.currency), width: 'w-24', disabled: !floorsReady })
+                        : text(fmtFloor(pFloor, cur(floors.partner.currency)))}</td>
+                      <td className="px-2 py-2">{numberIn('partner.sale', salePrice('partner', floors), 'Partners selling price',
+                        { min: String(pFloorNow || 0.01), step: '0.01', unit: cur(floors.partner.currency), width: 'w-24', disabled: !floorsReady })}</td>
+                      <td className={`px-2 py-2 text-sm tabular-nums whitespace-nowrap ${keeps < 0 ? 'text-rose-300' : 'text-brand-300'}`}>
+                        {keeps < 0 ? 'below the super admin’s price' : fmtFloor(keeps, cur(floors.partner.currency))}
+                      </td>
+                      {saveCell('partner', changed('partner.sale', salePrice('partner', floors))
+                        || (isSuperAdmin && (changed('partner.floor', floors.partner.amount) || changed('partner.included', seats.partner.included))))}
+                    </tr>
+
+                    {/* Suppliers: a free trial, then a monthly plan never under the minimum. */}
+                    <tr className="border-b border-surface-border/50" data-row="supplier">
+                      <td className="px-2 py-2 text-xs text-slate-200">Suppliers<p className="text-[10px] text-slate-500">per month</p></td>
+                      <td className="px-2 py-2 text-[11px] text-slate-400">{TRIAL_DAYS}-day trial</td>
+                      <td className="px-2 py-2">{isSuperAdmin
+                        ? numberIn('supplier.floor', floors.supplier.amount, 'Suppliers super admin price', { min: '0.01', step: '0.01', unit: cur(floors.supplier.currency), width: 'w-24', disabled: !floorsReady })
+                        : text(fmtFloor(floors.supplier.amount, cur(floors.supplier.currency)))}</td>
+                      <td className="px-2 py-2 text-[11px] text-slate-500 whitespace-nowrap"
+                        title={SUPPLIER_SUBSCRIPTION.plans.map(pl => `${pl.name} ${planPrice(pl, floors)} a month`).join(' · ')}>
+                        plans {SUPPLIER_SUBSCRIPTION.plans.map(pl => planPrice(pl, floors)).join(' · ')}
+                      </td>
+                      <td className="px-2 py-2">{none}</td>
+                      {isSuperAdmin ? saveCell('supplier', changed('supplier.floor', floors.supplier.amount)) : <td />}
+                    </tr>
+
+                    {/* Office seats and drivers: free seats, then a yearly price per seat. */}
+                    {seatRows.map(({ family, label }) => (
+                      <tr key={family} className="border-b border-surface-border/50" data-row={family}>
+                        <td className="px-2 py-2 text-xs text-slate-200">{label}<p className="text-[10px] text-slate-500">per extra seat, a year</p></td>
+                        <td className="px-2 py-2">{isSuperAdmin ? numberIn(`${family}.included`, seats[family].included, `${label} free seats`, { disabled: !seatsReady }) : text(seats[family].included)}</td>
+                        <td className="px-2 py-2">{isSuperAdmin
+                          ? numberIn(`${family}.rate`, seats[family].extraRate, `${label} super admin price`, { min: '0.01', step: '0.01', unit: cur(seats[family].currency), width: 'w-24', disabled: !seatsReady })
+                          : text(fmtFloor(seats[family].extraRate, cur(seats[family].currency)))}</td>
+                        <td className="px-2 py-2">{none}</td>
+                        <td className="px-2 py-2">{none}</td>
+                        {isSuperAdmin ? saveCell(family, changed(`${family}.included`, seats[family].included) || changed(`${family}.rate`, seats[family].extraRate)) : <td />}
+                      </tr>
+                    ))}
+
+                    {/* The yearly software fee: the Software Subscriptions record. */}
+                    {software.map(rec => {
+                      const pay = paymentSummary(rec)
+                      const covered = !!pay.coveredUntil && String(pay.coveredUntil) >= String(rec.expiry_date || '')
+                      const key = `sw.${rec.id}`
+                      return (
+                        <tr key={rec.id} data-row={key}>
+                          <td className="px-2 py-2 text-xs text-slate-200">
+                            Software<p className="text-[10px] text-slate-500">per year</p>
+                            <p className="text-[10px] text-slate-500 truncate max-w-[9rem]" title={rec.software_name}>{rec.software_name}</p>
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={`text-[10px] border rounded px-1.5 py-0.5 whitespace-nowrap ${covered
+                              ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+                              {pay.coveredUntil ? `Paid to ${pay.coveredUntil}` : 'Not paid'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2">{isSuperAdmin
+                            ? numberIn(key, rec.amount, 'Yearly software fee', { min: '0.01', step: '0.01', unit: cur(rec.currency), width: 'w-24' })
+                            : text(fmtFloor(rec.amount, cur(rec.currency)))}</td>
+                          <td className="px-2 py-2">{none}</td>
+                          <td className="px-2 py-2">{none}</td>
+                          {isSuperAdmin ? saveCell(key, changed(key, rec.amount)) : <td />}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
               <p className="text-[11px] text-slate-500">
-                Payments and renewals are recorded on Software Subscriptions; the licence reminder in the header reads the same record.
+                Changing a price applies to subscriptions opened from then on; existing ones keep what they were opened at.
+                Software payments and renewals are recorded on Software Subscriptions.
               </p>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* Restriction — protect other users' payments (super admin only) */}
         {isSuperAdmin && (
