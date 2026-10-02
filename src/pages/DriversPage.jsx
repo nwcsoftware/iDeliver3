@@ -15,11 +15,15 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Receipt,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { isStrictAdmin } from '../lib/roles'
+import { fetchSeatSettings } from '../lib/seatSettings'
+import { driverSeatPosition, seatPrice } from '../lib/officeSeats'
+import { SEATS } from '../lib/billing'
 import { generateAccountNumber, formatAccountNumber, insertContactWithUniqueCode } from '../lib/accountNumber'
 import { formatMobile } from '../lib/phone'
 import MobileInput from '../components/MobileInput'
@@ -122,6 +126,13 @@ export default function DriversPage() {
   const [form,     setForm]     = useState(emptyForm)
   const [saving,   setSaving]   = useState(false)
   const [toggling, setToggling] = useState(null)
+  /* DRIVER SEATS (fix174). The super admin sets how many drivers come free with
+     the package and what one more costs a year; a driver added beyond them is
+     a charge, accepted before the driver is saved. Prices are for
+     administrators — anyone else is told a seat is charged, not its price. */
+  const [seats, setSeats] = useState(SEATS)
+  useEffect(() => { fetchSeatSettings().then(r => setSeats(r.seats)) }, [])
+  const [seatPrompt, setSeatPrompt] = useState(null)        // { pos, agreed }
   const [codeNotice, setCodeNotice] = useState(null)   // { code, account_number, name } after a new driver is created
   const [pettyCash,    setPettyCash]    = useState([]) // driver_petty_cash rows in the sub-form
   const [origPettyIds, setOrigPettyIds] = useState([]) // ids loaded on edit, to detect removals
@@ -370,7 +381,7 @@ export default function DriversPage() {
     }
   }
 
-  async function handleSave() {
+  async function handleSave(opts) {
     // New driver may be given a login (username + password) here — validate before
     // creating anything so we don't insert a driver and then reject the credentials.
     const wantCreds = modal === 'add' && isAdmin && usernameInput.trim() !== ''
@@ -378,6 +389,12 @@ export default function DriversPage() {
       if (usernameInput.trim().length < 3) { setCredError('Username must be at least 3 characters.'); setCredOpen(true); return }
       if (pwInput.length < PW_MIN)         { setCredError(`Password must be at least ${PW_MIN} characters.`); setCredOpen(true); return }
     }
+    // Beyond the free driver seats: the charge is accepted first (the super admin is not asked).
+    const seatPos = modal === 'add' ? driverSeatPosition({ drivers, seats }) : null
+    if (seatPos && !seatPos.free && !hasRole('super_admin') && opts?.seatAccepted !== true) {
+      setSeatPrompt({ pos: seatPos, agreed: false }); return
+    }
+    setSeatPrompt(null)
     setSaving(true)
     // Auto-generate the driver account number before saving (kept if already set).
     let accountNumber = form.account_number
@@ -409,6 +426,23 @@ export default function DriversPage() {
           30000, 'Saving the driver',
         )
         if (error) throw error
+        /* The seat beyond the free ones, recorded so it can be invoiced — on
+           the driver, unpaid. A failure is logged, not shown: the driver is
+           saved, and that matters more than the billing note. */
+        if (seatPos && !seatPos.free) {
+          const start = new Date(), end = new Date()
+          end.setFullYear(end.getFullYear() + 1); end.setDate(end.getDate() - 1)
+          const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+          const { error: se } = await supabase.from('subscriptions').insert([{
+            contact_id: data.id,
+            description: `Driver seat ${seatPos.next} — beyond the ${seatPos.included} included`,
+            start_date: ymd(start), end_date: ymd(end),
+            amount: seatPos.rate, currency: seatPos.currency, is_paid: false, is_active: false,
+            created_by: currentUser?.user_id ?? null,
+            ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
+          }])
+          if (se) console.warn('Could not record the driver seat:', se.message)
+        }
         // Set the driver's login now that the contact exists. If it fails (e.g.
         // username taken) the driver is still saved — surface it so the admin can
         // fix the login by reopening the driver.
@@ -948,7 +982,7 @@ export default function DriversPage() {
               <button className="btn-ghost" onClick={closeModal}>Cancel</button>
               <button
                 className="btn-primary"
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={!form.first_name?.trim() || !form.last_name?.trim() || !form.mobile?.trim() || saving}
               >
                 <Check className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Driver'}
@@ -959,6 +993,42 @@ export default function DriversPage() {
       )}
 
       {/* New-driver code notification */}
+      {seatPrompt && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[90] p-4">
+          <div className="card w-full max-w-md p-5 space-y-4" role="dialog" aria-label="New driver seat">
+            <div className="flex items-start gap-3">
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-fuchsia-500/10 border border-fuchsia-500/30">
+                <Receipt className="w-4 h-4 text-fuchsia-300" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-100">A new driver seat</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  All {seatPrompt.pos.included} free driver seats are in use, so this driver takes seat {seatPrompt.pos.next}.
+                  It will be added to your invoice for one year{isAdmin ? <>, at <span className="text-slate-200 font-medium">{seatPrice(seatPrompt.pos)}</span></> : null}.
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              {isAdmin ? 'The price is the one the super admin set.' : 'The price is set by the super admin.'} Deactivating a driver later frees the seat.
+            </p>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input type="checkbox" className="w-4 h-4 accent-fuchsia-500 mt-0.5" checked={seatPrompt.agreed}
+                onChange={e => setSeatPrompt(p => ({ ...p, agreed: e.target.checked }))} />
+              <span className="text-sm text-slate-200">I understand, and agree to this seat being added to the invoice.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost px-4 py-2 text-sm border border-surface-border" onClick={() => setSeatPrompt(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!seatPrompt.agreed || saving} onClick={() => handleSave({ seatAccepted: true })}>
+                <Check className="w-4 h-4" /> Accept and add driver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {codeNotice && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="card w-full max-w-sm p-6 space-y-4 text-center">

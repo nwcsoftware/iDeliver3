@@ -6,11 +6,14 @@ import { isStrictAdmin } from '../lib/roles'
 import { DEFAULT_CURRENCY_LIMITS } from '../lib/currencyCheck'
 import { PERIODS, DEFAULT_PERIOD, periodByKey, periodRange } from '../lib/currencyCheckPeriod'
 import { fetchPriceFloors, setPriceFloor, setSalePrice, salePrice, fmtFloor, fmtPerPeriod, DEFAULT_FLOORS } from '../lib/subscriptionPrices'
+import { fetchSeatSettings, setSeat, SEAT_FAMILIES } from '../lib/seatSettings'
+import { SEATS } from '../lib/billing'
+import { fetchSoftwareSubscriptions, saveSoftwareSubscription, paymentSummary } from '../lib/softwareSubscriptions'
 
 /* General application settings. Currently holds the order-confirmation reminder
    time; built as a list of cards so more settings can be added over time. */
 export default function AppSettingsPage() {
-  const { appSettings, updateAppSettings } = useApp()
+  const { appSettings, updateAppSettings, COMPANY_ID } = useApp()
   const { hasRole, currentUser } = useAuth()
   const isSuperAdmin = hasRole('super_admin')
   /* Strict: a Senior Call Center user inherits admin elsewhere and is kept out
@@ -90,6 +93,52 @@ export default function AppSettingsPage() {
     setSaleDraft(undefined)
     setSaleMsg({ ok: true, text: 'Saved' })
     setTimeout(() => setSaleMsg(null), 2000)
+  }
+
+  /* SUBSCRIPTION SETTINGS (fix174) — the seats in the annual package (how many
+     come free, and what one more costs a year) and the yearly software fee.
+     The super admin sets them; an admin reads them. The software fee is the
+     Software Subscriptions record itself, so the licence reminder in the
+     header keeps reading the same figure. */
+  const [seats, setSeats]           = useState(SEATS)
+  const [seatsReady, setSeatsReady] = useState(true)
+  const [seatDraft, setSeatDraft]   = useState({})            // { driver: { included, rate } }
+  const [seatMsg, setSeatMsg]       = useState({})            // { driver: { ok, text } }
+  const [software, setSoftware]     = useState([])
+  const [feeDraft, setFeeDraft]     = useState({})            // { [id]: '600' }
+  const [feeMsg, setFeeMsg]         = useState({})
+  useEffect(() => {
+    if (!canSetLimits) return
+    fetchSeatSettings().then(r => { setSeats(r.seats); setSeatsReady(r.installed) })
+    fetchSoftwareSubscriptions(COMPANY_ID).then(r =>
+      setSoftware((r.rows || []).filter(x => x.is_active !== false && x.billing_cycle === 'annual')))
+  }, [canSetLimits, COMPANY_ID])
+
+  async function saveSeatRow(family) {
+    const cur = seats[family]
+    const d = seatDraft[family] || {}
+    const included = d.included ?? cur.included
+    const rate = d.rate ?? cur.extraRate
+    if (!(Number(included) >= 0) || String(included).trim() === '') { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: 'Enter the number of free seats.' } })); return }
+    if (family !== 'partner' && !(Number(rate) > 0)) { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: 'Enter a price above 0.' } })); return }
+    const { row, error } = await setSeat(currentUser?.user_id, family, Math.floor(Number(included)), Number(rate) || 0)
+    if (error) { setSeatMsg(m => ({ ...m, [family]: { ok: false, text: error } })); return }
+    setSeats(sx => ({ ...sx, [family]: { ...sx[family], included: Number(row?.included ?? included),
+      extraRate: family === 'partner' ? sx[family].extraRate : Number(row?.extra_rate ?? rate) } }))
+    setSeatDraft(x => { const y = { ...x }; delete y[family]; return y })
+    setSeatMsg(m => ({ ...m, [family]: { ok: true, text: 'Saved' } }))
+    setTimeout(() => setSeatMsg(m => { const y = { ...m }; delete y[family]; return y }), 2000)
+  }
+
+  async function saveFee(row) {
+    const amount = Math.round((Number(feeDraft[row.id]) || 0) * 100) / 100
+    if (!(amount > 0)) { setFeeMsg(m => ({ ...m, [row.id]: { ok: false, text: 'Enter the yearly fee.' } })); return }
+    const err = await saveSoftwareSubscription({ ...row, amount }, { companyId: COMPANY_ID, userId: currentUser?.user_id ?? null })
+    if (err) { setFeeMsg(m => ({ ...m, [row.id]: { ok: false, text: err } })); return }
+    setSoftware(list => list.map(x => (x.id === row.id ? { ...x, amount } : x)))
+    setFeeDraft(x => { const y = { ...x }; delete y[row.id]; return y })
+    setFeeMsg(m => ({ ...m, [row.id]: { ok: true, text: 'Saved' } }))
+    setTimeout(() => setFeeMsg(m => { const y = { ...m }; delete y[row.id]; return y }), 2000)
   }
 
   async function saveFloor(role) {
@@ -509,6 +558,134 @@ export default function AppSettingsPage() {
                 </div>
               )
             })()}
+          </div>
+        )}
+
+        {/* Subscription settings: seats and the software fee (fix174) */}
+        {canSetLimits && (
+          <div className="card p-5 space-y-4" data-section="subscription-settings">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center flex-shrink-0">
+                <BadgeDollarSign className="w-4 h-4 text-sky-300" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Subscription settings — seats and the software fee</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  How many seats of each kind come free with the annual package, and what each seat beyond them costs a
+                  year. A seat beyond the free ones is charged when the account or driver is added, at the price here.
+                  Senior Call Center accounts are call-centre seats, at the call-centre price.
+                </p>
+              </div>
+            </div>
+            {!seatsReady && (
+              <p className="text-[11px] text-amber-300">Not installed yet — run supabase-fix174.sql. Until then the package&rsquo;s figures apply.</p>
+            )}
+
+            <div className="rounded-lg border border-surface-border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border text-left text-[11px] uppercase tracking-wider text-slate-500">
+                    <th className="px-3 py-2">Seats</th>
+                    <th className="px-3 py-2">Free seats</th>
+                    <th className="px-3 py-2">Price of each seat beyond, per year</th>
+                    {isSuperAdmin && <th className="px-3 py-2" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {SEAT_FAMILIES.map(({ family, label }) => {
+                    const cur = seats[family]
+                    const d = seatDraft[family] || {}
+                    const inc = d.included ?? String(cur.included)
+                    const rate = d.rate ?? String(cur.extraRate)
+                    const dirty = Number(inc) !== Number(cur.included) || (family !== 'partner' && Number(rate) !== Number(cur.extraRate))
+                    const msg = seatMsg[family]
+                    return (
+                      <tr key={family} className="border-b border-surface-border/50 last:border-0" data-seat={family}>
+                        <td className="px-3 py-2 text-slate-200 text-xs">{label}</td>
+                        <td className="px-3 py-2">
+                          {isSuperAdmin ? (
+                            <input type="number" min="0" step="1" className="input py-1.5 text-sm w-24" aria-label={`${label} free seats`}
+                              disabled={!seatsReady} value={inc}
+                              onChange={e => setSeatDraft(x => ({ ...x, [family]: { ...x[family], included: e.target.value } }))} />
+                          ) : <span className="text-sm text-slate-100 tabular-nums">{cur.included}</span>}
+                        </td>
+                        <td className="px-3 py-2">
+                          {family === 'partner' ? (
+                            <span className="text-[11px] text-slate-400">the partner minimum, {fmtPerPeriod(floors.partner)} — set above</span>
+                          ) : isSuperAdmin ? (
+                            <div className="relative w-32">
+                              <input type="number" min="0.01" step="0.01" className="input py-1.5 pr-12 text-sm" aria-label={`${label} price`}
+                                disabled={!seatsReady} value={rate}
+                                onChange={e => setSeatDraft(x => ({ ...x, [family]: { ...x[family], rate: e.target.value } }))} />
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{cur.currency || 'USD'}</span>
+                            </div>
+                          ) : <span className="text-sm text-slate-100 tabular-nums">{fmtFloor(cur.extraRate, cur.currency || 'USD')}</span>}
+                        </td>
+                        {isSuperAdmin && (
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {msg && <span className={`text-[11px] mr-2 ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>{msg.text}</span>}
+                            <button type="button" onClick={() => saveSeatRow(family)} disabled={!dirty || !seatsReady}
+                              className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">
+                              <Save className="w-3.5 h-3.5" /> Save
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* The yearly software fee: the Software Subscriptions record itself. */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-200">Software — yearly subscription fee</p>
+              {software.length === 0 && (
+                <p className="text-[11px] text-slate-500">No yearly software subscription is recorded — add it on Software Subscriptions.</p>
+              )}
+              {software.map(row => {
+                const pay = paymentSummary(row)
+                const paidThrough = pay.coveredUntil
+                const covered = !!paidThrough && String(paidThrough) >= String(row.expiry_date || '')
+                const draft = feeDraft[row.id]
+                const msg = feeMsg[row.id]
+                return (
+                  <div key={row.id} className="rounded-lg border border-surface-border p-3 space-y-2" data-software={row.id}>
+                    <div className="flex items-start gap-3 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-slate-100">{row.software_name}</p>
+                        <p className="text-[11px] text-slate-500">This year: {row.start_date} to {row.expiry_date}</p>
+                      </div>
+                      <span className={`text-[11px] border rounded px-2 py-0.5 whitespace-nowrap ${covered
+                        ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+                        {covered ? `Paid for the year — until ${paidThrough}` : paidThrough ? `Paid until ${paidThrough}` : 'Payment not recorded'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {isSuperAdmin ? (
+                        <>
+                          <div className="relative w-40">
+                            <input type="number" min="0.01" step="0.01" className="input py-1.5 pr-20 text-sm" aria-label="Yearly software fee"
+                              value={draft ?? String(row.amount ?? '')} onChange={e => setFeeDraft(x => ({ ...x, [row.id]: e.target.value }))} />
+                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">{row.currency || 'USD'} / year</span>
+                          </div>
+                          <button type="button" onClick={() => saveFee(row)} disabled={draft === undefined || Number(draft) === Number(row.amount)}
+                            className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">
+                            <Save className="w-3.5 h-3.5" /> Save
+                          </button>
+                          {msg && <span className={`text-[11px] ${msg.ok ? 'text-green-400' : 'text-rose-300'}`}>{msg.text}</span>}
+                        </>
+                      ) : (
+                        <span className="text-sm text-slate-100 tabular-nums">{fmtFloor(row.amount, row.currency || 'USD')} a year</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              <p className="text-[11px] text-slate-500">
+                Payments and renewals are recorded on Software Subscriptions; the licence reminder in the header reads the same record.
+              </p>
+            </div>
           </div>
         )}
 

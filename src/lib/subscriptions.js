@@ -140,10 +140,12 @@ export async function subscriptionScope(contactId, role = null) {
 }
 
 /* How many of the ten free seats are held today, and when the next one frees. */
-export function freeSeatsSummary(rows = [], today = todayStr()) {
+/* `limit` is the super admin's number of free partner seats (seat_settings,
+   fix174); the package's 10 until it is set. */
+export function freeSeatsSummary(rows = [], today = todayStr(), limit = PARTNER_FREE_LIMIT) {
   const map = freeSeatMap(rows, today)
   const ends = [...map.values()].map(v => String(v.end)).sort()
-  return { inUse: map.size, limit: PARTNER_FREE_LIMIT, available: Math.max(0, PARTNER_FREE_LIMIT - map.size),
+  return { inUse: map.size, limit, available: Math.max(0, limit - map.size),
            nextFreesOn: ends[0] || null, map }
 }
 
@@ -331,7 +333,7 @@ export async function fetchSubscriptions(companyId = null) {
   try {
     let q = supabase
       .from('subscriptions')
-      .select('*, contact:contacts!contact_id(id,first_name,last_name,company_name,code,contact_types,mobile)')
+      .select('*, contact:contacts!contact_id(id,first_name,last_name,company_name,code,contact_type,contact_types,mobile)')
       .order('created_at', { ascending: false })
     if (companyId) q = q.eq('company_id', companyId)
     const { data, error } = await q

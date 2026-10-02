@@ -93,11 +93,12 @@ export const SEATS = {
    seats too, but they are contacts rather than logins and are counted elsewhere. */
 export const SEAT_BY_ROLE = {
   admin:       'admin',
-  /* A senior user is an administrator with a shorter reach, not a cheaper one:
-     it is the same office login on the same package, so it draws the same seat
-     (fix156). Counting it as free would let the administrator allowance be
-     walked around by renaming the rank. */
-  senior_call_center: 'admin',
+  /* A Senior Call Center user is an upgraded call-centre user, not an
+     administrator (CLAUDE.md), so it draws a CALL-CENTRE seat and pays the
+     call-centre price (fix174 — decided 2 Oct 2026, reversing fix156, which
+     counted it among the administrators). It is still a seat: it is counted,
+     never free by rank. */
+  senior_call_center: 'call_center',
   call_center: 'call_center',
   partner:     'partner',
   // supplier is not a seat on the package at all — it subscribes on its own

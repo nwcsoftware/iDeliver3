@@ -79,8 +79,23 @@ What that means when building:
   afterwards may only reset the password (always forces a change). Editing,
   moving, activating/deactivating and deleting any login, and creating any login
   on User Accounts, is the super admin's alone — enforced in the SQL functions,
-  not just hidden. Call Center has no login controls at all. These PORTAL logins
-  are not the contact's own customer-app username/password on the same profile.
+  not just hidden — with ONE exception (fix174): an **admin** (not Senior Call
+  Center) may create **call-centre and Senior Call Center** logins with no
+  contact, through `admin_create_staff_login`. Call Center has no login controls
+  at all. These PORTAL logins are not the contact's own customer-app
+  username/password on the same profile.
+- **Seats (fix174).** How many seats of each kind come free with the annual
+  package, and the yearly price of each one beyond, are the super admin's
+  settings (`seat_settings` via `super_admin_set_seat`; App Settings →
+  Subscription settings) — read them through `lib/seatSettings`
+  (`fetchSeatSettings`, `mergeSeats`), never billing.js's `SEATS` directly
+  (that is only the fallback). **Senior Call Center draws a CALL-CENTRE seat**
+  at the call-centre price (`SEAT_BY_ROLE`), not an administrator seat. A seat
+  beyond the free ones is accepted in a prompt (admin creating staff; anyone
+  adding a driver — drivers are counted from active driver contacts) and
+  recorded as an unpaid row: on the login for office seats, on the driver
+  contact for driver seats. The yearly software fee is the Software
+  Subscriptions record itself, shown and priced in the same section.
 - **Subscriptions & seats (fix163)** — a subscription belongs to a LOGIN, and the
   login's ROLE decides it: partner logins need a partner seat, supplier logins a
   supplier plan (a partner adding supplier pays; a free partner seat never covers

@@ -1,10 +1,12 @@
 /* Seats, at the moment a login is created.
  *
- * Every role that draws on the annual package has an allowance: 10 partners,
- * 6 call-centre users, 4 administrators. Up to the allowance a seat is included
- * and costs nothing. Beyond it the seat is CHARGEABLE, and only the super admin
- * may take one — an administrator is stopped, told what the next seat would
- * cost, and left to ask.
+ * Every role that draws on the annual package has an allowance — how many is
+ * the super admin's setting (seat_settings, fix174; billing.js holds the
+ * starting figures). Up to the allowance a seat is included and costs nothing.
+ * Beyond it the seat is CHARGEABLE, at the super admin's price: the super
+ * admin takes one freely; an administrator adding a call-centre or Senior Call
+ * Center account takes one once they have accepted the charge (`allowCharge`);
+ * anybody else is stopped.
  *
  * Why the check lives here rather than in the page: the same question is asked
  * in two places that must not disagree — the User Accounts form, where a login
@@ -38,14 +40,14 @@ export const UNSEATED_ROLES = ['super_admin', 'customer', 'driver']
  * on the package at all: a supplier subscribes on its own monthly plan from the
  * first day, so it has no free allowance to exceed.
  */
-export function seatPosition({ users = [], role, excludeId = null }) {
+export function seatPosition({ users = [], role, excludeId = null, seats = SEATS }) {
   /* A partner's seat is not a count of partner logins: free partner seats are
      assigned records held for a year (fix163), and every other partner login
      pays for itself. Only office seats are positional. */
   if (role === 'partner' || role === 'supplier') return null
   const family = SEAT_BY_ROLE[role]
   if (!family) return null
-  const seat = SEATS[family]
+  const seat = (seats || SEATS)[family]
   if (!seat) return null
 
   /* Only ACTIVE logins hold a seat — deactivating one hands its seat back.
@@ -66,12 +68,27 @@ export function seatPosition({ users = [], role, excludeId = null }) {
     free:        next <= seat.included,
     remaining:   Math.max(0, seat.included - used),
     rate:        seat.extraRate,
-    currency:    CURRENCY,
+    currency:    seat.currency || CURRENCY,
     period:      seat.period,
     /* True where the allowance is an operating agreement rather than an article
        of the licence — today, the administrator seat. Worth saying out loud on
        screen so nobody quotes it back as a contractual figure. */
     provisional: !!seat.provisional,
+  }
+}
+
+/* A DRIVER's seat. Drivers are contacts, not logins, so they are counted from
+   the driver list: every active driver holds one, and the next one added lands
+   after them. Same answer shape as seatPosition. */
+export function driverSeatPosition({ drivers = [], excludeId = null, seats = SEATS }) {
+  const seat = (seats || SEATS).driver
+  if (!seat) return null
+  const used = drivers.filter(d => d.is_active !== false && d.id !== excludeId).length
+  const next = used + 1
+  return {
+    role: 'driver', family: 'driver', label: 'Driver seats', included: seat.included, used, next,
+    free: next <= seat.included, remaining: Math.max(0, seat.included - used),
+    rate: seat.extraRate, currency: seat.currency || CURRENCY, period: seat.period, provisional: false,
   }
 }
 
@@ -87,11 +104,11 @@ export const seatPrice = (pos) =>
  * costs, because a seat taken without knowing the price is how an invoice
  * becomes an argument.
  */
-export function checkSeat({ users = [], role, excludeId = null, isSuperAdmin = false }) {
-  const pos = seatPosition({ users, role, excludeId })
+export function checkSeat({ users = [], role, excludeId = null, isSuperAdmin = false, allowCharge = false, seats = SEATS }) {
+  const pos = seatPosition({ users, role, excludeId, seats })
   if (!pos || pos.free) return { ok: true, chargeable: false, pos, message: null }
 
-  if (!isSuperAdmin) {
+  if (!isSuperAdmin && !allowCharge) {
     return {
       ok: false,
       chargeable: true,
@@ -150,7 +167,7 @@ const inDate = (r, today) => !!r && isSubscriptionActive(r, today)
  * `subsByUser`     subscription rows keyed by user_account_id (office seats)
  * `users`          every login, so an office seat can find its own position
  */
-export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(), users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
+export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(), users = [], seats = SEATS, today = new Date().toISOString().slice(0, 10) } = {}) {
   const role = user?.role
   if (!SEAT_BY_ROLE[role] && role !== 'supplier') return { ...SEAT_STATUS.na, row: null }
 
@@ -186,7 +203,7 @@ export function seatStatus(user, { freeSeats = new Map(), subsByContact = new Ma
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
   const idx = peers.findIndex(u => u.id === user.id)
   const position = idx === -1 ? peers.length + 1 : idx + 1
-  if (position <= SEATS[family].included) return { ...SEAT_STATUS.included, row: null }
+  if (position <= (seats || SEATS)[family].included) return { ...SEAT_STATUS.included, row: null }
   return fromRows(subsByUser.get(user.id))
 }
 
@@ -232,7 +249,7 @@ function describeRow(r, today) {
 }
 
 export function accountLevel(user, { freeSeats = new Map(), subsByContact = new Map(), subsByUser = new Map(),
-                                     users = [], today = new Date().toISOString().slice(0, 10) } = {}) {
+                                     users = [], seats = SEATS, today = new Date().toISOString().slice(0, 10) } = {}) {
   const role = user?.role
   if (role === 'super_admin') return { level: RANK_TEXT.super_admin, detail: 'Holds no seat' }
 
@@ -261,7 +278,7 @@ export function accountLevel(user, { freeSeats = new Map(), subsByContact = new 
 
   const family = SEAT_BY_ROLE[role]
   if (!family) return { level: role || '—', detail: 'This role holds no seat' }
-  const seat = SEATS[family]
+  const seat = (seats || SEATS)[family]
   const rank = RANK_TEXT[role] || role
   if (user.status !== 'active') return { level: rank, detail: 'Inactive — holds no seat' }
 

@@ -9,6 +9,7 @@ import {
 import { SUPPLIER_SUBSCRIPTION } from '../../lib/billing'
 import { isStrictAdmin, roleIsExactly } from '../../lib/roles'
 import { fetchPriceFloors, planPrice, fmtFloor, salePrice, DEFAULT_FLOORS } from '../../lib/subscriptionPrices'
+import { fetchSeatSettings } from '../../lib/seatSettings'
 
 /* A PARTNER'S OR SUPPLIER'S LOGINS, managed from its own profile (fix160).
 
@@ -34,7 +35,7 @@ function generatePassword(len = 12) {
   return Array.from(bytes, b => chars[b % chars.length]).join('')
 }
 
-function friendly(msg = '') {
+function friendly(msg = '', freeLimit = PARTNER_FREE_LIMIT) {
   if (/admin_create_party_login/i.test(msg) && /not exist|schema cache/i.test(msg)) {
     return 'Creating logins from the profile is not installed yet — run supabase-fix160.sql.'
   }
@@ -48,7 +49,7 @@ function friendly(msg = '') {
   if (/NOT_A_PARTY/.test(msg))          return 'Only a partner or a supplier can be given a portal login.'
   if (/ROLE_REQUIRED/.test(msg))        return 'Choose whether this is a partner login or a supplier login.'
   if (/ROLE_NOT_ON_CONTACT/.test(msg))  return 'This contact is not marked with that type — tick it on the profile first.'
-  if (/NO_FREE_SEAT/.test(msg))         return `All ${PARTNER_FREE_LIMIT} free seats are in use.`
+  if (/NO_FREE_SEAT/.test(msg))         return `All ${freeLimit} free seats are in use.`
   if (/ALREADY_HOLDS_SEAT/.test(msg))   return 'This partner already holds a free seat.'
   if (/NOT_A_PARTNER/.test(msg))        return 'Only a partner can be given a free seat.'
   if (/assign_free_partner_seat/i.test(msg) && /not exist|schema cache/i.test(msg)) {
@@ -95,6 +96,9 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
   const [chargePrompt, setChargePrompt] = useState(null)      // { agreed }
   const myName = `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() || currentUser?.username || ''
   const [floors, setFloors] = useState(DEFAULT_FLOORS)
+  // How many free partner seats there are — the super admin's number (fix174).
+  const [freeLimit, setFreeLimit] = useState(PARTNER_FREE_LIMIT)
+  useEffect(() => { fetchSeatSettings().then(r => setFreeLimit(r.seats.partner.included)) }, [])
   useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
 
   const load = useCallback(async () => {
@@ -186,7 +190,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
       p_actor_id: currentUser?.user_id, p_contact_id: contact.id,
     })
     setBusy(false)
-    if (error) { setErr(friendly(error.message)); return }
+    if (error) { setErr(friendly(error.message, freeLimit)); return }
     setIssued(null)
     setErr('')
     await load()
@@ -216,7 +220,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
   const seat = freeSeatMap(subs).get(contact?.id) || null
   const freeSeat = !!seat?.active
   const seatsInUse = seatRows ? freeSeatMap(seatRows).size : null
-  const seatsLeft  = seatsInUse == null ? null : Math.max(0, PARTNER_FREE_LIMIT - seatsInUse)
+  const seatsLeft  = seatsInUse == null ? null : Math.max(0, freeLimit - seatsInUse)
   const isPartner  = roles.includes('partner')
   const roleName   = roles.length > 1 ? 'partner and supplier' : (roles[0] || role)
   /* Will this login open a NEW charge? A partner login without a free seat
@@ -267,7 +271,7 @@ export default function PartyLogins({ contact, role, isSuperAdmin, canAssignSeat
                   : <>No free seat — each partner login opens its own one-year subscription.</>}
           </span>
           {seatsInUse != null && (
-            <span className="text-[10px] text-slate-500">{seatsInUse} of {PARTNER_FREE_LIMIT} seats in use</span>
+            <span className="text-[10px] text-slate-500">{seatsInUse} of {freeLimit} seats in use</span>
           )}
           {canAssignSeat && !seat && seatsLeft > 0 && (
             <button type="button" onClick={assignSeat} disabled={busy}

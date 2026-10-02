@@ -43,6 +43,8 @@ import {
   fetchPriceFloors, priceProblem, minimumPrice, fmtFloor, fmtPerPeriod, salePrice, DEFAULT_FLOORS,
 } from '../lib/subscriptionPrices'
 import { isPartnerSubscription } from '../lib/subscriptionAccounts'
+import { fetchSeatSettings } from '../lib/seatSettings'
+import { SEATS } from '../lib/billing'
 import ContactCombobox from '../components/orders/ContactCombobox'
 import { useApp } from '../context/AppContext'
 import {
@@ -153,6 +155,10 @@ export default function SubscriptionsPage() {
   // The minimum price the super admin set (fix169); today's prices without it.
   const [floors, setFloors] = useState(DEFAULT_FLOORS)
   useEffect(() => { fetchPriceFloors().then(r => setFloors(r.floors)) }, [])
+  // The seats as the super admin set them (fix174) — here, the free partner seats.
+  const [seats, setSeats] = useState(SEATS)
+  useEffect(() => { fetchSeatSettings().then(r => setSeats(r.seats)) }, [])
+  const freeLimit = seats.partner.included
 
   const [rows,       setRows]       = useState([])
   const [agreements, setAgreements] = useState(new Map())   // contact_id → agreement row
@@ -361,7 +367,7 @@ export default function SubscriptionsPage() {
   /* Which partners hold a free seat, and until when (fix163) — from the rows
      on this page, the same records the sign-in gate reads. */
   const freeSeats = useMemo(() => freeSeatMap(rows), [rows])
-  const seatSummary = useMemo(() => freeSeatsSummary(rows), [rows])
+  const seatSummary = useMemo(() => freeSeatsSummary(rows, todayStr(), freeLimit), [rows, freeLimit])
   /* WHY A ROW IS NOT BEING CHARGED, said accurately.
 
      This badge used to read “free partner” for every contact that was not
@@ -430,12 +436,23 @@ export default function SubscriptionsPage() {
       + 'and the subscription is activated.')
   }, [loginIds, showPrices])
 
+  /* 'driver' / 'office' for a seat charge, null for a partner's or supplier's
+     subscription. A driver seat sits on the driver contact; an office seat on
+     the login itself, with no contact. */
+  const seatChargeKind = useCallback((r) => {
+    const types = r?.contact?.contact_types?.length ? r.contact.contact_types : [r?.contact?.contact_type]
+    if (types.includes('driver')) return 'driver'
+    if (!r?.contact_id && r?.user_account_id
+        && ['admin', 'senior_call_center', 'call_center'].includes(loginById.get(r.user_account_id)?.role)) return 'office'
+    return null
+  }, [loginById])
+
   const exemptBadge = useCallback((sc, contact) => {
     if (sc.scope === SCOPE.partnerFree) {
       return {
         label: `free seat · to ${sc.seat?.end || '?'}`,
         cls:   'border-fresh-500/30 bg-fresh-500/10 text-fresh-300',
-        title: `This partner holds one of the ${PARTNER_FREE_LIMIT} free seats until ${sc.seat?.end || '?'}: `
+        title: `This partner holds one of the ${freeLimit} free seats until ${sc.seat?.end || '?'}: `
              + 'all its partner logins are free for that year. When it ends, the seat can be assigned again.',
       }
     }
@@ -902,12 +919,12 @@ export default function SubscriptionsPage() {
         <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-slate-400 leading-relaxed">
           <span className="text-slate-200">Suppliers always subscribe.</span>{' '}
-          {PARTNER_FREE_LIMIT} free partner seats come with the package. A seat is assigned to a partner for one
+          {freeLimit} free partner seats come with the package. A seat is assigned to a partner for one
           year — all that partner&rsquo;s partner logins are free for the year — and when the year ends it can be
           assigned again, from the partner&rsquo;s profile. Every other partner login pays for itself, and a supplier
           login always pays, even for a partner that holds a free seat.
           <span className="block mt-1 text-slate-500">
-            Today: <span className="text-slate-300">{seatSummary.inUse} of {PARTNER_FREE_LIMIT} free seats in use</span>
+            Today: <span className="text-slate-300">{seatSummary.inUse} of {freeLimit} free seats in use</span>
             {seatSummary.available === 0 && seatSummary.nextFreesOn ? ` (next frees on ${seatSummary.nextFreesOn})` : ''} ·
             {' '}{scopeCounts.paying} partner{scopeCounts.paying === 1 ? '' : 's'} paying ·
             {' '}{scopeCounts.suppliers} supplier{scopeCounts.suppliers === 1 ? '' : 's'}.
@@ -1050,6 +1067,18 @@ export default function SubscriptionsPage() {
                            awaiting payment, and — for a contact that is not
                            charged — why not. The first is the same sentence on
                            every unpaid row, so the list reads one way. */
+                        /* An office or driver SEAT charge (fix174) is the office's bill
+                           to the super admin: no sign-in waits on it, and its contact
+                           is not a party, so the partner badges would mislead. */
+                        const seatKind = seatChargeKind(r)
+                        if (seatKind) {
+                          return (
+                            <span title={`A ${seatKind} seat beyond the free ones in the annual package — billed to the office. Nobody's sign-in waits on it.`}
+                              className="text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap flex-shrink-0 border-sky-500/30 bg-sky-500/10 text-sky-300">
+                              {seatKind} seat
+                            </span>
+                          )
+                        }
                         const sc = scopeOf(r.contact, r)
                         const owed = unpaidBadge(r, sc)
                         const b = sc.subject ? null : exemptBadge(sc, r.contact)

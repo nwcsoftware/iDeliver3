@@ -29,6 +29,7 @@ import {
   CalendarClock,
   BadgeDollarSign,
   FileDown,
+  Receipt,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { ensureLoginSubscription, TRIAL_DAYS } from '../lib/subscriptions'
@@ -36,8 +37,10 @@ import {
   scanUserReferences, summariseReferences, deleteUserAccount, tableLabel, columnLabel,
 } from '../lib/userDeletion'
 import { useAuth } from '../context/AuthContext'
-import { isStrictAdmin } from '../lib/roles'
+import { isStrictAdmin, roleIsExactly } from '../lib/roles'
 import { checkSeat, seatPosition, seatPrice, seatStatus, accountLevel } from '../lib/officeSeats'
+import { fetchSeatSettings } from '../lib/seatSettings'
+import { SEATS } from '../lib/billing'
 import { freeSeatMap } from '../lib/subscriptions'
 import { downloadUserAccountsPdf } from '../lib/userAccountsPdf'
 import { formatMobile } from '../lib/phone'
@@ -78,8 +81,8 @@ function suggestUsername(base, taken) {
 // Roles an admin may assign (super_admin is intentionally excluded).
 const ASSIGNABLE_ROLES = [
   { value: 'admin',       label: 'Admin' },
-  /* A senior user is an administrator minus a list of exceptions (fix156).
-     Listed under Admin because that is what it is a rank below. */
+  /* An upgraded call-centre user — not administration (CLAUDE.md). It draws a
+     call-centre seat at the call-centre price (fix174). */
   { value: 'senior_call_center', label: 'Senior Call Center' },
   { value: 'call_center', label: 'Call Center' },
   { value: 'driver',      label: 'Driver' },
@@ -88,6 +91,9 @@ const ASSIGNABLE_ROLES = [
   { value: 'partner',     label: 'Partner' },
 ]
 const roleLabel = Object.fromEntries(ASSIGNABLE_ROLES.map(r => [r.value, r.label]))
+/* What an ADMIN may create here (fix174): office staff below them, with no
+   contact. Every other login stays the super admin's. */
+const STAFF_ROLES = ['call_center', 'senior_call_center']
 
 /* The per-role caps used to live here as flat numbers (partner 20, supplier 20,
    call_center 6) that stopped everybody, super admin included, and matched
@@ -127,6 +133,10 @@ function friendlyError(message = '') {
   if (message.includes('CANNOT_CREATE_SUPER_ADMIN')) return 'Super admin accounts cannot be created here.'
   if (message.includes('USERNAME_REQUIRED'))         return 'Username is required.'
   if (message.includes('PASSWORD_REQUIRED'))         return 'Password is required.'
+  if (message.includes('PASSWORD_TOO_SHORT'))        return 'The password must be at least 8 characters.'
+  if (message.includes('MOBILE_REQUIRED'))           return 'Mobile is required.'
+  if (message.includes('STAFF_ROLE_ONLY'))           return 'An administrator can add call-centre and Senior Call Center accounts only.'
+  if (/admin_create_staff_login/.test(message) && /not exist|schema cache/i.test(message)) return 'Adding accounts as an administrator needs supabase-fix174.sql.'
   if (message.includes('duplicate key') && message.includes('username')) return 'That username is already taken.'
   if (message.includes('duplicate key') && message.includes('email'))    return 'That email is already in use.'
   if (message.includes('duplicate key'))             return 'A user with those details already exists.'
@@ -152,6 +162,13 @@ export default function UserAccountsPage() {
       : s.dir === 'asc' ? { key, dir: 'desc' }
       : { key: null, dir: null }))
   const isSuperAdmin = hasRole('super_admin')
+  const canAddStaff = isSuperAdmin || roleIsExactly(currentUser?.role, 'admin')
+  /* The seats as the super admin set them (fix174): how many are free, and
+     what one more costs. The package's figures until fix174 is run. */
+  const [seats, setSeats] = useState(SEATS)
+  useEffect(() => { fetchSeatSettings().then(r => setSeats(r.seats)) }, [])
+  // A seat beyond the free ones, waiting for the admin to accept the charge.
+  const [seatPrompt, setSeatPrompt] = useState(null)       // { pos, agreed }
 
   // Live devices per user (one entry per signed-in client), for the super
   // admin's Device column. De-duplicated so two tabs on the same machine count
@@ -449,8 +466,9 @@ export default function UserAccountsPage() {
       subsByContact,
       subsByUser,
       users,
+      seats,
     }
-  }, [users, subs, partyContacts])
+  }, [users, subs, partyContacts, seats])
 
   /* ONCE AN ACCOUNT HAS BEEN USED, WHAT IT IS IS SETTLED.
 
@@ -476,7 +494,7 @@ export default function UserAccountsPage() {
 
   /* ── add / edit ──────────────────────────────────────────── */
   function openAdd() {
-    if (!isSuperAdmin) return
+    if (!canAddStaff) return
     // Start with a ready-to-use strong password so the admin can just create &
     // share, or replace it. Shown in clear since it's a brand-new temporary one.
     setForm({ ...EMPTY_USER, password: generatePassword() })
@@ -491,8 +509,11 @@ export default function UserAccountsPage() {
 
   function closeModal() { setModal(null); setForm(EMPTY_USER); setFormErr('') }
 
-  async function saveUser() {
-    if (!isSuperAdmin) { setFormErr('Only the super admin can create or change a login here.'); return }
+  async function saveUser(opts) {
+    if (!isSuperAdmin && !(canAddStaff && modal === 'add' && STAFF_ROLES.includes(form.role))) {
+      setFormErr('An administrator can add call-centre and Senior Call Center accounts only. Everything else here is the super admin’s.')
+      return
+    }
     if (!form.username.trim()) { setFormErr('Username is required.'); return }
     if (!form.mobile.trim())   { setFormErr('Mobile is required.'); return }
     if (isPartyRole && !form.contact_id) {
@@ -538,26 +559,45 @@ export default function UserAccountsPage() {
           role: form.role,
           excludeId: modal === 'add' ? null : modal.id,
           isSuperAdmin,
+          // An admin adding staff may go past the free seats — once the charge is accepted.
+          allowCharge: !isSuperAdmin && canAddStaff,
+          seats,
         })
       : { ok: true, chargeable: false, pos: null }
     if (!seatCheck.ok) { setFormErr(seatCheck.message); return }
     if (modal === 'add' && form.password.length < 8) {
       setFormErr('Set a temporary password of at least 8 characters.'); return
     }
+    /* A SEAT BEYOND THE FREE ONES IS A CHARGE (fix174). The admin accepts it
+       before the account exists; nothing is written until they do. */
+    if (!isSuperAdmin && seatCheck.chargeable && opts?.seatAccepted !== true) {
+      setSeatPrompt({ pos: seatCheck.pos, agreed: false }); return
+    }
+    setSeatPrompt(null)
     setSaving(true); setFormErr('')
 
     let rpcError
     if (modal === 'add') {
-      const { data: newLoginId, error: e } = await supabase.rpc('admin_create_user', {
-        p_actor_id:   currentUser.user_id,
-        p_username:   form.username.trim(),
-        p_email:      form.email.trim(),
-        p_mobile:     form.mobile.trim(),
-        p_password:   form.password,
-        p_role:       form.role,
-        p_status:     form.status,
-        p_contact_id: form.contact_id || null,
-      })
+      // The super admin creates any login; an admin, staff only (fix174).
+      const { data: newLoginId, error: e } = isSuperAdmin
+        ? await supabase.rpc('admin_create_user', {
+            p_actor_id:   currentUser.user_id,
+            p_username:   form.username.trim(),
+            p_email:      form.email.trim(),
+            p_mobile:     form.mobile.trim(),
+            p_password:   form.password,
+            p_role:       form.role,
+            p_status:     form.status,
+            p_contact_id: form.contact_id || null,
+          })
+        : await supabase.rpc('admin_create_staff_login', {
+            p_actor_id:   currentUser.user_id,
+            p_username:   form.username.trim(),
+            p_email:      form.email.trim(),
+            p_mobile:     form.mobile.trim(),
+            p_password:   form.password,
+            p_role:       form.role,
+          })
 
       /* A supplier or partner account is what a subscription is FOR, so one is
          opened the moment the account exists — but they are not the same one.
@@ -756,10 +796,11 @@ export default function UserAccountsPage() {
             <span className="text-[11px] tabular-nums px-1.5 rounded bg-surface-border">{filtered.length}</span>
           </button>
         )}
-        {/* Only the super admin creates a login here. An administrator adds a
-            partner or supplier login from that contact's own profile, where it
-            is linked to them and can never be pointed anywhere else. */}
-        {isSuperAdmin && (
+        {/* The super admin creates any login here; an administrator, call-centre
+            and Senior Call Center accounts only (fix174). Partner and supplier
+            logins are made from that contact's own profile, where they are
+            linked to them and can never be pointed anywhere else. */}
+        {canAddStaff && (
         <button className="btn-primary" onClick={openAdd}>
           <UserPlus className="w-4 h-4" /> New User
         </button>
@@ -1255,7 +1296,8 @@ export default function UserAccountsPage() {
                     setForm(f => ({ ...f, role, contact_id: keepLink ? f.contact_id : '' }))
                     setFormErr('')
                   }}>
-                  {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  {(isSuperAdmin ? ASSIGNABLE_ROLES : ASSIGNABLE_ROLES.filter(r => STAFF_ROLES.includes(r.value)))
+                    .map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
                 {modal !== 'add' && identityLocked(modal) && (
                   <p className="text-[11px] mt-1 text-slate-500 leading-relaxed">
@@ -1271,7 +1313,7 @@ export default function UserAccountsPage() {
                     price of stepping over it. */}
                 {(() => {
                   const pos = seatPosition({
-                    users, role: form.role, excludeId: modal === 'add' ? null : modal.id,
+                    users, role: form.role, excludeId: modal === 'add' ? null : modal.id, seats,
                   })
                   if (!pos) return null
                   const over = !pos.free
@@ -1281,7 +1323,9 @@ export default function UserAccountsPage() {
                       {pos.used} of {pos.included} included {pos.label.toLowerCase()} seats used
                       {over && (isSuperAdmin
                         ? ` — seat ${pos.next} is chargeable at ${seatPrice(pos)}`
-                        : ` — seat ${pos.next} needs a super admin (${seatPrice(pos)})`)}
+                        : canAddStaff && STAFF_ROLES.includes(form.role)
+                          ? ` — seat ${pos.next} is chargeable at ${seatPrice(pos)}; you will be asked to accept it`
+                          : ` — seat ${pos.next} needs a super admin (${seatPrice(pos)})`)}
                       {over && pos.provisional && ' · allowance agreed with the client, not an article of the licence'}
                     </p>
                   )
@@ -1444,6 +1488,44 @@ Password: ${credsPw}`, 'creds-both')}
               <button onClick={saveUser} disabled={saving}
                 className="btn-primary px-4 py-2 text-sm disabled:opacity-60">
                 {saving ? <><Loader className="w-4 h-4 animate-spin" /> Saving…</> : (modal === 'add' ? 'Create User' : 'Save Changes')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── A chargeable seat, accepted before the account is made (fix174) ── */}
+      {seatPrompt && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[90] p-4">
+          <div className="card w-full max-w-md p-5 space-y-4" role="dialog" aria-label="New chargeable seat">
+            <div className="flex items-start gap-3">
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-fuchsia-500/10 border border-fuchsia-500/30">
+                <Receipt className="w-4 h-4 text-fuchsia-300" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-100">A new chargeable seat</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  All {seatPrompt.pos.included} free {seatPrompt.pos.label.toLowerCase()} seats are in use, so
+                  <span className="font-mono text-slate-200"> {form.username.trim()}</span> takes seat {seatPrompt.pos.next}.
+                  It will be added to your invoice at <span className="text-slate-200 font-medium">{seatPrice(seatPrompt.pos)}</span>, for one year.
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              The account works straight away. Deactivating an account later frees its seat for the next person.
+            </p>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input type="checkbox" className="w-4 h-4 accent-fuchsia-500 mt-0.5" checked={seatPrompt.agreed}
+                onChange={e => setSeatPrompt(p => ({ ...p, agreed: e.target.checked }))} />
+              <span className="text-sm text-slate-200">I understand, and agree to this seat being added to the invoice.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost px-4 py-2 text-sm border border-surface-border" onClick={() => setSeatPrompt(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!seatPrompt.agreed || saving} onClick={() => saveUser({ seatAccepted: true })}>
+                <Check className="w-4 h-4" /> Accept and create
               </button>
             </div>
           </div>
