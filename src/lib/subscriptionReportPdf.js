@@ -85,7 +85,8 @@ export async function downloadSubscriptionReportPdf(rep, { generatedBy = '', log
   // ── the free allowances, in words ─────────────────────────────────────────
   const notes = [
     `Partners: ${K.partner.freeSeatsIncluded ?? '—'} free seats in the package — ${K.partner.freeSeatsHeld} held this year.`,
-    `Suppliers: ${K.supplier.inTrial} in their free ${TRIAL_DAYS}-day trial.`,
+    `Suppliers: ${K.supplier.free} free — ${K.supplier.inTrial} in their ${TRIAL_DAYS}-day trial`
+      + (K.supplier.freeOther.length ? `, ${K.supplier.freeOther.length} priced at 0 by the super admin (${K.supplier.freeOther.join(', ')})` : '') + '.',
     ...rep.seatUse.map(s => `${s.label}: ${s.active} active of ${s.included} free — ${s.beyond} beyond, ${s.charged} with a seat charge on record${s.beyond ? ` (${fmt(s.rate, s.currency)} a year each)` : ''}.`),
     `Drivers: ${rep.driverUse.active} active of ${rep.driverUse.included} free — ${rep.driverUse.beyond} beyond, ${rep.driverUse.charged} with a seat charge on record${rep.driverUse.beyond ? ` (${fmt(rep.driverUse.rate, rep.driverUse.currency)} a year each)` : ''}.`,
     `Past periods, ended and paid or free, counted but not listed: ${kindsShown.reduce((n, k) => n + K[k].historyCount, 0)}.`,

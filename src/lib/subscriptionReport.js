@@ -125,6 +125,10 @@ export function buildSubscriptionReport({ subs = [], users = [], drivers = [], s
   kinds.partner.freeSeatsHeld = new Set(kinds.partner.listed.filter(l => isFreeSeatRow(l.row)).map(l => l.row.contact_id)).size
   kinds.partner.freeSeatsIncluded = seats?.partner?.included ?? null
   kinds.supplier.inTrial = kinds.supplier.listed.filter(l => l.trial && !l.ended).length
+  // Free but not a trial — a plan the super admin priced at 0 (e.g. "System
+  // Reserve"). Counted apart, so the free count above always adds up.
+  kinds.supplier.freeOther = kinds.supplier.listed.filter(l => l.state === 'free' && !l.trial)
+    .map(l => l.row.description || 'priced at 0')
 
   // Seats: who is inside the free allowance, who is beyond it, and how many of
   // those beyond carry a charge on record.
