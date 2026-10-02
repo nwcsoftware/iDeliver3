@@ -44,125 +44,132 @@ CREATE TABLE IF NOT EXISTS public.product_movements_fix170_backup (LIKE public.p
 -- through the API.
 ALTER TABLE public.product_movements_fix170_backup ENABLE ROW LEVEL SECURITY;
 
--- ── 1. what every closed order of a returnable should hold ──────────────────
-DROP TABLE IF EXISTS f170_lines;
-CREATE TEMP TABLE f170_lines AS
-SELECT oi.order_id, oi.product_id, oi.quantity, oi.unit_price, oi.currency::TEXT AS currency,
-       oi.is_returned, oi.returned_at, o.order_number, o.company_id,
-       COALESCE(o.closed_at, (o.scheduled_date + TIME '12:00')::TIMESTAMPTZ, o.created_at) AS closed_when,
-       -- where a return goes: the application's returnMovementType()
-       CASE WHEN p.is_refillable IS NOT TRUE        THEN 'returned'
-            WHEN p.refillable_since IS NULL         THEN 'returned_empty'
-            WHEN oi.returned_at IS NULL             THEN 'returned'
-            WHEN oi.returned_at >= p.refillable_since THEN 'returned_empty'
-            ELSE 'returned' END AS return_type
-  FROM public.order_items oi
-  JOIN public.delivery_orders o ON o.id = oi.order_id
-  JOIN public.products p        ON p.id = oi.product_id
- WHERE p.is_returnable IS TRUE AND p.is_service IS NOT TRUE AND p.is_advertisement IS NOT TRUE
-   AND oi.is_deleted IS NOT TRUE
-   AND o.isclosed IS TRUE
-   AND COALESCE(o.status::TEXT, '') NOT IN ('cancelled', 'failed');
+-- Steps 1–3 run as ONE statement. The Supabase SQL editor does not keep a
+-- temporary table from one statement to the next ("relation f170_lines does not
+-- exist" on the first try); inside one block it does, and the working tables
+-- are dropped when it finishes. If anything in it fails, none of it is applied.
+DO $fix170$
+BEGIN
+  -- Leftovers from an earlier attempt in the same session, if any.
+  DROP TABLE IF EXISTS pg_temp.f170_lines, pg_temp.f170_wanted, pg_temp.f170_have, pg_temp.f170_pairs;
 
-DROP TABLE IF EXISTS f170_wanted;
-CREATE TEMP TABLE f170_wanted AS
-SELECT order_id, product_id, 'sold'::TEXT AS movement_type, SUM(quantity) AS quantity,
-       MIN(unit_price) AS unit_cost, MIN(currency) AS currency, MIN(order_number) AS order_number,
-       MIN(company_id::TEXT)::UUID AS company_id, MIN(closed_when) AS moved_at
-  FROM f170_lines
- GROUP BY order_id, product_id
-HAVING SUM(quantity) > 0
-UNION ALL
-SELECT order_id, product_id, return_type, SUM(quantity),
-       NULL, MIN(currency), MIN(order_number),
-       MIN(company_id::TEXT)::UUID, COALESCE(MAX(returned_at), MIN(closed_when))
-  FROM f170_lines
- WHERE is_returned IS TRUE
- GROUP BY order_id, product_id, return_type
-HAVING SUM(quantity) > 0;
+  -- ── 1. what every closed order of a returnable should hold ──────────────────
+  CREATE TEMP TABLE f170_lines ON COMMIT DROP AS
+  SELECT oi.order_id, oi.product_id, oi.quantity, oi.unit_price, oi.currency::TEXT AS currency,
+         oi.is_returned, oi.returned_at, o.order_number, o.company_id,
+         COALESCE(o.closed_at, (o.scheduled_date + TIME '12:00')::TIMESTAMPTZ, o.created_at) AS closed_when,
+         -- where a return goes: the application's returnMovementType()
+         CASE WHEN p.is_refillable IS NOT TRUE        THEN 'returned'
+              WHEN p.refillable_since IS NULL         THEN 'returned_empty'
+              WHEN oi.returned_at IS NULL             THEN 'returned'
+              WHEN oi.returned_at >= p.refillable_since THEN 'returned_empty'
+              ELSE 'returned' END AS return_type
+    FROM public.order_items oi
+    JOIN public.delivery_orders o ON o.id = oi.order_id
+    JOIN public.products p        ON p.id = oi.product_id
+   WHERE p.is_returnable IS TRUE AND p.is_service IS NOT TRUE AND p.is_advertisement IS NOT TRUE
+     AND oi.is_deleted IS NOT TRUE
+     AND o.isclosed IS TRUE
+     AND COALESCE(o.status::TEXT, '') NOT IN ('cancelled', 'failed');
 
-DROP TABLE IF EXISTS f170_have;
-CREATE TEMP TABLE f170_have AS
-SELECT m.order_id, m.product_id, m.movement_type, SUM(m.quantity) AS quantity
-  FROM public.product_movements m
-  JOIN public.products p ON p.id = m.product_id
- WHERE p.is_returnable IS TRUE AND m.order_id IS NOT NULL
-   AND m.movement_type IN ('sold', 'returned', 'returned_empty')
- GROUP BY m.order_id, m.product_id, m.movement_type;
+  CREATE TEMP TABLE f170_wanted ON COMMIT DROP AS
+  SELECT order_id, product_id, 'sold'::TEXT AS movement_type, SUM(quantity) AS quantity,
+         MIN(unit_price) AS unit_cost, MIN(currency) AS currency, MIN(order_number) AS order_number,
+         MIN(company_id::TEXT)::UUID AS company_id, MIN(closed_when) AS moved_at
+    FROM f170_lines
+   GROUP BY order_id, product_id
+  HAVING SUM(quantity) > 0
+  UNION ALL
+  SELECT order_id, product_id, return_type, SUM(quantity),
+         NULL, MIN(currency), MIN(order_number),
+         MIN(company_id::TEXT)::UUID, COALESCE(MAX(returned_at), MIN(closed_when))
+    FROM f170_lines
+   WHERE is_returned IS TRUE
+   GROUP BY order_id, product_id, return_type
+  HAVING SUM(quantity) > 0;
 
--- The (order, item) pairs whose ledger rows differ from what the lines say.
-DROP TABLE IF EXISTS f170_pairs;
-CREATE TEMP TABLE f170_pairs AS
-SELECT DISTINCT order_id, product_id FROM (
-  SELECT w.order_id, w.product_id
+  CREATE TEMP TABLE f170_have ON COMMIT DROP AS
+  SELECT m.order_id, m.product_id, m.movement_type, SUM(m.quantity) AS quantity
+    FROM public.product_movements m
+    JOIN public.products p ON p.id = m.product_id
+   WHERE p.is_returnable IS TRUE AND m.order_id IS NOT NULL
+     AND m.movement_type IN ('sold', 'returned', 'returned_empty')
+   GROUP BY m.order_id, m.product_id, m.movement_type;
+
+  -- The (order, item) pairs whose ledger rows differ from what the lines say.
+  CREATE TEMP TABLE f170_pairs ON COMMIT DROP AS
+  SELECT DISTINCT order_id, product_id FROM (
+    SELECT w.order_id, w.product_id
+      FROM f170_wanted w
+      LEFT JOIN f170_have h ON h.order_id = w.order_id AND h.product_id = w.product_id AND h.movement_type = w.movement_type
+     WHERE h.quantity IS DISTINCT FROM w.quantity
+    UNION
+    SELECT h.order_id, h.product_id
+      FROM f170_have h
+      LEFT JOIN f170_wanted w ON w.order_id = h.order_id AND w.product_id = h.product_id AND w.movement_type = h.movement_type
+     WHERE w.quantity IS NULL
+  ) d;
+
+  INSERT INTO public.product_movements_fix170_backup
+  SELECT m.* FROM public.product_movements m
+    JOIN f170_pairs x ON x.order_id = m.order_id AND x.product_id = m.product_id
+   WHERE m.movement_type IN ('sold', 'returned', 'returned_empty')
+     AND NOT EXISTS (SELECT 1 FROM public.product_movements_fix170_backup b WHERE b.id = m.id);
+
+  DELETE FROM public.product_movements m
+   USING f170_pairs x
+   WHERE x.order_id = m.order_id AND x.product_id = m.product_id
+     AND m.movement_type IN ('sold', 'returned', 'returned_empty');
+
+  INSERT INTO public.product_movements
+    (company_id, product_id, movement_type, quantity, unit_cost, currency, reference, notes, order_id, moved_at, created_by_name)
+  SELECT w.company_id, w.product_id, w.movement_type, w.quantity, w.unit_cost,
+         COALESCE(w.currency, 'USD')::currency_type, w.order_number,
+         'Re-posted by fix170 as the order''s lines say', w.order_id, w.moved_at, 'fix170'
     FROM f170_wanted w
-    LEFT JOIN f170_have h ON h.order_id = w.order_id AND h.product_id = w.product_id AND h.movement_type = w.movement_type
-   WHERE h.quantity IS DISTINCT FROM w.quantity
-  UNION
-  SELECT h.order_id, h.product_id
-    FROM f170_have h
-    LEFT JOIN f170_wanted w ON w.order_id = h.order_id AND w.product_id = h.product_id AND w.movement_type = h.movement_type
-   WHERE w.quantity IS NULL
-) d;
+    JOIN f170_pairs x ON x.order_id = w.order_id AND x.product_id = w.product_id;
 
-INSERT INTO public.product_movements_fix170_backup
-SELECT m.* FROM public.product_movements m
-  JOIN f170_pairs x ON x.order_id = m.order_id AND x.product_id = m.product_id
- WHERE m.movement_type IN ('sold', 'returned', 'returned_empty')
-   AND NOT EXISTS (SELECT 1 FROM public.product_movements_fix170_backup b WHERE b.id = m.id);
+  -- ── 2. a refill or empty count on an item that is not refillable ────────────
+  INSERT INTO public.product_movements_fix170_backup
+  SELECT m.* FROM public.product_movements m
+    JOIN public.products p ON p.id = m.product_id
+   WHERE p.is_returnable IS TRUE AND p.is_refillable IS NOT TRUE
+     AND m.movement_type IN ('refill', 'empty_adjust')
+     AND NOT EXISTS (SELECT 1 FROM public.product_movements_fix170_backup b WHERE b.id = m.id);
 
-DELETE FROM public.product_movements m
- USING f170_pairs x
- WHERE x.order_id = m.order_id AND x.product_id = m.product_id
-   AND m.movement_type IN ('sold', 'returned', 'returned_empty');
+  DELETE FROM public.product_movements m
+   USING public.products p
+   WHERE p.id = m.product_id AND p.is_returnable IS TRUE AND p.is_refillable IS NOT TRUE
+     AND m.movement_type IN ('refill', 'empty_adjust');
 
-INSERT INTO public.product_movements
-  (company_id, product_id, movement_type, quantity, unit_cost, currency, reference, notes, order_id, moved_at, created_by_name)
-SELECT w.company_id, w.product_id, w.movement_type, w.quantity, w.unit_cost,
-       COALESCE(w.currency, 'USD')::currency_type, w.order_number,
-       'Re-posted by fix170 as the order''s lines say', w.order_id, w.moved_at, 'fix170'
-  FROM f170_wanted w
-  JOIN f170_pairs x ON x.order_id = w.order_id AND x.product_id = w.product_id;
-
--- ── 2. a refill or empty count on an item that is not refillable ────────────
-INSERT INTO public.product_movements_fix170_backup
-SELECT m.* FROM public.product_movements m
-  JOIN public.products p ON p.id = m.product_id
- WHERE p.is_returnable IS TRUE AND p.is_refillable IS NOT TRUE
-   AND m.movement_type IN ('refill', 'empty_adjust')
-   AND NOT EXISTS (SELECT 1 FROM public.product_movements_fix170_backup b WHERE b.id = m.id);
-
-DELETE FROM public.product_movements m
- USING public.products p
- WHERE p.id = m.product_id AND p.is_returnable IS TRUE AND p.is_refillable IS NOT TRUE
-   AND m.movement_type IN ('refill', 'empty_adjust');
-
--- ── 3. Gallon 20 L: the office count of 2 Oct — 17 full, 13 empty ───────────
-WITH g AS (
-  SELECT p.id, p.company_id, p.currency,
-         COALESCE(SUM(CASE m.movement_type
-                        WHEN 'in' THEN m.quantity WHEN 'returned' THEN m.quantity WHEN 'adjust' THEN m.quantity
-                        WHEN 'refill' THEN m.quantity WHEN 'sold' THEN -m.quantity WHEN 'out' THEN -m.quantity
-                        ELSE 0 END), 0) AS available,
-         COALESCE(SUM(CASE m.movement_type
-                        WHEN 'returned_empty' THEN m.quantity WHEN 'empty_adjust' THEN m.quantity
-                        WHEN 'refill' THEN -m.quantity ELSE 0 END), 0) AS empty
-    FROM public.products p
-    LEFT JOIN public.product_movements m ON m.product_id = p.id
-   WHERE p.code = 'PRD-0003'
-     AND NOT EXISTS (SELECT 1 FROM public.product_movements x
-                      WHERE x.product_id = p.id AND x.reference = 'COUNT 02-10' AND x.created_by_name = 'fix170')
-   GROUP BY p.id, p.company_id, p.currency
-)
-INSERT INTO public.product_movements
-  (company_id, product_id, movement_type, quantity, currency, reference, notes, moved_at, created_by_name)
-SELECT company_id, id, 'adjust', 17 - available, currency, 'COUNT 02-10',
-       'Office count 2 Oct: 30 owned — 17 full, 13 empty, none with customers', NOW(), 'fix170'
-  FROM g WHERE 17 - available <> 0
-UNION ALL
-SELECT company_id, id, 'empty_adjust', 13 - empty, currency, 'COUNT 02-10',
-       'Office count 2 Oct: 30 owned — 17 full, 13 empty, none with customers', NOW(), 'fix170'
-  FROM g WHERE 13 - empty <> 0;
+  -- ── 3. Gallon 20 L: the office count of 2 Oct — 17 full, 13 empty ───────────
+  WITH g AS (
+    SELECT p.id, p.company_id, p.currency,
+           COALESCE(SUM(CASE m.movement_type
+                          WHEN 'in' THEN m.quantity WHEN 'returned' THEN m.quantity WHEN 'adjust' THEN m.quantity
+                          WHEN 'refill' THEN m.quantity WHEN 'sold' THEN -m.quantity WHEN 'out' THEN -m.quantity
+                          ELSE 0 END), 0) AS available,
+           COALESCE(SUM(CASE m.movement_type
+                          WHEN 'returned_empty' THEN m.quantity WHEN 'empty_adjust' THEN m.quantity
+                          WHEN 'refill' THEN -m.quantity ELSE 0 END), 0) AS empty
+      FROM public.products p
+      LEFT JOIN public.product_movements m ON m.product_id = p.id
+     WHERE p.code = 'PRD-0003'
+       AND NOT EXISTS (SELECT 1 FROM public.product_movements x
+                        WHERE x.product_id = p.id AND x.reference = 'COUNT 02-10' AND x.created_by_name = 'fix170')
+     GROUP BY p.id, p.company_id, p.currency
+  )
+  INSERT INTO public.product_movements
+    (company_id, product_id, movement_type, quantity, currency, reference, notes, moved_at, created_by_name)
+  SELECT company_id, id, 'adjust', 17 - available, currency, 'COUNT 02-10',
+         'Office count 2 Oct: 30 owned — 17 full, 13 empty, none with customers', NOW(), 'fix170'
+    FROM g WHERE 17 - available <> 0
+  UNION ALL
+  SELECT company_id, id, 'empty_adjust', 13 - empty, currency, 'COUNT 02-10',
+         'Office count 2 Oct: 30 owned — 17 full, 13 empty, none with customers', NOW(), 'fix170'
+    FROM g WHERE 13 - empty <> 0;
+END
+$fix170$;
 
 -- ── check ───────────────────────────────────────────────────────────────────
 -- Expect (as simulated on 2 Oct; a sale closed since moves Available and With
@@ -204,7 +211,3 @@ SELECT p.code, p.name,
  GROUP BY p.id, p.code, p.name, p.is_refillable
  ORDER BY p.code;
 
-DROP TABLE IF EXISTS f170_lines;
-DROP TABLE IF EXISTS f170_wanted;
-DROP TABLE IF EXISTS f170_have;
-DROP TABLE IF EXISTS f170_pairs;
