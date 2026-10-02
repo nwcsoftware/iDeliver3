@@ -2564,8 +2564,8 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
   }
 
   /* THE PICKER'S RESULT. The line takes the item, its options and its price —
-     the item's own plus whatever extras were chosen, per unit, as the customer
-     app prices them. The options are also written into Order Details, where
+     the item's own, plus what the chosen options and extras add, per unit, as
+     the customer app prices them (optionsTotal). The options are also written into Order Details, where
      the driver and whoever packs the order already look. */
   const itemName = (it) => products.find(p => p.id === it?.product_id)?.name || it?._name || ''
   const itemNote = (it) => (it?.variant_label ? `${itemName(it)} — ${it.variant_label}` : '')
@@ -2584,7 +2584,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     })
   }
 
-  function applyPick({ product, picks, variant, extras }) {
+  function applyPick({ product, picks, variant, optionsPrice }) {
     const target = picker
     setPicker(null)
     if (!product || !target) return
@@ -2592,7 +2592,7 @@ export default function DeliveriesPage({ closed = false, partyContactId = null }
     const line = {
       product_id:    product.id,
       _name:         product.name,
-      unit_price:    Math.round(((Number(product.unit_price) || 0) + (Number(extras) || 0)) * 100) / 100,
+      unit_price:    Math.round(((Number(product.unit_price) || 0) + (Number(optionsPrice) || 0)) * 100) / 100,
       currency:      product.currency || 'USD',
       picks:         picks || null,
       variant_label: variant || '',

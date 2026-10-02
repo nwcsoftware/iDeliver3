@@ -181,7 +181,7 @@ export default function ItemOptionsEditor({
                 <span className="text-[10px] text-slate-500">
                   {(g.kind || 'choice') === 'extra'
                     ? 'Optional add-ons — the customer may take any number, and each adds to the price.'
-                    : 'The customer must pick exactly one.'}
+                    : 'The customer must pick exactly one. A value may cost more or less than the item — leave it empty when it costs the same.'}
                 </span>
               </div>
 
@@ -205,12 +205,23 @@ export default function ItemOptionsEditor({
                       value={v.name} placeholder={g.style === 'swatch' ? 'e.g. Navy Blue' : 'e.g. 43'}
                       onChange={e => setValue(gi, vi, { name: e.target.value })} />
 
-                    {/* What this add-on costs on top of the item price. */}
-                    {(g.kind || 'choice') === 'extra' && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                    {/* What this value adds to the item's price. An extra only adds;
+                        a choice may also cost less (a Small below the Large), so
+                        it takes a sign. */}
+                    {(g.kind || 'choice') === 'extra' ? (
+                      <div className="flex items-center gap-1 flex-shrink-0" title="What this add-on costs on top of the item price">
                         <span className="text-[11px] text-slate-500">+</span>
-                        <input type="number" min="0" step="0.01" className="input py-1.5 text-xs w-20"
+                        <input type="number" min="0" step="0.01" className="input py-1.5 text-xs w-24"
                           value={v.price_delta || ''} placeholder="0.00"
+                          onChange={e => setValue(gi, vi, { price_delta: e.target.value })} />
+                        <span className="text-[11px] text-slate-500">{currency}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 flex-shrink-0"
+                        title="Price difference from the item's own price — e.g. 100000 for a dearer value, -50000 for a cheaper one. Empty = the same price.">
+                        <span className="text-[11px] text-slate-500">±</span>
+                        <input type="number" step="0.01" className="input py-1.5 text-xs w-24" aria-label="Price difference"
+                          value={v.price_delta || ''} placeholder="same"
                           onChange={e => setValue(gi, vi, { price_delta: e.target.value })} />
                         <span className="text-[11px] text-slate-500">{currency}</span>
                       </div>

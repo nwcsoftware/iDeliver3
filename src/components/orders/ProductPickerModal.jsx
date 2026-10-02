@@ -3,7 +3,7 @@ import { X, Package, ArrowLeft, Check, Wrench } from 'lucide-react'
 import SearchField from '../ui/SearchField'
 import {
   itemOptions, choiceGroups, valueState, missingChoice, prunePicks,
-  pickedExtras, extrasTotal, variantLabel, pickedImage, optionsExhausted,
+  pickedExtras, optionsTotal, priceDeltaText, variantLabel, pickedImage, optionsExhausted,
 } from '../../lib/shopOptions'
 
 /* PICKING A 3ASARI3 ITEM FOR AN ORDER — in as few clicks as the item allows.
@@ -52,7 +52,7 @@ export default function ProductPickerModal({ products = [], initial = null, onPi
 
   const groups = useMemo(() => (product ? itemOptions(product) : []), [product])
   const missing = product ? missingChoice(groups, picks, product) : null
-  const price = product ? (Number(product.unit_price) || 0) + extrasTotal(groups, picks) : 0
+  const price = product ? (Number(product.unit_price) || 0) + optionsTotal(groups, picks) : 0
 
   // Escape steps back, then closes — never loses the line being built by surprise.
   useEffect(() => {
@@ -73,7 +73,8 @@ export default function ProductPickerModal({ products = [], initial = null, onPi
       product: p,
       picks: gs.length ? pk : null,
       variant: variantLabel(gs, pk),
-      extras: extrasTotal(gs, pk),
+      // What the options add: the chosen values' prices and the extras.
+      optionsPrice: optionsTotal(gs, pk),
       image: pickedImage(gs, pk) || coverOf(p),
     })
   }
@@ -200,7 +201,7 @@ export default function ProductPickerModal({ products = [], initial = null, onPi
                                        : <span className="text-[11px] text-slate-500 px-1 text-center">{v.name}</span>}
                             </div>
                             <p className="px-1.5 py-1 text-[11px] text-slate-200 truncate">
-                              {v.name}{delta ? <span className="text-emerald-300"> +{fmt(delta, product.currency)}</span> : null}
+                              {v.name}{delta ? <span className={delta > 0 ? 'text-emerald-300' : 'text-amber-300'}> {priceDeltaText(delta, x => fmt(x, product.currency))}</span> : null}
                             </p>
                             {on && <span className="absolute top-1 right-1 w-5 h-5 rounded-full bg-brand-500 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></span>}
                             {note && <span className="absolute inset-x-0 top-1 text-center text-[9px] text-rose-200">{note}</span>}
@@ -212,7 +213,7 @@ export default function ProductPickerModal({ products = [], initial = null, onPi
                               on ? 'bg-brand-500/20 border-brand-400 text-brand-200' : 'bg-surface-hover border-surface-border text-slate-300 hover:text-slate-100'}`}>
                             {on && <Check className="w-3.5 h-3.5" />}
                             {v.name}
-                            {delta ? <span className="text-emerald-300">+{fmt(delta, product.currency)}</span> : null}
+                            {delta ? <span className={delta > 0 ? 'text-emerald-300' : 'text-amber-300'}>{priceDeltaText(delta, x => fmt(x, product.currency))}</span> : null}
                           </button>
                         )
                       })}

@@ -194,8 +194,8 @@ export default function ShopInventoryPage({ partyContactId = null }) {
               name: v.name.trim(),
               image: v.image || null,
               sold_out: !!v.sold_out,
-              // Only an extra charges anything; a size is part of the price.
-              price_delta: kind === 'extra' ? (Number(v.price_delta) || 0) : 0,
+              // An extra only adds; a choice may cost more or less (Large / Small).
+              price_delta: kind === 'extra' ? Math.max(0, Number(v.price_delta) || 0) : (Number(v.price_delta) || 0),
             })),
         }
       })

@@ -9,7 +9,9 @@
 
    Two kinds of option:
 
-     choice   pick exactly one, required — Size, Color, Flavor
+     choice   pick exactly one, required — Size, Color, Flavor. A value may
+              cost more or less than the item's own price (Large +2, Small −1):
+              the same item, priced by the choice.
      extra    pick any number, optional, each adding to the price — food extras
 
    And availability is per COMBINATION, not only per value: black may come in
@@ -242,6 +244,31 @@ export function extrasTotal(groups = [], picks = {}) {
     }
   }
   return Math.round(sum * 100) / 100
+}
+
+/* What the chosen choice-values add to (or take off) the item's price —
+   a Large that costs more than the Small. Negative is allowed. */
+export function choicesTotal(groups = [], picks = {}) {
+  let sum = 0
+  for (const g of choiceGroups(groups)) {
+    const v = g.values.find(x => x.name === str(picks?.[g.label]))
+    if (v) sum += num(v.price_delta)
+  }
+  return Math.round(sum * 100) / 100
+}
+
+/* THE PRICE A SELECTION ADDS to the item's own: the chosen values' differences
+   and the extras. Every place that prices a line reads this — the customer
+   app, the order picker — so a choice priced on the Products page is charged
+   the same way everywhere. */
+export const optionsTotal = (groups = [], picks = {}) =>
+  Math.round((choicesTotal(groups, picks) + extrasTotal(groups, picks)) * 100) / 100
+
+/* How a value's price reads beside its name: "+2.00", "−1.00", or nothing. */
+export const priceDeltaText = (delta, fmt) => {
+  const d = num(delta)
+  if (!d) return ''
+  return `${d > 0 ? '+' : '\u2212'}${fmt(Math.abs(d))}`
 }
 
 /* "44 · Black + Cheese, Bacon" — what goes on the cart line and the order

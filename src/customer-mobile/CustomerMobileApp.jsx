@@ -47,7 +47,7 @@ import {
 import {
   itemOptions, inStockValues, optionsExhausted, missingChoice, choiceGroups,
   variantLabel as optionVariantLabel, pickedImage as optionPickedImage,
-  legacyVariantFields, valueState, prunePicks, extrasTotal, pickedExtras,
+  legacyVariantFields, valueState, prunePicks, pickedExtras, optionsTotal, priceDeltaText,
 } from '../lib/shopOptions'
 import ideliverLoginLogo from '../assets/ideliver-logo-login.png'
 import { formatMobile, MOBILE_PREFIX, isBlankMobile } from '../lib/phone'
@@ -2167,7 +2167,8 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
       qty: pickedQty,
       // Extras are per unit, so they belong in the line price rather than as a
       // separate line the shop would have to match up again.
-      price: cartRound2((Number(preview.price) || 0) + extrasTotal(groups, picks)),
+      // The chosen values' prices (a Large that costs more) as well as extras.
+      price: cartRound2((Number(preview.price) || 0) + optionsTotal(groups, picks)),
       currency: preview.currency || 'USD',
       // Show the chosen colour's swatch in the cart when it has one.
       image_url: optionPickedImage(groups, picks) || itemImages(preview)[0] || preview.image_url,
@@ -3011,10 +3012,10 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
                   </div>
                 )}
                 <p className="text-lg font-bold text-shop-700">
-                  {fmt((Number(preview.price) || 0) + extrasTotal(itemOptions(preview), picks), preview.currency)}
-                  {extrasTotal(itemOptions(preview), picks) > 0 && (
+                  {fmt((Number(preview.price) || 0) + optionsTotal(itemOptions(preview), picks), preview.currency)}
+                  {optionsTotal(itemOptions(preview), picks) !== 0 && (
                     <span className="ml-1.5 text-xs font-semibold text-slate-400">
-                      {fmt(preview.price, preview.currency)} + {fmt(extrasTotal(itemOptions(preview), picks), preview.currency)}
+                      {fmt(preview.price, preview.currency)} {priceDeltaText(optionsTotal(itemOptions(preview), picks), x => fmt(x, preview.currency))}
                     </span>
                   )}
                 </p>
@@ -3061,8 +3062,9 @@ function ShopScreen({ onAdd, onOpenCart, cartCount = 0, customerSession, onSched
                           const on   = isExtra ? taken.includes(v.name) : picks[g.label] === v.name
                           const why  = state === 'sold_out' ? t('valueSoldOut')
                             : state === 'not_sold' ? t('notInCombo') : undefined
-                          const delta = isExtra && Number(v.price_delta) > 0
-                            ? ` +${fmt(v.price_delta, preview.currency)}`
+                          // A choice priced differently says so too, up or down.
+                          const delta = Number(v.price_delta)
+                            ? ` ${priceDeltaText(v.price_delta, x => fmt(x, preview.currency))}`
                             : ''
                           return g.style === 'swatch' ? (
                             <button key={v.name} type="button" disabled={gone}
@@ -5062,6 +5064,10 @@ export default function CustomerMobileApp() {
     },
     t: (key, values) => translate(currentLanguage, key, values),
   }), [currentLanguage, currentLanguageOption.dir])
+  // This component PROVIDES the language, so useI18n() here would read the
+  // empty default. The cancel-order sheet below called t() with nothing
+  // defined — opening it blanked the customer app.
+  const { t } = i18nValue
 
   useEffect(() => {
     document.documentElement.lang = currentLanguage
