@@ -438,6 +438,7 @@ export default function DriversPage() {
             description: `Driver seat ${seatPos.next} — beyond the ${seatPos.included} included`,
             start_date: ymd(start), end_date: ymd(end),
             amount: seatPos.rate, currency: seatPos.currency, is_paid: false, is_active: false,
+            billed_to: 'company',             // the office's bill to the super admin (fix136)
             created_by: currentUser?.user_id ?? null,
             ...(COMPANY_ID ? { company_id: COMPANY_ID } : {}),
           }])

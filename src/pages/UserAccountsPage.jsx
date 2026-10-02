@@ -646,6 +646,7 @@ export default function UserAccountsPage() {
               currency:        seatCheck.pos.currency,
               is_paid:         false,
               is_active:       false,
+              billed_to:       'company',     // the office's bill to the super admin (fix136)
             }])
             if (se) console.warn('Could not record the chargeable seat:', se.message)
           }
