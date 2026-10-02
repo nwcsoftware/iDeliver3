@@ -15,7 +15,7 @@ import { fetchSoftwareSubscriptions, paymentSummary } from './softwareSubscripti
      partners       the office — the super admin's share of each partner
                     subscription (vendor_amount, fix172); the partner pays the
                     office the selling price, shown alongside
-     suppliers      the supplier itself (billed_to = party, fix136) — after
+     suppliers      the supplier itself (fix136: a supplier is invoiced for itself) — after
                     its free trial, its monthly plan
      office seats   the office — each administrator / call-centre seat beyond
                     the free ones (a charge on the login, fix146/fix174)

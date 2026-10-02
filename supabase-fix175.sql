@@ -21,13 +21,12 @@
 -- ============================================================================
 
 INSERT INTO public.subscriptions (company_id, contact_id, description, start_date, end_date,
-                                  amount, currency, is_paid, is_active, paid_by_note, billed_to)
+                                  amount, currency, is_paid, is_active, paid_by_note)
 SELECT d.company_id, d.id,
        'Driver seat ' || d.seat || ' — beyond the ' || st.included || ' included',
        CURRENT_DATE, CURRENT_DATE + 364,
        st.extra_rate, st.currency, FALSE, FALSE,
-       'Driver already beyond the free seats when driver charges began (fix175)',
-       'company'                                   -- the office's bill (fix136)
+       'Driver already beyond the free seats when driver charges began (fix175)'
   FROM (SELECT c.id, c.company_id,
                ROW_NUMBER() OVER (ORDER BY c.created_at, c.id) AS seat
           FROM public.contacts c
