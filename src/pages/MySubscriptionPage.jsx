@@ -135,7 +135,19 @@ export default function MySubscriptionPage({ partyContactId = null }) {
                   </p>
                 </div>
               )}
-              {st !== 'active' && (
+              {/* Switched on with the money still owed (fix172): access works, so
+                  this is a reminder to pay, not the red "blocked" box — which had
+                  no line for this state and read as an unexplained error. */}
+              {(st === 'credit' || st === 'grace') && (
+                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <Clock className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-amber-200 text-xs leading-relaxed">
+                    Your access is on. The payment of {money(current.amount, current.currency)} is due —
+                    please settle it with the administration.
+                  </p>
+                </div>
+              )}
+              {st !== 'active' && st !== 'credit' && st !== 'grace' && (
                 <div className="flex items-start gap-2.5 px-3 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
                   <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                   <p className="text-red-300 text-xs leading-relaxed">
