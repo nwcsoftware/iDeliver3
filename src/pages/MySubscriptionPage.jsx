@@ -156,7 +156,11 @@ export default function MySubscriptionPage({ partyContactId = null }) {
             {/* What they accepted, and the fees it commits them to. Kept on the
                 page they already visit for their subscription, so the terms are
                 never something they saw once and can't find again. */}
-            {agreement?.status === 'agreed' && (
+            {/* The supplier's monthly-plan agreement. A partner login's only
+                price is its own yearly subscription above (fix172) — partners
+                who accepted the supplier wording before this was fixed must
+                not keep seeing supplier plans. */}
+            {agreement?.status === 'agreed' && currentUser?.role !== 'partner' && (
               <div className="card p-5 space-y-3">
                 <div className="flex items-start gap-3">
                   <div className="w-9 h-9 rounded-lg bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0">

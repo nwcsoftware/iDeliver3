@@ -54,6 +54,10 @@ export default function SubscriptionAgreementGate({ contactId, companyId = null,
        seat — has no fee to promise, so asking them to accept one would be
        asking them to agree to something that does not apply. Judged by THIS
        login's role: a supplier login of a free partner does pay (fix163). */
+    /* This is the SUPPLIER agreement — monthly plans at the supplier prices.
+       A partner login pays one yearly subscription at the admin's price
+       (fix172) and must never be asked to sign up to a supplier plan. */
+    if (currentUser?.role !== 'supplier') { setState('open'); return }
     const scope = await subscriptionScope(contactId, currentUser?.role)
     if (!scope.subject) { setState('open'); return }
 
